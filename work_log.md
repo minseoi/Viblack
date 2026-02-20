@@ -104,3 +104,23 @@
   - 명령은 타임아웃(프로세스 지속 실행)
   - `tasklist` 확인 결과 `electron.exe` 3개 프로세스 실행 중
   - 판단: 앱 런치 성공
+
+### 13) 이슈 대응: 앱 종료 후 프로세스 잔류
+- 사용자 요청:
+  - 앱 창을 닫아도 프로세스가 남는 것 같음.
+- 조치:
+  - `src/backend/codex.ts`
+    - 실행 중인 Codex child process 추적(`activeCodexProcesses`) 추가
+    - 앱 종료 시 child process 종료 함수 `shutdownCodexProcesses()` 추가
+  - `src/backend/server.ts`
+    - 서버 종료 시 `closeAllConnections` 기반 강제 종료 타이머 추가
+    - 종료 중 예외로 앱 종료가 막히지 않도록 안전 종료 처리
+  - `src/main.ts`
+    - 종료 경로 단일화: `window-all-closed`/`before-quit` -> `shutdownApp()`
+    - `shutdownApp()`에서
+      1) Codex child 종료
+      2) 백엔드 서버 종료
+      3) `app.exit(0)`로 프로세스 종료
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과

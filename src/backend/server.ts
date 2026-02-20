@@ -134,14 +134,34 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
   return {
     port,
     close: async () =>
-      new Promise<void>((resolve, reject) => {
-        server.close((err) => {
-          db.close();
-          if (err) {
-            reject(err);
+      new Promise<void>((resolve) => {
+        let done = false;
+        const finalize = (): void => {
+          if (done) {
             return;
           }
+          done = true;
+          try {
+            db.close();
+          } catch {
+            // Ignore db close errors during shutdown.
+          }
           resolve();
+        };
+
+        const forceCloseTimer = setTimeout(() => {
+          // Ensure keep-alive sockets do not block app termination.
+          const closeAll = (server as http.Server & { closeAllConnections?: () => void })
+            .closeAllConnections;
+          if (closeAll) {
+            closeAll.call(server);
+          }
+          finalize();
+        }, 1500);
+
+        server.close(() => {
+          clearTimeout(forceCloseTimer);
+          finalize();
         });
       }),
   };

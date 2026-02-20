@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { CodexStatus } from "./types";
@@ -19,6 +19,17 @@ export interface CodexRunResult {
 }
 
 let codexCommand = process.env.VIBLACK_CODEX_PATH || "codex";
+const activeCodexProcesses = new Set<ChildProcess>();
+
+function trackProcess(child: ChildProcess): void {
+  activeCodexProcesses.add(child);
+  child.once("close", () => {
+    activeCodexProcesses.delete(child);
+  });
+  child.once("error", () => {
+    activeCodexProcesses.delete(child);
+  });
+}
 
 function getCandidateCommands(): string[] {
   const candidates = [codexCommand, "codex"];
@@ -146,6 +157,7 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
 
   return new Promise((resolve) => {
     const child = spawn(codexCommand, args, { cwd: params.cwd });
+    trackProcess(child);
     let stdoutBuffer = "";
     let stderrOutput = "";
     let sessionId = params.sessionId;
@@ -238,5 +250,34 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
         error: stderrOutput.trim() || "codex execution failed",
       });
     });
+  });
+}
+
+export async function shutdownCodexProcesses(): Promise<void> {
+  if (activeCodexProcesses.size === 0) {
+    return;
+  }
+
+  const processes = Array.from(activeCodexProcesses);
+  for (const child of processes) {
+    try {
+      child.kill();
+    } catch {
+      // Ignore and continue shutdown.
+    }
+  }
+
+  await new Promise<void>((resolve) => {
+    setTimeout(() => {
+      const remaining = Array.from(activeCodexProcesses);
+      for (const child of remaining) {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // Ignore and continue shutdown.
+        }
+      }
+      resolve();
+    }, 500);
   });
 }

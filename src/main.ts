@@ -1,12 +1,13 @@
 import path from "node:path";
 import { app, BrowserWindow, ipcMain } from "electron";
-import { checkCodexAvailability } from "./backend/codex";
+import { checkCodexAvailability, shutdownCodexProcesses } from "./backend/codex";
 import { startServer, type StartedServer } from "./backend/server";
 import type { CodexStatus } from "./backend/types";
 
 let backendServer: StartedServer | null = null;
 let backendBaseUrl = "";
 let bootCodexStatus: CodexStatus = { ok: false, error: "not initialized" };
+let shutdownInProgress = false;
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -40,6 +41,25 @@ async function boot(): Promise<void> {
 ipcMain.handle("viblack:getBackendBaseUrl", async () => backendBaseUrl);
 ipcMain.handle("viblack:getBootCodexStatus", async () => bootCodexStatus);
 
+async function shutdownApp(): Promise<void> {
+  if (shutdownInProgress) {
+    return;
+  }
+  shutdownInProgress = true;
+
+  try {
+    await shutdownCodexProcesses();
+    if (backendServer) {
+      await backendServer.close();
+      backendServer = null;
+    }
+  } catch {
+    // Ignore shutdown errors and continue app termination.
+  } finally {
+    app.exit(0);
+  }
+}
+
 app.whenReady().then(() => {
   void boot();
 
@@ -50,14 +70,14 @@ app.whenReady().then(() => {
   });
 });
 
-app.on("before-quit", () => {
-  if (backendServer) {
-    void backendServer.close();
+app.on("before-quit", (event) => {
+  if (shutdownInProgress) {
+    return;
   }
+  event.preventDefault();
+  void shutdownApp();
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
+  void shutdownApp();
 });
