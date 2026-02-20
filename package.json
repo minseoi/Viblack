@@ -1,14 +1,16 @@
 {
-  "name": "vibe",
+  "name": "viblack",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "dist/main.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "tsc",
+    "check": "tsc --noEmit",
+    "start": "npm run build && electron ."
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
+  "description": "Viblack MVP - Electron AI messenger powered by Codex CLI",
   "dependencies": {
     "express": "^5.2.1"
   },

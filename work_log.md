@@ -35,3 +35,30 @@
   - runtime: `express`
   - dev: `typescript`, `electron`, `@types/node`, `@types/express`
 - `node_modules`는 버전관리에서 제외하도록 `.gitignore` 추가.
+
+### 6) MVP 코드 골격 구현
+- 공통
+  - `package.json` 프로젝트명 `viblack`로 변경.
+  - 스크립트 추가: `build`, `check`, `start`.
+  - `tsconfig.json` 추가.
+- 백엔드 (`TypeScript + Express + SQLite`)
+  - `src/backend/db.ts`: SQLite 스키마/초기 데이터(Helper 1명) 구성.
+  - `src/backend/codex.ts`: `codex --version` 체크, `codex exec`/`resume` 실행 래퍼 구현.
+  - `src/backend/server.ts`: API 구성
+    - `GET /api/system/codex-status`
+    - `GET /api/agents`
+    - `GET /api/agents/:agentId/messages`
+    - `POST /api/agents/:agentId/messages`
+  - 에이전트별 직렬 실행 잠금(동일 session 병렬 충돌 방지) 반영.
+- Electron
+  - `src/main.ts`: 백엔드 서버 부팅 + 앱 시작 시 Codex CLI 확인.
+  - Codex 미동작 시 `dialog.showErrorBox` 팝업 표시.
+  - `src/preload.ts`: 렌더러에 안전하게 초기 상태 전달.
+- 프론트 (TS + Electron renderer)
+  - `src/renderer/index.html`, `src/renderer/renderer.ts` 추가.
+  - Helper 단일 에이전트 대화 UI 구현.
+  - Enter 전송/Shift+Enter 줄바꿈 동작.
+
+### 7) 검증 결과
+- `npm run check` 통과.
+- `npm run build` 통과.
