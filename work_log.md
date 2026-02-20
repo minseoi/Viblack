@@ -532,3 +532,25 @@
 - 검증:
   - `npm run check` 통과
   - `npm run build` 통과
+
+### 36) UI 수정: 채널명 `#` 복구 + 채널 hover 햄버거 메뉴(수정/제거)
+- 사용자 요청:
+  - 채널명 앞 `#` 표시 복구
+  - 채널도 멤버와 동일하게 hover 시 우측 햄버거 메뉴 표시
+  - 햄버거 메뉴에서 채널 `수정`/`제거` 가능해야 함
+- 조치:
+  - `src/renderer/index.html`
+    - 채널 아이템을 메뉴 버튼 포함 구조(`channel-row`)로 변경
+    - hover/focus 시 노출되는 채널 햄버거 버튼(`channel-menu-btn`) 스타일 추가
+    - 채널 전용 컨텍스트 메뉴(`channel-menu`) 추가 (`수정`, `제거`)
+    - 채널 모달 제목/저장 버튼에 id 추가 (`channel-modal-title`, `channel-submit-btn`)
+  - `src/renderer/renderer.ts`
+    - 사이드바 채널명 렌더링 시 `# 채널명`으로 복구
+    - 채널 메뉴 open/close/위치 계산 로직 추가
+    - 채널 추가/수정 모달을 공용으로 처리하도록 모드(`create`/`edit`) 도입
+    - 채널 삭제 액션 추가(확인 팝업 연동)
+    - 공용 확인 팝업 액션 타입에 채널 삭제 분기 추가
+    - 외부 클릭/리사이즈 시 채널 메뉴 닫힘 처리
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과

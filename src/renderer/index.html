@@ -144,18 +144,42 @@
         font-style: italic;
       }
       .section-item.channel {
-        display: grid;
-        gap: 2px;
+        padding: 6px 8px;
+      }
+      .channel-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
       }
       .channel-name {
         font-weight: 600;
-      }
-      .channel-desc {
-        color: #6a7788;
-        font-size: 11px;
+        min-width: 0;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+      }
+      .channel-menu-btn {
+        border: none;
+        width: 22px;
+        height: 22px;
+        border-radius: 6px;
+        background: #d9e7fb;
+        color: #15457f;
+        font-size: 13px;
+        cursor: pointer;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.12s ease, background-color 0.12s ease;
+      }
+      .section-item.channel:hover .channel-menu-btn,
+      .section-item.channel:focus-within .channel-menu-btn,
+      .channel-menu-btn:focus-visible {
+        opacity: 1;
+        pointer-events: auto;
+      }
+      .channel-menu-btn:hover {
+        background: #c6dcfb;
       }
       .member-list {
         list-style: none;
@@ -280,6 +304,37 @@
         background: #f2f6fb;
       }
       .member-menu .danger {
+        color: #ae2f2f;
+      }
+      .channel-menu {
+        position: fixed;
+        min-width: 120px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #fff;
+        box-shadow: 0 10px 20px rgba(13, 27, 45, 0.12);
+        padding: 4px;
+        z-index: 120;
+        display: none;
+      }
+      .channel-menu.show {
+        display: block;
+      }
+      .channel-menu button {
+        width: 100%;
+        border: none;
+        background: transparent;
+        border-radius: 8px;
+        padding: 8px 10px;
+        text-align: left;
+        font-size: 13px;
+        color: #24384f;
+        cursor: pointer;
+      }
+      .channel-menu button:hover {
+        background: #f2f6fb;
+      }
+      .channel-menu .danger {
         color: #ae2f2f;
       }
       .sidebar-section.collapsed .section-list {
@@ -741,6 +796,11 @@
       <button id="member-menu-delete" class="danger" type="button">제거</button>
     </div>
 
+    <div id="channel-menu" class="channel-menu" role="menu" aria-hidden="true">
+      <button id="channel-menu-edit" type="button">수정</button>
+      <button id="channel-menu-delete" class="danger" type="button">제거</button>
+    </div>
+
     <dialog id="member-modal">
       <form id="member-form" method="dialog" class="modal-inner">
         <h3 id="member-modal-title" class="modal-title">멤버 추가</h3>
@@ -776,7 +836,7 @@
 
     <dialog id="channel-modal">
       <form id="channel-form" method="dialog" class="modal-inner">
-        <h3 class="modal-title">채널 추가</h3>
+        <h3 id="channel-modal-title" class="modal-title">채널 추가</h3>
         <div class="modal-field">
           <label for="channel-name-input">채널 이름</label>
           <input id="channel-name-input" name="name" maxlength="60" required />
@@ -787,7 +847,7 @@
         </div>
         <div class="modal-actions">
           <button id="channel-cancel-btn" class="btn" type="button">취소</button>
-          <button class="btn primary" type="submit">만들기</button>
+          <button id="channel-submit-btn" class="btn primary" type="submit">만들기</button>
         </div>
       </form>
     </dialog>

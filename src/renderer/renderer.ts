@@ -31,9 +31,15 @@ let agents: Agent[] = [];
 let channels: Channel[] = [];
 let codexReady = false;
 let openMemberMenuAgentId: string | null = null;
+let openChannelMenuChannelId: string | null = null;
 let memberFormMode: "create" | "edit" = "create";
 let editingAgentId: string | null = null;
-let pendingMemberAction: { type: "clear" | "delete"; agentId: string } | null = null;
+let channelFormMode: "create" | "edit" = "create";
+let editingChannelId: string | null = null;
+type PendingAction =
+  | { target: "member"; type: "clear" | "delete"; agentId: string }
+  | { target: "channel"; type: "delete"; channelId: string };
+let pendingAction: PendingAction | null = null;
 let selectedChannelMemberAddId: string | null = null;
 const unreadAgentIds = new Set<string>();
 const inflightAgentIds = new Set<string>();
@@ -338,19 +344,35 @@ function renderChannelList(): void {
     const item = document.createElement("li");
     item.className = `section-item channel${channel.id === activeChannelId ? " active" : ""}`;
 
+    const rowEl = document.createElement("div");
+    rowEl.className = "channel-row";
+
     const nameEl = document.createElement("div");
     nameEl.className = "channel-name";
-    nameEl.textContent = channel.name;
+    nameEl.textContent = `# ${channel.name}`;
 
-    item.appendChild(nameEl);
+    const menuBtn = document.createElement("button");
+    menuBtn.className = "channel-menu-btn";
+    menuBtn.type = "button";
+    menuBtn.textContent = "☰";
+    menuBtn.setAttribute("aria-label", `${channel.name} 채널 메뉴`);
+    menuBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openChannelMenu(channel.id, menuBtn);
+    });
+
+    rowEl.appendChild(nameEl);
+    rowEl.appendChild(menuBtn);
+    item.appendChild(rowEl);
 
     item.addEventListener("click", () => {
+      closeChannelMenu();
       activeChannelId = channel.id;
       renderChannelList();
       renderMemberList();
       updateChannelMembersButton();
 
-      setHeader(channel.name, channel.description);
+      setHeader(`# ${channel.name}`, channel.description);
       setStatus("Channel selected");
       setComposerEnabled(false, "채널 대화 기능은 준비 중입니다.");
       renderMessages([]);
@@ -413,8 +435,49 @@ function closeMemberMenu(): void {
   openMemberMenuAgentId = null;
 }
 
+function closeChannelMenu(): void {
+  const menu = document.getElementById("channel-menu");
+  if (!menu) {
+    return;
+  }
+  menu.classList.remove("show");
+  menu.setAttribute("aria-hidden", "true");
+  openChannelMenuChannelId = null;
+}
+
+function openChannelMenu(channelId: string, anchor: HTMLElement): void {
+  const menu = document.getElementById("channel-menu");
+  if (!menu) {
+    return;
+  }
+  if (openChannelMenuChannelId === channelId && menu.classList.contains("show")) {
+    closeChannelMenu();
+    return;
+  }
+
+  openChannelMenuChannelId = channelId;
+  menu.classList.add("show");
+  menu.setAttribute("aria-hidden", "false");
+
+  const rect = anchor.getBoundingClientRect();
+  const width = menu.offsetWidth || 124;
+  const height = menu.offsetHeight || 76;
+  const margin = 8;
+
+  let left = rect.right - width;
+  let top = rect.bottom + 4;
+  left = Math.max(margin, Math.min(left, window.innerWidth - width - margin));
+  if (top + height > window.innerHeight - margin) {
+    top = rect.top - height - 4;
+  }
+  top = Math.max(margin, top);
+
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+}
+
 function openActionModal(
-  action: { type: "clear" | "delete"; agentId: string },
+  action: PendingAction,
   title: string,
   description: string,
   confirmLabel: string,
@@ -427,7 +490,7 @@ function openActionModal(
     return;
   }
 
-  pendingMemberAction = action;
+  pendingAction = action;
   titleEl.textContent = title;
   descEl.textContent = description;
   confirmBtn.textContent = confirmLabel;
@@ -440,7 +503,7 @@ function openActionModal(
 
 function closeActionModal(): void {
   const modal = document.getElementById("action-modal") as HTMLDialogElement | null;
-  pendingMemberAction = null;
+  pendingAction = null;
   if (!modal || !modal.open) {
     return;
   }
@@ -611,16 +674,31 @@ function closeMemberModal(): void {
   restoreInputFocus();
 }
 
-function openChannelModal(): void {
+function openChannelModal(mode: "create" | "edit", channel: Channel | null): void {
   const modal = document.getElementById("channel-modal") as HTMLDialogElement | null;
+  const titleEl = document.getElementById("channel-modal-title");
+  const submitBtn = document.getElementById("channel-submit-btn");
   const nameInput = document.getElementById("channel-name-input") as HTMLInputElement | null;
   const descInput = document.getElementById("channel-desc-input") as HTMLInputElement | null;
-  if (!modal || !nameInput || !descInput) {
+  if (!modal || !titleEl || !submitBtn || !nameInput || !descInput) {
     return;
   }
 
-  nameInput.value = "";
-  descInput.value = "";
+  channelFormMode = mode;
+  editingChannelId = mode === "edit" && channel ? channel.id : null;
+
+  if (mode === "edit" && channel) {
+    titleEl.textContent = "채널 수정";
+    submitBtn.textContent = "저장";
+    nameInput.value = channel.name;
+    descInput.value = channel.description;
+  } else {
+    titleEl.textContent = "채널 추가";
+    submitBtn.textContent = "만들기";
+    nameInput.value = "";
+    descInput.value = "";
+  }
+
   if (modal.open) {
     modal.close();
   }
@@ -817,6 +895,22 @@ function saveChannel(channelName: string, channelDescription: string): void {
     return;
   }
 
+  if (channelFormMode === "edit" && editingChannelId) {
+    const target = channels.find((channel) => channel.id === editingChannelId);
+    if (!target) {
+      showWarning("수정할 채널을 찾지 못했습니다.");
+      return;
+    }
+    const updated = { ...target, name, description };
+    channels = channels.map((channel) => (channel.id === updated.id ? updated : channel));
+    if (activeChannelId === updated.id) {
+      setHeader(`# ${updated.name}`, updated.description);
+    }
+    renderChannelList();
+    closeChannelModal();
+    return;
+  }
+
   const channel: Channel = {
     id: generateChannelId(name),
     name,
@@ -829,7 +923,7 @@ function saveChannel(channelName: string, channelDescription: string): void {
   renderChannelList();
   renderMemberList();
   updateChannelMembersButton();
-  setHeader(channel.name, channel.description);
+  setHeader(`# ${channel.name}`, channel.description);
   setStatus("Channel selected");
   setComposerEnabled(false, "채널 대화 기능은 준비 중입니다.");
   renderMessages([]);
@@ -849,6 +943,24 @@ function addSelectedMemberToActiveChannel(memberId: string): void {
   channels = channels.map((item) => (item.id === channel.id ? channel : item));
   closeChannelMemberAddModal();
   openChannelMembersModal();
+}
+
+function deleteChannel(channelId: string): void {
+  const target = channels.find((channel) => channel.id === channelId);
+  if (!target) {
+    return;
+  }
+
+  channels = channels.filter((channel) => channel.id !== channelId);
+  if (activeChannelId === channelId) {
+    activeChannelId = null;
+  }
+
+  closeChannelMenu();
+  renderChannelList();
+  renderMemberList();
+  updateChannelMembersButton();
+  void refreshMessages();
 }
 
 async function refreshAgents(preferredAgentId?: string | null): Promise<void> {
@@ -910,7 +1022,7 @@ async function refreshMessages(): Promise<void> {
 
   if (activeChannelId) {
     const channel = getChannelById(activeChannelId);
-    setHeader(channel ? channel.name : "채널", channel?.description ?? "");
+    setHeader(channel ? `# ${channel.name}` : "채널", channel?.description ?? "");
     setStatus("Channel selected");
     setComposerEnabled(false, "채널 대화 기능은 준비 중입니다.");
     renderMessages([]);
@@ -993,22 +1105,31 @@ async function clearMemberDm(agentId: string): Promise<void> {
   }
 }
 
-async function runPendingMemberAction(): Promise<void> {
-  const action = pendingMemberAction;
+async function runPendingAction(): Promise<void> {
+  const action = pendingAction;
   if (!action) {
     return;
   }
 
   closeActionModal();
-  if (action.type === "clear") {
+  if (action.target === "member" && action.type === "clear") {
     await clearMemberDm(action.agentId);
     return;
   }
-  await deleteMember(action.agentId);
+  if (action.target === "member" && action.type === "delete") {
+    await deleteMember(action.agentId);
+    return;
+  }
+  if (action.target === "channel" && action.type === "delete") {
+    deleteChannel(action.channelId);
+  }
 }
 
 function initMemberCrudUi(): void {
   const addChannelBtn = document.getElementById("add-channel-btn");
+  const channelMenu = document.getElementById("channel-menu");
+  const channelMenuEditBtn = document.getElementById("channel-menu-edit");
+  const channelMenuDeleteBtn = document.getElementById("channel-menu-delete");
   const channelModal = document.getElementById("channel-modal") as HTMLDialogElement | null;
   const channelForm = document.getElementById("channel-form") as HTMLFormElement | null;
   const channelCancelBtn = document.getElementById("channel-cancel-btn");
@@ -1039,12 +1160,13 @@ function initMemberCrudUi(): void {
   const actionCancelBtn = document.getElementById("action-cancel-btn");
   const actionConfirmBtn = document.getElementById("action-confirm-btn");
   const actionModal = document.getElementById("action-modal") as HTMLDialogElement | null;
-  const menu = document.getElementById("member-menu");
+  const memberMenu = document.getElementById("member-menu");
 
   addChannelBtn?.addEventListener("click", (event) => {
     event.stopPropagation();
     closeMemberMenu();
-    openChannelModal();
+    closeChannelMenu();
+    openChannelModal("create", null);
   });
 
   channelForm?.addEventListener("submit", (event) => {
@@ -1065,6 +1187,32 @@ function initMemberCrudUi(): void {
 
   channelMembersBtn?.addEventListener("click", () => {
     openChannelMembersModal();
+  });
+
+  channelMenuEditBtn?.addEventListener("click", () => {
+    if (!openChannelMenuChannelId) {
+      return;
+    }
+    const target = channels.find((channel) => channel.id === openChannelMenuChannelId) ?? null;
+    closeChannelMenu();
+    openChannelModal("edit", target);
+  });
+
+  channelMenuDeleteBtn?.addEventListener("click", () => {
+    if (!openChannelMenuChannelId) {
+      return;
+    }
+    const target = channels.find((channel) => channel.id === openChannelMenuChannelId);
+    if (!target) {
+      return;
+    }
+    closeChannelMenu();
+    openActionModal(
+      { target: "channel", type: "delete", channelId: target.id },
+      "채널 제거",
+      `"#${target.name}" 채널을 제거할까요?`,
+      "제거",
+    );
   });
 
   channelMembersSearchInput?.addEventListener("input", () => {
@@ -1107,6 +1255,7 @@ function initMemberCrudUi(): void {
   addMemberBtn?.addEventListener("click", (event) => {
     event.stopPropagation();
     closeMemberMenu();
+    closeChannelMenu();
     openMemberModal("create", null);
   });
 
@@ -1133,7 +1282,7 @@ function initMemberCrudUi(): void {
     }
     closeMemberMenu();
     openActionModal(
-      { type: "clear", agentId: target.id },
+      { target: "member", type: "clear", agentId: target.id },
       "DM 클리어",
       `"${target.name}"과의 DM 대화를 모두 지울까요?`,
       "클리어",
@@ -1159,7 +1308,7 @@ function initMemberCrudUi(): void {
     }
     closeMemberMenu();
     openActionModal(
-      { type: "delete", agentId: target.id },
+      { target: "member", type: "delete", agentId: target.id },
       "멤버 제거",
       `"${target.name}" 멤버를 제거할까요? 기존 DM 대화도 함께 삭제됩니다.`,
       "제거",
@@ -1171,31 +1320,34 @@ function initMemberCrudUi(): void {
   });
 
   actionConfirmBtn?.addEventListener("click", () => {
-    void runPendingMemberAction();
+    void runPendingAction();
   });
 
   actionModal?.addEventListener("close", () => {
-    pendingMemberAction = null;
+    pendingAction = null;
     restoreInputFocus();
   });
 
   document.addEventListener("click", (event) => {
     const target = event.target as Node;
-    if (!menu) {
-      return;
+    if (memberMenu && !memberMenu.contains(target)) {
+      const menuButton = (event.target as HTMLElement).closest(".member-menu-btn");
+      if (!menuButton) {
+        closeMemberMenu();
+      }
     }
-    if (menu.contains(target)) {
-      return;
+
+    if (channelMenu && !channelMenu.contains(target)) {
+      const channelMenuButton = (event.target as HTMLElement).closest(".channel-menu-btn");
+      if (!channelMenuButton) {
+        closeChannelMenu();
+      }
     }
-    const menuButton = (event.target as HTMLElement).closest(".member-menu-btn");
-    if (menuButton) {
-      return;
-    }
-    closeMemberMenu();
   });
 
   window.addEventListener("resize", () => {
     closeMemberMenu();
+    closeChannelMenu();
   });
 }
 
