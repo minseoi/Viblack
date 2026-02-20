@@ -95,3 +95,12 @@
 - 검증:
   - `npm run check` 통과
   - `npm run build` 통과
+
+### 12) 실행 재확인 (사용자 요청)
+- 일반 권한 `npm run start`:
+  - 빌드 성공 후 Electron이 OS 권한 오류로 종료
+  - 오류 키워드: `os_crypt_win`, `platform_channel`, `Access denied (0x5)`
+- 권한 상승 `npm run start`:
+  - 명령은 타임아웃(프로세스 지속 실행)
+  - `tasklist` 확인 결과 `electron.exe` 3개 프로세스 실행 중
+  - 판단: 앱 런치 성공
