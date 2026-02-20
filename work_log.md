@@ -222,3 +222,22 @@
 - 검증:
   - `npm run check` 통과
   - `npm run build` 통과
+
+### 20) UI 수정: 패널별 독립 스크롤
+- 사용자 요청:
+  - 전체 페이지가 함께 스크롤되는 문제 수정
+  - 좌측 패널과 중간 대화 패널의 스크롤 분리
+  - 상단바/입력창 고정, 대화창만 스크롤
+- 조치 (`src/renderer/index.html`):
+  - `html, body` 높이 고정 + `body` 전체 스크롤 비활성화
+  - `.app` overflow 차단
+  - `.sidebar`에 `overflow-y: auto` 적용 (좌측 독립 스크롤)
+  - `.main` 그리드 행을 `auto auto 1fr auto`로 명시
+  - `.main`에 `min-height: 0`, `overflow: hidden` 적용
+  - `.messages-wrap`에 `overflow-y: auto`, `min-height: 0` 적용
+- 결과:
+  - 스크롤은 대화 리스트 영역에서만 발생
+  - 상단바/경고배너/입력창은 고정 레이아웃 유지
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
