@@ -62,3 +62,11 @@
 ### 7) 검증 결과
 - `npm run check` 통과.
 - `npm run build` 통과.
+
+### 8) 추가 정리
+- `package-lock.json` 이름을 `viblack`으로 동기화(`npm install` 재실행).
+- 실행/구조 안내를 위해 `README.md` 추가.
+
+### 9) 커밋 로그
+- `1e7b22c`: `chore_init_viblack_repo_and_planning_docs`
+- `ae19861`: `feat_add_electron_typescript_mvp_scaffold`
