@@ -184,6 +184,24 @@
         overflow: hidden;
         text-overflow: ellipsis;
       }
+      .member-name-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+      }
+      .member-dot-badge {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex: 0 0 auto;
+      }
+      .member-dot-badge.unread {
+        background: #1565c0;
+      }
+      .member-dot-badge.working {
+        background: #f08c2f;
+      }
       .member-role {
         margin-top: 2px;
         font-size: 11px;

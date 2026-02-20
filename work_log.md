@@ -429,3 +429,17 @@
 - 검증:
   - `npm run check` 통과
   - `npm run build` 통과
+
+### 31) UI 수정: 멤버 상태를 텍스트 대신 dot 배지로 표시
+- 사용자 요청:
+  - 멤버 상태(`새 응답`, `응답 생성 중`)를 dot 배지로 표시.
+- 조치:
+  - `src/renderer/renderer.ts`
+    - 멤버 이름 줄(`member-name-row`)에 상태 dot 렌더링 추가
+    - `응답 생성 중`은 주황 dot, `새 응답`은 파란 dot
+    - 역할 줄은 상태 텍스트를 제거하고 역할만 유지
+  - `src/renderer/index.html`
+    - `member-name-row`, `member-dot-badge` 스타일 추가
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과

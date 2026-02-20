@@ -267,17 +267,22 @@ function renderMemberList(): void {
     nameEl.className = "member-name";
     nameEl.textContent = agent.name;
 
+    const nameRowEl = document.createElement("div");
+    nameRowEl.className = "member-name-row";
+    nameRowEl.appendChild(nameEl);
+
+    if (inflightAgentIds.has(agent.id) || unreadAgentIds.has(agent.id)) {
+      const dot = document.createElement("span");
+      dot.className = `member-dot-badge ${inflightAgentIds.has(agent.id) ? "working" : "unread"}`;
+      dot.title = inflightAgentIds.has(agent.id) ? "응답 생성 중" : "새 응답";
+      nameRowEl.appendChild(dot);
+    }
+
     const roleEl = document.createElement("div");
     roleEl.className = "member-role";
-    const roleParts = [agent.role];
-    if (inflightAgentIds.has(agent.id)) {
-      roleParts.push("응답 생성 중");
-    } else if (unreadAgentIds.has(agent.id)) {
-      roleParts.push("새 응답");
-    }
-    roleEl.textContent = roleParts.join(" · ");
+    roleEl.textContent = agent.role;
 
-    textWrap.appendChild(nameEl);
+    textWrap.appendChild(nameRowEl);
     textWrap.appendChild(roleEl);
 
     const menuBtn = document.createElement("button");
