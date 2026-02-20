@@ -1,4 +1,5 @@
 import path from "node:path";
+import fs from "node:fs";
 import { app, BrowserWindow, ipcMain } from "electron";
 import { checkCodexAvailability, shutdownCodexProcesses } from "./backend/codex";
 import { startServer, type StartedServer } from "./backend/server";
@@ -9,12 +10,20 @@ let backendBaseUrl = "";
 let bootCodexStatus: CodexStatus = { ok: false, error: "not initialized" };
 let shutdownInProgress = false;
 
+function resolveWindowIconPath(): string | undefined {
+  const iconsDir = path.join(app.getAppPath(), "src", "assets", "icons");
+  const iconFile = process.platform === "darwin" ? "icon.icns" : "icon.ico";
+  const iconPath = path.join(iconsDir, iconFile);
+  return fs.existsSync(iconPath) ? iconPath : undefined;
+}
+
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1200,
     height: 820,
     minWidth: 960,
     minHeight: 640,
+    icon: resolveWindowIconPath(),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,

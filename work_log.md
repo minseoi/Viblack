@@ -606,3 +606,19 @@
 - 조치:
   - `src/assets/icons/` 경로 생성
   - Git 추적 유지를 위해 `src/assets/icons/.gitkeep` 추가
+
+### 41) 설정: 사용자 추가 아이콘 파일 앱 적용
+- 사용자 요청:
+  - 추가한 아이콘 파일까지 적용해서 커밋.
+- 조치:
+  - 사용자 추가 파일 확인:
+    - `src/assets/icons/icon.ico`
+    - `src/assets/icons/icon.icns`
+    - `src/assets/icons/icon.png`
+  - `src/main.ts`에서 플랫폼별 아이콘 경로를 참조하도록 반영
+    - macOS: `icon.icns`
+    - 그 외: `icon.ico`
+    - 파일 존재 시에만 `BrowserWindow` `icon` 옵션에 설정
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
