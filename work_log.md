@@ -354,3 +354,17 @@
 - 검증:
   - `npm run check` 통과
   - `npm run build` 통과
+
+### 27) UI 수정: 대화 패널 고정 레이아웃을 flex 기반으로 전환
+- 사용자 이슈:
+  - 대화가 적을 때도 입력창이 하단 고정되지 않고 위쪽으로 당겨지는 현상 지속.
+- 조치 (`src/renderer/index.html`):
+  - `.main` 레이아웃을 grid -> `flex column`으로 변경
+  - `.messages-wrap`에 `flex: 1 1 auto` 적용
+  - `#messages` flex 값을 `1 0 auto`로 조정
+- 결과:
+  - 상단바/경고/입력창은 고정되고, 가운데 메시지 영역만 남은 높이를 차지
+  - 메시지가 적거나 없어도 입력창이 하단에 유지
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
