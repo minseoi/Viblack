@@ -167,8 +167,8 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
   const timeoutMs = params.timeoutMs ?? 120_000;
 
   const args = params.sessionId
-    ? ["exec", "resume", "--skip-git-repo-check", "--json", params.sessionId, prompt]
-    : ["exec", "--skip-git-repo-check", "--json", prompt];
+    ? ["exec", "resume", "--skip-git-repo-check", "--json", params.sessionId, "-"]
+    : ["exec", "--skip-git-repo-check", "--json", "-"];
 
   return new Promise((resolve) => {
     let child: ChildProcess;
@@ -259,6 +259,11 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
         error: err.message,
       });
     });
+
+    if (child.stdin) {
+      child.stdin.write(prompt);
+      child.stdin.end();
+    }
 
     child.on("close", (code) => {
       clearTimeout(timeoutHandle);

@@ -141,3 +141,17 @@
 - 검증:
   - `npm run check` 통과
   - `npm run build` 통과
+
+### 15) 이슈 대응: `unexpected argument 'role:'`
+- 사용자 런타임 오류:
+  - `Codex 실행 실패: error: unexpected argument 'role:' found`
+- 원인:
+  - Windows `.cmd` 실행 경로에서 긴 프롬프트를 CLI 인자로 전달할 때 인자 파싱이 깨짐.
+- 조치:
+  - `src/backend/codex.ts`
+    - `codex exec`/`resume` 호출 시 프롬프트 인자 전달을 중단
+    - 프롬프트는 `-`(stdin 입력 모드)로 전달하도록 변경
+    - child stdin으로 prompt write/end 처리 추가
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
