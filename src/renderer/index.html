@@ -63,22 +63,36 @@
         overflow: hidden;
       }
       .section-header {
-        width: 100%;
-        border: none;
         background: #fff;
         border-bottom: 1px solid #eef1f5;
         display: flex;
         align-items: center;
         justify-content: space-between;
         padding: 10px 10px 9px;
+      }
+      .section-toggle {
+        border: none;
+        background: transparent;
         color: #314054;
         font-size: 13px;
         font-weight: 700;
-        cursor: default;
+        cursor: pointer;
         transition: background-color 0.12s ease, color 0.12s ease;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0;
+      }
+      .section-caret {
+        display: inline-block;
+        font-size: 11px;
+        transform: rotate(0deg);
+        transition: transform 0.15s ease;
       }
       .section-header:hover {
         background: #edf3fb;
+      }
+      .section-header:hover .section-toggle {
         color: #15457f;
       }
       .header-add {
@@ -123,6 +137,16 @@
         background: #e8f2ff;
         color: #124885;
         font-weight: 600;
+      }
+      .section-item.empty {
+        color: #6b7788;
+        font-style: italic;
+      }
+      .sidebar-section.collapsed .section-list {
+        display: none;
+      }
+      .sidebar-section.collapsed .section-caret {
+        transform: rotate(-90deg);
       }
       .main {
         display: grid;
@@ -252,20 +276,26 @@
 
         <div class="sidebar-sections">
           <section class="sidebar-section">
-            <button class="section-header" type="button">
-              <span>채널</span>
-              <span class="header-add" aria-label="채널 추가">+</span>
-            </button>
+            <div class="section-header">
+              <button class="section-toggle" type="button" aria-expanded="true">
+                <span class="section-caret">▾</span>
+                <span>채널</span>
+              </button>
+              <button class="header-add" type="button" aria-label="채널 추가">+</button>
+            </div>
             <ul class="section-list">
-              <li class="section-item active"># general</li>
+              <li class="section-item empty">채널이 없습니다.</li>
             </ul>
           </section>
 
           <section class="sidebar-section">
-            <button class="section-header" type="button">
-              <span>멤버</span>
-              <span class="header-add" aria-label="멤버 추가">+</span>
-            </button>
+            <div class="section-header">
+              <button class="section-toggle" type="button" aria-expanded="true">
+                <span class="section-caret">▾</span>
+                <span>멤버</span>
+              </button>
+              <button class="header-add" type="button" aria-label="멤버 추가">+</button>
+            </div>
             <ul class="section-list">
               <li class="section-item active">Helper</li>
             </ul>

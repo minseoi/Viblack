@@ -60,6 +60,28 @@ function showWarning(text: string | null): void {
   warningEl.classList.add("show");
 }
 
+function initSidebarSections(): void {
+  const toggles = document.querySelectorAll<HTMLButtonElement>(".section-toggle");
+  toggles.forEach((toggle) => {
+    toggle.addEventListener("click", () => {
+      const section = toggle.closest(".sidebar-section");
+      if (!section) {
+        return;
+      }
+      const isCollapsed = section.classList.toggle("collapsed");
+      toggle.setAttribute("aria-expanded", String(!isCollapsed));
+    });
+  });
+
+  const addButtons = document.querySelectorAll<HTMLButtonElement>(".header-add");
+  addButtons.forEach((addBtn) => {
+    addBtn.addEventListener("click", (event: MouseEvent) => {
+      event.stopPropagation();
+      // Placeholder: actual add flow will be wired in a later step.
+    });
+  });
+}
+
 function renderMessages(messages: ChatMessage[]): void {
   const list = document.getElementById("messages");
   if (!list) {
@@ -183,6 +205,8 @@ async function sendMessage(): Promise<void> {
 }
 
 window.addEventListener("DOMContentLoaded", () => {
+  initSidebarSections();
+
   const form = document.getElementById("chat-form");
   const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
 

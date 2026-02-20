@@ -258,3 +258,21 @@
 - 검증:
   - `npm run check` 통과
   - `npm run build` 통과
+
+### 22) UI 수정: 사이드바 섹션 접기/펼치기 + 기본 채널 없음
+- 사용자 요청:
+  - `채널`/`멤버` 섹션을 접었다 펼칠 수 있어야 함
+  - 채널은 기본적으로 0개 상태여야 함
+- 조치:
+  - `src/renderer/index.html`
+    - 섹션 헤더를 `section-toggle` + `header-add` 구조로 분리
+    - 토글용 caret(▾) 추가
+    - `collapsed` 상태 스타일 추가(목록 숨김 + caret 회전)
+    - 채널 목록 기본값을 `채널이 없습니다.`(empty 상태)로 변경
+  - `src/renderer/renderer.ts`
+    - `initSidebarSections()` 추가
+    - `section-toggle` 클릭 시 섹션 접기/펼치기 + `aria-expanded` 동기화
+    - `header-add` 클릭 이벤트 분리(추후 기능 연결 placeholder)
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
