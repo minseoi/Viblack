@@ -603,16 +603,43 @@
         display: grid;
         gap: 8px;
       }
+      .modal-scroll-box {
+        margin: 0;
+        padding: 6px;
+        border: 1px solid #d7e0ea;
+        border-radius: 8px;
+        background: #f9fbfe;
+        max-height: 240px;
+        overflow-y: auto;
+        display: grid;
+        gap: 8px;
+      }
       .modal-list-item {
         border: 1px solid #d8e0ea;
         border-radius: 8px;
         padding: 8px 10px;
         display: grid;
         gap: 2px;
+        background: #fff;
       }
       .modal-list-item.empty {
         color: #67778c;
         font-style: italic;
+      }
+      .modal-list-item.selectable {
+        cursor: pointer;
+        transition: background-color 0.12s ease, border-color 0.12s ease;
+      }
+      .modal-list-item.selectable:hover {
+        background: #f2f7ff;
+      }
+      .modal-list-item.selected {
+        border-color: #1565c0;
+        background: #e8f2ff;
+      }
+      .modal-list-item.disabled {
+        background: #f4f6f9;
+        color: #718097;
       }
       .modal-list-item .name {
         font-size: 13px;
@@ -757,7 +784,11 @@
     <dialog id="channel-members-modal">
       <div class="modal-inner">
         <h3 id="channel-members-title" class="modal-title">채널 멤버</h3>
-        <ul id="channel-members-list" class="modal-list"></ul>
+        <div class="modal-field">
+          <label for="channel-members-search-input">멤버 검색</label>
+          <input id="channel-members-search-input" placeholder="이름 또는 역할 검색" />
+        </div>
+        <div id="channel-members-list" class="modal-scroll-box"></div>
         <div class="modal-actions">
           <button id="channel-members-add-btn" class="btn primary" type="button">멤버 추가</button>
           <button id="channel-members-close-btn" class="btn" type="button">닫기</button>
@@ -769,9 +800,10 @@
       <form id="channel-member-add-form" method="dialog" class="modal-inner">
         <h3 class="modal-title">채널 멤버 추가</h3>
         <div class="modal-field">
-          <label for="channel-member-select">멤버 선택</label>
-          <select id="channel-member-select" name="memberId" required></select>
+          <label for="channel-member-add-search-input">멤버 검색</label>
+          <input id="channel-member-add-search-input" placeholder="이름 또는 역할 검색" />
         </div>
+        <div id="channel-member-add-list" class="modal-scroll-box"></div>
         <div class="modal-actions">
           <button id="channel-member-add-cancel-btn" class="btn" type="button">취소</button>
           <button id="channel-member-add-submit-btn" class="btn primary" type="submit">추가</button>

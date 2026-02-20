@@ -34,6 +34,7 @@ let openMemberMenuAgentId: string | null = null;
 let memberFormMode: "create" | "edit" = "create";
 let editingAgentId: string | null = null;
 let pendingMemberAction: { type: "clear" | "delete"; agentId: string } | null = null;
+let selectedChannelMemberAddId: string | null = null;
 const unreadAgentIds = new Set<string>();
 const inflightAgentIds = new Set<string>();
 
@@ -293,6 +294,18 @@ function generateChannelId(name: string): string {
     index += 1;
   }
   return id;
+}
+
+function normalizeSearchKeyword(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function matchesAgentSearch(agent: Agent, keyword: string): boolean {
+  if (!keyword) {
+    return true;
+  }
+  const target = `${agent.name} ${agent.role}`.toLowerCase();
+  return target.includes(keyword);
 }
 
 function renderChannelList(): void {
@@ -624,6 +637,7 @@ function closeChannelModal(): void {
 function renderChannelMembersModalContent(): void {
   const list = document.getElementById("channel-members-list");
   const title = document.getElementById("channel-members-title");
+  const searchInput = document.getElementById("channel-members-search-input") as HTMLInputElement | null;
   const channel = getChannelById(activeChannelId);
   if (!list || !title || !channel) {
     return;
@@ -631,21 +645,23 @@ function renderChannelMembersModalContent(): void {
 
   title.textContent = `# ${channel.name} 멤버`;
   list.innerHTML = "";
+  const keyword = normalizeSearchKeyword(searchInput?.value ?? "");
 
   const members = channel.memberIds
     .map((id) => agents.find((agent) => agent.id === id))
-    .filter((agent): agent is Agent => Boolean(agent));
+    .filter((agent): agent is Agent => Boolean(agent))
+    .filter((agent) => matchesAgentSearch(agent, keyword));
 
   if (members.length === 0) {
-    const empty = document.createElement("li");
+    const empty = document.createElement("div");
     empty.className = "modal-list-item empty";
-    empty.textContent = "채널에 멤버가 없습니다.";
+    empty.textContent = keyword ? "검색 결과가 없습니다." : "채널에 멤버가 없습니다.";
     list.appendChild(empty);
     return;
   }
 
   for (const member of members) {
-    const item = document.createElement("li");
+    const item = document.createElement("div");
     item.className = "modal-list-item";
 
     const nameEl = document.createElement("div");
@@ -664,16 +680,21 @@ function renderChannelMembersModalContent(): void {
 
 function openChannelMembersModal(): void {
   const modal = document.getElementById("channel-members-modal") as HTMLDialogElement | null;
+  const searchInput = document.getElementById("channel-members-search-input") as HTMLInputElement | null;
   const channel = getChannelById(activeChannelId);
   if (!modal || !channel) {
     return;
   }
 
+  if (searchInput) {
+    searchInput.value = "";
+  }
   renderChannelMembersModalContent();
   if (modal.open) {
     modal.close();
   }
   modal.showModal();
+  searchInput?.focus();
 }
 
 function closeChannelMembersModal(): void {
@@ -685,44 +706,99 @@ function closeChannelMembersModal(): void {
   restoreInputFocus();
 }
 
-function openChannelMemberAddModal(): void {
-  const modal = document.getElementById("channel-member-add-modal") as HTMLDialogElement | null;
-  const select = document.getElementById("channel-member-select") as HTMLSelectElement | null;
+function renderChannelMemberAddList(): void {
+  const list = document.getElementById("channel-member-add-list");
+  const searchInput = document.getElementById("channel-member-add-search-input") as HTMLInputElement | null;
   const submitBtn = document.getElementById("channel-member-add-submit-btn") as HTMLButtonElement | null;
   const channel = getChannelById(activeChannelId);
-  if (!modal || !select || !submitBtn || !channel) {
+  if (!list || !submitBtn || !channel) {
     return;
   }
 
-  const candidates = agents.filter((agent) => !channel.memberIds.includes(agent.id));
-  select.innerHTML = "";
-  if (candidates.length === 0) {
-    const option = document.createElement("option");
-    option.value = "";
-    option.textContent = "추가 가능한 멤버가 없습니다.";
-    select.appendChild(option);
-    select.disabled = true;
-    submitBtn.disabled = true;
-  } else {
-    for (const candidate of candidates) {
-      const option = document.createElement("option");
-      option.value = candidate.id;
-      option.textContent = `${candidate.name} (${candidate.role})`;
-      select.appendChild(option);
+  const keyword = normalizeSearchKeyword(searchInput?.value ?? "");
+  const visibleAgents = agents.filter((agent) => matchesAgentSearch(agent, keyword));
+
+  if (selectedChannelMemberAddId) {
+    const selectedVisible = visibleAgents.some(
+      (agent) => agent.id === selectedChannelMemberAddId && !channel.memberIds.includes(agent.id),
+    );
+    if (!selectedVisible) {
+      selectedChannelMemberAddId = null;
     }
-    select.disabled = false;
-    submitBtn.disabled = false;
   }
+
+  list.innerHTML = "";
+  if (visibleAgents.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "modal-list-item empty";
+    empty.textContent = "검색 결과가 없습니다.";
+    list.appendChild(empty);
+    submitBtn.disabled = true;
+    return;
+  }
+
+  for (const agent of visibleAgents) {
+    const alreadyAdded = channel.memberIds.includes(agent.id);
+    const isSelected = selectedChannelMemberAddId === agent.id;
+
+    const item = document.createElement("div");
+    const classes = ["modal-list-item"];
+    if (alreadyAdded) {
+      classes.push("disabled");
+    } else {
+      classes.push("selectable");
+    }
+    if (isSelected) {
+      classes.push("selected");
+    }
+    item.className = classes.join(" ");
+
+    const nameEl = document.createElement("div");
+    nameEl.className = "name";
+    nameEl.textContent = agent.name;
+
+    const subEl = document.createElement("div");
+    subEl.className = "sub";
+    subEl.textContent = alreadyAdded ? `${agent.role} · 이미 채널에 있음` : agent.role;
+
+    item.appendChild(nameEl);
+    item.appendChild(subEl);
+
+    if (!alreadyAdded) {
+      item.addEventListener("click", () => {
+        selectedChannelMemberAddId = agent.id;
+        renderChannelMemberAddList();
+      });
+    }
+
+    list.appendChild(item);
+  }
+
+  submitBtn.disabled = selectedChannelMemberAddId === null;
+}
+
+function openChannelMemberAddModal(): void {
+  const modal = document.getElementById("channel-member-add-modal") as HTMLDialogElement | null;
+  const searchInput = document.getElementById("channel-member-add-search-input") as HTMLInputElement | null;
+  const channel = getChannelById(activeChannelId);
+  if (!modal || !searchInput || !channel) {
+    return;
+  }
+
+  selectedChannelMemberAddId = null;
+  searchInput.value = "";
+  renderChannelMemberAddList();
 
   if (modal.open) {
     modal.close();
   }
   modal.showModal();
-  select.focus();
+  searchInput.focus();
 }
 
 function closeChannelMemberAddModal(): void {
   const modal = document.getElementById("channel-member-add-modal") as HTMLDialogElement | null;
+  selectedChannelMemberAddId = null;
   if (!modal || !modal.open) {
     return;
   }
@@ -953,15 +1029,18 @@ function initMemberCrudUi(): void {
   const channelDescInput = document.getElementById("channel-desc-input") as HTMLInputElement | null;
   const channelMembersBtn = document.getElementById("channel-members-btn");
   const channelMembersModal = document.getElementById("channel-members-modal") as HTMLDialogElement | null;
+  const channelMembersSearchInput = document.getElementById(
+    "channel-members-search-input",
+  ) as HTMLInputElement | null;
   const channelMembersAddBtn = document.getElementById("channel-members-add-btn");
   const channelMembersCloseBtn = document.getElementById("channel-members-close-btn");
   const channelMemberAddModal = document.getElementById("channel-member-add-modal") as HTMLDialogElement | null;
   const channelMemberAddForm = document.getElementById(
     "channel-member-add-form",
   ) as HTMLFormElement | null;
-  const channelMemberSelect = document.getElementById(
-    "channel-member-select",
-  ) as HTMLSelectElement | null;
+  const channelMemberAddSearchInput = document.getElementById(
+    "channel-member-add-search-input",
+  ) as HTMLInputElement | null;
   const channelMemberAddCancelBtn = document.getElementById("channel-member-add-cancel-btn");
   const addMemberBtn = document.getElementById("add-member-btn");
   const memberModal = document.getElementById("member-modal") as HTMLDialogElement | null;
@@ -1001,6 +1080,10 @@ function initMemberCrudUi(): void {
     openChannelMembersModal();
   });
 
+  channelMembersSearchInput?.addEventListener("input", () => {
+    renderChannelMembersModalContent();
+  });
+
   channelMembersAddBtn?.addEventListener("click", () => {
     closeChannelMembersModal();
     openChannelMemberAddModal();
@@ -1016,10 +1099,14 @@ function initMemberCrudUi(): void {
 
   channelMemberAddForm?.addEventListener("submit", (event) => {
     event.preventDefault();
-    if (!channelMemberSelect) {
+    if (!selectedChannelMemberAddId) {
       return;
     }
-    addSelectedMemberToActiveChannel(channelMemberSelect.value);
+    addSelectedMemberToActiveChannel(selectedChannelMemberAddId);
+  });
+
+  channelMemberAddSearchInput?.addEventListener("input", () => {
+    renderChannelMemberAddList();
   });
 
   channelMemberAddCancelBtn?.addEventListener("click", () => {
