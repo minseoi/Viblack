@@ -587,3 +587,15 @@
 - 검증:
   - `npm run check` 통과
   - `npm run build` 통과
+
+### 39) 버그 수정: 채널 멤버 햄버거 메뉴 클릭 시 메뉴 미표시
+- 사용자 이슈:
+  - 채널 멤버 항목의 햄버거 버튼 클릭 시 메뉴가 보이지 않음.
+- 원인:
+  - 채널 멤버 메뉴 DOM이 `channel-members-modal` 바깥에 있어 dialog top-layer 뒤로 가려질 수 있음.
+- 조치 (`src/renderer/index.html`):
+  - `#channel-member-menu`를 `#channel-members-modal` 내부로 이동
+  - 채널 멤버 리스트와 동일한 레이어에서 메뉴가 렌더링되도록 변경
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
