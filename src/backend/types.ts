@@ -20,5 +20,6 @@ export interface ChatMessage {
 export interface CodexStatus {
   ok: boolean;
   version?: string;
+  command?: string;
   error?: string;
 }

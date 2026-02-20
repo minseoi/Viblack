@@ -77,6 +77,17 @@
         color: var(--sub);
         font-size: 12px;
       }
+      #warning {
+        display: none;
+        background: #fff3cd;
+        border-bottom: 1px solid #f0cf7e;
+        color: #6a4b00;
+        padding: 10px 20px;
+        font-size: 13px;
+      }
+      #warning.show {
+        display: block;
+      }
       .messages-wrap {
         padding: 14px 20px;
         overflow: auto;
@@ -177,6 +188,7 @@
           <div id="agent-title">Helper</div>
           <div id="status">Loading...</div>
         </header>
+        <div id="warning"></div>
 
         <section class="messages-wrap">
           <ul id="messages"></ul>

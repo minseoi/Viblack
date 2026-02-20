@@ -17,6 +17,18 @@ interface ChatMessage {
 let backendBaseUrl = "";
 let activeAgentId = "helper";
 
+function focusInput(): void {
+  const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
+  if (!input) {
+    return;
+  }
+  setTimeout(() => {
+    input.focus();
+    const len = input.value.length;
+    input.setSelectionRange(len, len);
+  }, 0);
+}
+
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
   if (!response.ok) {
@@ -31,6 +43,20 @@ function setStatus(text: string): void {
   if (statusEl) {
     statusEl.textContent = text;
   }
+}
+
+function showWarning(text: string | null): void {
+  const warningEl = document.getElementById("warning");
+  if (!warningEl) {
+    return;
+  }
+  if (!text) {
+    warningEl.textContent = "";
+    warningEl.classList.remove("show");
+    return;
+  }
+  warningEl.textContent = text;
+  warningEl.classList.add("show");
 }
 
 function renderMessages(messages: ChatMessage[]): void {
@@ -82,13 +108,18 @@ async function init(): Promise<void> {
   const codexStatus = await window.viblackApi.getBootCodexStatus();
 
   if (!codexStatus.ok) {
-    alert(
+    showWarning(
       [
-        "Codex CLI를 찾을 수 없습니다.",
-        "터미널에서 `codex --version`이 동작하는지 확인해 주세요.",
-        `오류: ${codexStatus.error ?? "unknown"}`,
-      ].join("\n"),
+        "Codex CLI를 찾지 못했습니다. 터미널에서 `codex --version`을 확인하세요.",
+        codexStatus.error ? `오류: ${codexStatus.error}` : "",
+      ]
+        .filter((line) => line.length > 0)
+        .join(" "),
     );
+    setStatus("Codex unavailable");
+  } else {
+    showWarning(null);
+    setStatus(`Ready (${codexStatus.command ?? "codex"})`);
   }
 
   const agentsData = await fetchJson<{ agents: Agent[] }>(`${backendBaseUrl}/api/agents`);
@@ -96,7 +127,6 @@ async function init(): Promise<void> {
     activeAgentId = agentsData.agents[0].id;
   }
   await refreshMessages();
-  setStatus("Ready");
 }
 
 async function sendMessage(): Promise<void> {
@@ -123,10 +153,12 @@ async function sendMessage(): Promise<void> {
     });
     await refreshMessages();
     setStatus("Ready");
+    focusInput();
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown error";
     setStatus(`Error: ${message}`);
-    alert(`메시지 전송 실패: ${message}`);
+    showWarning(`메시지 전송 실패: ${message}`);
+    focusInput();
   } finally {
     button.disabled = false;
   }

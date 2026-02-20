@@ -1,5 +1,5 @@
 import path from "node:path";
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain } from "electron";
 import { checkCodexAvailability } from "./backend/codex";
 import { startServer, type StartedServer } from "./backend/server";
 import type { CodexStatus } from "./backend/types";
@@ -33,16 +33,6 @@ async function boot(): Promise<void> {
   backendBaseUrl = `http://127.0.0.1:${backendServer.port}`;
 
   bootCodexStatus = await checkCodexAvailability(workspaceDir);
-  if (!bootCodexStatus.ok) {
-    dialog.showErrorBox(
-      "Codex CLI 확인 필요",
-      [
-        "Codex CLI를 실행할 수 없습니다.",
-        "터미널에서 `codex --version` 명령이 동작하는지 확인해 주세요.",
-        `오류: ${bootCodexStatus.error ?? "unknown"}`,
-      ].join("\n"),
-    );
-  }
 
   createWindow();
 }

@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 import type { CodexStatus } from "./types";
 
 interface CodexRunParams {
@@ -14,6 +16,65 @@ export interface CodexRunResult {
   reply: string;
   sessionId: string | null;
   error?: string;
+}
+
+let codexCommand = process.env.VIBLACK_CODEX_PATH || "codex";
+
+function getCandidateCommands(): string[] {
+  const candidates = [codexCommand, "codex"];
+
+  if (process.platform === "win32") {
+    const appData = process.env.APPDATA;
+    const userProfile = process.env.USERPROFILE;
+    if (appData) {
+      candidates.push(path.join(appData, "npm", "codex.cmd"));
+      candidates.push(path.join(appData, "npm", "codex"));
+    }
+    if (userProfile) {
+      candidates.push(path.join(userProfile, "AppData", "Roaming", "npm", "codex.cmd"));
+      candidates.push(path.join(userProfile, "AppData", "Roaming", "npm", "codex"));
+    }
+  } else {
+    candidates.push("/usr/local/bin/codex");
+    candidates.push("/opt/homebrew/bin/codex");
+  }
+
+  const unique: string[] = [];
+  for (const candidate of candidates) {
+    if (!candidate || unique.includes(candidate)) {
+      continue;
+    }
+    if (candidate.includes(path.sep) && !fs.existsSync(candidate)) {
+      continue;
+    }
+    unique.push(candidate);
+  }
+  return unique;
+}
+
+async function runCodexVersion(command: string, cwd: string): Promise<CodexStatus> {
+  return new Promise((resolve) => {
+    const child = spawn(command, ["--version"], { cwd });
+    let output = "";
+    let err = "";
+
+    child.stdout.on("data", (chunk) => {
+      output += String(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      err += String(chunk);
+    });
+    child.on("error", (spawnErr) => {
+      resolve({ ok: false, command, error: spawnErr.message });
+    });
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve({ ok: true, version: output.trim(), command });
+        return;
+      }
+      resolve({ ok: false, command, error: (err || output).trim() || "codex command failed" });
+    });
+  });
 }
 
 function extractTextParts(value: unknown): string[] {
@@ -59,28 +120,20 @@ function buildPrompt(systemPrompt: string, userPrompt: string, hasSession: boole
 }
 
 export async function checkCodexAvailability(cwd: string): Promise<CodexStatus> {
-  return new Promise((resolve) => {
-    const child = spawn("codex", ["--version"], { cwd });
-    let output = "";
-    let err = "";
+  const errors: string[] = [];
+  for (const candidate of getCandidateCommands()) {
+    const status = await runCodexVersion(candidate, cwd);
+    if (status.ok) {
+      codexCommand = candidate;
+      return status;
+    }
+    errors.push(`${candidate}: ${status.error ?? "unknown"}`);
+  }
 
-    child.stdout.on("data", (chunk) => {
-      output += String(chunk);
-    });
-    child.stderr.on("data", (chunk) => {
-      err += String(chunk);
-    });
-    child.on("error", (spawnErr) => {
-      resolve({ ok: false, error: spawnErr.message });
-    });
-    child.on("close", (code) => {
-      if (code === 0) {
-        resolve({ ok: true, version: output.trim() });
-        return;
-      }
-      resolve({ ok: false, error: (err || output).trim() || "codex command failed" });
-    });
-  });
+  return {
+    ok: false,
+    error: errors.join(" | ") || "codex not found",
+  };
 }
 
 export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> {
@@ -92,7 +145,7 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
     : ["exec", "--skip-git-repo-check", "--json", prompt];
 
   return new Promise((resolve) => {
-    const child = spawn("codex", args, { cwd: params.cwd });
+    const child = spawn(codexCommand, args, { cwd: params.cwd });
     let stdoutBuffer = "";
     let stderrOutput = "";
     let sessionId = params.sessionId;
