@@ -143,6 +143,20 @@
         color: #6b7788;
         font-style: italic;
       }
+      .section-item.channel {
+        display: grid;
+        gap: 2px;
+      }
+      .channel-name {
+        font-weight: 600;
+      }
+      .channel-desc {
+        color: #6a7788;
+        font-size: 11px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
       .member-list {
         list-style: none;
         margin: 0;
@@ -291,6 +305,26 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
+      }
+      .top-right {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .top-btn {
+        border: 1px solid #b9c8dc;
+        background: #fff;
+        color: #294160;
+        border-radius: 8px;
+        padding: 6px 10px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .top-btn:hover {
+        background: #eef4fd;
+      }
+      .top-btn.hidden {
+        display: none;
       }
       #agent-title {
         font-size: 16px;
@@ -485,10 +519,23 @@
         padding: 0;
         width: min(360px, calc(100vw - 24px));
       }
+      #channel-modal,
+      #channel-members-modal,
+      #channel-member-add-modal {
+        border: none;
+        border-radius: 12px;
+        padding: 0;
+        width: min(420px, calc(100vw - 24px));
+      }
       #member-modal::backdrop {
         background: rgba(9, 17, 28, 0.5);
       }
       #action-modal::backdrop {
+        background: rgba(9, 17, 28, 0.5);
+      }
+      #channel-modal::backdrop,
+      #channel-members-modal::backdrop,
+      #channel-member-add-modal::backdrop {
         background: rgba(9, 17, 28, 0.5);
       }
       .modal-inner {
@@ -549,6 +596,32 @@
         font-size: 13px;
         line-height: 1.5;
       }
+      .modal-list {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        display: grid;
+        gap: 8px;
+      }
+      .modal-list-item {
+        border: 1px solid #d8e0ea;
+        border-radius: 8px;
+        padding: 8px 10px;
+        display: grid;
+        gap: 2px;
+      }
+      .modal-list-item.empty {
+        color: #67778c;
+        font-style: italic;
+      }
+      .modal-list-item .name {
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .modal-list-item .sub {
+        font-size: 11px;
+        color: #607186;
+      }
     </style>
   </head>
   <body>
@@ -566,11 +639,16 @@
                 <span class="section-caret">▾</span>
                 <span>채널</span>
               </button>
-              <button class="header-add" type="button" aria-label="채널 추가">+</button>
+              <button
+                id="add-channel-btn"
+                class="header-add"
+                type="button"
+                aria-label="채널 추가"
+              >
+                +
+              </button>
             </div>
-            <ul class="section-list">
-              <li class="section-item empty">채널이 없습니다.</li>
-            </ul>
+            <ul id="channel-list" class="section-list"></ul>
           </section>
 
           <section class="sidebar-section" data-section="members">
@@ -596,7 +674,10 @@
       <main class="main">
         <header class="top">
           <div id="agent-title">Helper</div>
-          <div id="status">Loading...</div>
+          <div class="top-right">
+            <button id="channel-members-btn" class="top-btn hidden" type="button">채널 멤버</button>
+            <div id="status">Loading...</div>
+          </div>
         </header>
         <div id="warning"></div>
 
@@ -653,6 +734,49 @@
           <button id="action-confirm-btn" class="btn danger" type="button">확인</button>
         </div>
       </div>
+    </dialog>
+
+    <dialog id="channel-modal">
+      <form id="channel-form" method="dialog" class="modal-inner">
+        <h3 class="modal-title">채널 추가</h3>
+        <div class="modal-field">
+          <label for="channel-name-input">채널 이름</label>
+          <input id="channel-name-input" name="name" maxlength="60" required />
+        </div>
+        <div class="modal-field">
+          <label for="channel-desc-input">채널 설명</label>
+          <input id="channel-desc-input" name="description" maxlength="120" required />
+        </div>
+        <div class="modal-actions">
+          <button id="channel-cancel-btn" class="btn" type="button">취소</button>
+          <button class="btn primary" type="submit">만들기</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="channel-members-modal">
+      <div class="modal-inner">
+        <h3 id="channel-members-title" class="modal-title">채널 멤버</h3>
+        <ul id="channel-members-list" class="modal-list"></ul>
+        <div class="modal-actions">
+          <button id="channel-members-add-btn" class="btn primary" type="button">멤버 추가</button>
+          <button id="channel-members-close-btn" class="btn" type="button">닫기</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="channel-member-add-modal">
+      <form id="channel-member-add-form" method="dialog" class="modal-inner">
+        <h3 class="modal-title">채널 멤버 추가</h3>
+        <div class="modal-field">
+          <label for="channel-member-select">멤버 선택</label>
+          <select id="channel-member-select" name="memberId" required></select>
+        </div>
+        <div class="modal-actions">
+          <button id="channel-member-add-cancel-btn" class="btn" type="button">취소</button>
+          <button id="channel-member-add-submit-btn" class="btn primary" type="submit">추가</button>
+        </div>
+      </form>
     </dialog>
 
     <script src="../../dist/renderer/renderer.js"></script>

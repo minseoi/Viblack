@@ -466,3 +466,29 @@
 - 검증:
   - `npm run check` 통과
   - `npm run build` 통과
+
+### 33) UI 추가: 채널 생성 + 채널 멤버 팝업/추가 흐름 (UI 전용)
+- 사용자 요청:
+  - 채널 `+` 버튼 클릭 시 팝업에서 채널 이름/설명 입력 후 생성
+  - 채널 상단바에 멤버 리스트 버튼 추가
+  - 버튼 클릭 시 채널 멤버 팝업 표시, 팝업의 `멤버 추가` 버튼으로 멤버를 채널에 추가
+  - 우선 대화 기능 연동은 제외하고 UI 중심으로 구성
+- 조치:
+  - `src/renderer/index.html`
+    - 채널 목록을 동적 렌더링 구조로 변경 (`#channel-list`)
+    - 채널 추가 버튼(`#add-channel-btn`) 연결 포인트 추가
+    - 상단바에 채널 멤버 버튼(`#channel-members-btn`) 추가
+    - 채널 관련 팝업 3종 추가:
+      - 채널 생성(`#channel-modal`)
+      - 채널 멤버 목록(`#channel-members-modal`)
+      - 채널 멤버 추가(`#channel-member-add-modal`)
+    - 채널 아이템/모달 리스트/상단 버튼 스타일 추가
+  - `src/renderer/renderer.ts`
+    - `Channel` 상태 모델 및 로컬 채널 배열 관리
+    - 채널 생성/선택/렌더링 로직 추가
+    - 채널 모드 선택 시 상단 제목/버튼 상태 갱신
+    - 채널 멤버 목록 렌더링 + 기존 멤버(agents) 선택 추가 UI 흐름 구현
+    - 채널 모드에서는 composer 비활성화(대화 기능 제외 요구 반영)
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
