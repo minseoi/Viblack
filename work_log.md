@@ -155,3 +155,19 @@
 - 검증:
   - `npm run check` 통과
   - `npm run build` 통과
+
+### 16) 이슈 대응: 응답 파싱 실패 + UX 메시지 순서
+- 사용자 이슈:
+  - `"응답 텍스트를 파싱하지 못했습니다."`가 표시됨.
+  - 사용자 메시지를 먼저 보고, 이후 에이전트 응답이 도착하면 보이길 원함.
+- 조치:
+  - `src/backend/codex.ts`
+    - `codex exec`/`resume`에 `--output-last-message <tmpfile>` 옵션 추가
+    - 종료 시 임시 파일의 최종 응답을 우선 사용(이벤트 파싱 실패 대비)
+    - 임시 파일 정리(unlink) 처리
+  - `src/renderer/renderer.ts`
+    - 메시지 전송 즉시 사용자 메시지 + `(응답 생성 중...)` 임시 버블 렌더링
+    - 응답 완료 시 `refreshMessages()`로 실제 메시지로 교체
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과

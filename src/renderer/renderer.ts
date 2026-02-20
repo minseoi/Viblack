@@ -16,6 +16,7 @@ interface ChatMessage {
 
 let backendBaseUrl = "";
 let activeAgentId = "helper";
+let renderedMessages: ChatMessage[] = [];
 
 function focusInput(): void {
   const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
@@ -90,6 +91,7 @@ function renderMessages(messages: ChatMessage[]): void {
   }
 
   list.scrollTop = list.scrollHeight;
+  renderedMessages = messages;
 }
 
 async function refreshMessages(): Promise<void> {
@@ -145,6 +147,21 @@ async function sendMessage(): Promise<void> {
   button.disabled = true;
   setStatus("Helper is working...");
 
+  const nowIso = new Date().toISOString();
+  const optimisticUser: ChatMessage = {
+    id: Date.now(),
+    sender: "user",
+    content,
+    createdAt: nowIso,
+  };
+  const optimisticPending: ChatMessage = {
+    id: Date.now() + 1,
+    sender: "agent",
+    content: "(응답 생성 중...)",
+    createdAt: nowIso,
+  };
+  renderMessages([...renderedMessages, optimisticUser, optimisticPending]);
+
   try {
     await fetchJson(`${backendBaseUrl}/api/agents/${activeAgentId}/messages`, {
       method: "POST",
@@ -158,6 +175,7 @@ async function sendMessage(): Promise<void> {
     const message = err instanceof Error ? err.message : "unknown error";
     setStatus(`Error: ${message}`);
     showWarning(`메시지 전송 실패: ${message}`);
+    await refreshMessages();
     focusInput();
   } finally {
     button.disabled = false;

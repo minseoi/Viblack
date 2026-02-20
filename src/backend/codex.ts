@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type { CodexStatus } from "./types";
 
@@ -165,10 +166,23 @@ export async function checkCodexAvailability(cwd: string): Promise<CodexStatus> 
 export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> {
   const prompt = buildPrompt(params.systemPrompt, params.prompt, Boolean(params.sessionId));
   const timeoutMs = params.timeoutMs ?? 120_000;
+  const outputFilePath = path.join(
+    os.tmpdir(),
+    `viblack-codex-last-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`,
+  );
 
   const args = params.sessionId
-    ? ["exec", "resume", "--skip-git-repo-check", "--json", params.sessionId, "-"]
-    : ["exec", "--skip-git-repo-check", "--json", "-"];
+    ? [
+        "exec",
+        "resume",
+        "--skip-git-repo-check",
+        "--json",
+        "--output-last-message",
+        outputFilePath,
+        params.sessionId,
+        "-",
+      ]
+    : ["exec", "--skip-git-repo-check", "--json", "--output-last-message", outputFilePath, "-"];
 
   return new Promise((resolve) => {
     let child: ChildProcess;
@@ -269,7 +283,17 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
       clearTimeout(timeoutHandle);
       flushLines(true);
 
-      const mergedReply = (fullParts[fullParts.length - 1] || deltaParts.join("")).trim();
+      let fileReply = "";
+      try {
+        if (fs.existsSync(outputFilePath)) {
+          fileReply = fs.readFileSync(outputFilePath, "utf8").trim();
+          fs.unlinkSync(outputFilePath);
+        }
+      } catch {
+        // Ignore output file read/cleanup failures.
+      }
+
+      const mergedReply = (fileReply || fullParts[fullParts.length - 1] || deltaParts.join("")).trim();
       if (code === 0) {
         resolve({
           ok: true,
