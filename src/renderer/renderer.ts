@@ -488,13 +488,7 @@ async function sendMessage(): Promise<void> {
     content,
     createdAt: nowIso,
   };
-  const optimisticPending: ChatMessage = {
-    id: Date.now() + 1,
-    sender: "agent",
-    content: "(응답 생성 중...)",
-    createdAt: nowIso,
-  };
-  renderMessages([...renderedMessages, optimisticUser, optimisticPending]);
+  renderMessages([...renderedMessages, optimisticUser]);
 
   try {
     await fetchJson(`${backendBaseUrl}/api/agents/${activeAgentId}/messages`, {

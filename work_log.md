@@ -326,3 +326,14 @@
 - 검증:
   - `npm run check` 통과
   - `npm run build` 통과
+
+### 25) UX 수정: 임시 "응답 생성 중" 메시지 제거
+- 사용자 요청:
+  - 응답 대기 중 임시 문구를 표시하지 않고, 실제 응답이 도착했을 때만 표시.
+- 조치:
+  - `src/renderer/renderer.ts`
+    - `sendMessage()`에서 임시 에이전트 버블(`(응답 생성 중...)`) 생성/렌더링 로직 제거
+    - 사용자 메시지만 즉시 렌더링 후, 응답 도착 시 `refreshMessages()`로 실제 에이전트 메시지 표시
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
