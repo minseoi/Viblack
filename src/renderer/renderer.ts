@@ -102,6 +102,13 @@ function renderMessages(messages: ChatMessage[], agentName = "Agent"): void {
   }
 
   list.innerHTML = "";
+  if (messages.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "msg-empty";
+    empty.textContent = "대화를 시작해 보세요.";
+    list.appendChild(empty);
+  }
+
   for (const message of messages) {
     const item = document.createElement("li");
     item.className = `msg msg-${message.sender}`;

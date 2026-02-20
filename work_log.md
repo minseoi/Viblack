@@ -310,3 +310,19 @@
 - 검증:
   - `npm run check` 통과
   - `npm run build` 통과
+
+### 24) UI 수정: 대화 0건일 때 메시지 영역 축소 방지
+- 사용자 이슈:
+  - 대화가 없으면 대화창 높이가 줄어 레이아웃이 깨짐.
+- 조치:
+  - `src/renderer/index.html`
+    - `.messages-wrap`를 `display: flex`로 변경
+    - `#messages`에 `flex: 1`, `min-height: 100%` 적용
+    - 빈 상태 문구 스타일 `.msg-empty` 추가
+  - `src/renderer/renderer.ts`
+    - 메시지 0건일 때 `"대화를 시작해 보세요."` 빈 상태 아이템 렌더링
+- 결과:
+  - 메시지 유무와 무관하게 대화 영역 높이가 유지되어 상/하단 레이아웃이 안정적으로 고정됨.
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
