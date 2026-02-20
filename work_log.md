@@ -205,3 +205,20 @@
 - 검증:
   - `npm run check` 통과
   - `npm run build` 통과
+
+### 19) 이슈 대응: `resume` 응답 파일 캡처 방식 전환
+- 사용자 이슈:
+  - 여전히 `"응답 텍스트를 파싱하지 못했습니다."` 발생.
+- 원인 추정:
+  - `resume --json` 이벤트 파싱만으로는 일부 환경에서 최종 응답이 누락될 수 있음.
+- 조치:
+  - `src/backend/codex.ts`
+    - `resume` 호출에도 응답 파일 출력 사용:
+      - `codex exec -o <file> resume ...`
+    - 핵심: `-o`를 `resume` 옵션이 아니라 `exec` 상위 옵션 위치로 전달
+    - 종료 시 파일 응답을 우선 사용하도록 유지
+- 참고:
+  - `resume`에 `--output-last-message`를 직접 붙이면 오류가 나므로 사용하지 않음.
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
