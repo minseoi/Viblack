@@ -171,3 +171,15 @@
 - 검증:
   - `npm run check` 통과
   - `npm run build` 통과
+
+### 17) 문서 작업: AGENTS.md 작성
+- 사용자 요청:
+  - 저장소 기여 가이드 `AGENTS.md` 생성
+  - 제목: `Repository Guidelines`
+  - 200~400 단어, 구조화된 섹션, 실무형 지침
+- 반영 내용:
+  - 프로젝트 구조(backend/main/preload/renderer) 설명
+  - 주요 명령(`install`, `check`, `build`, `start`) 정리
+  - TypeScript 코딩 규칙/네이밍 규칙 명시
+  - 현재 테스트 체계(수동 스모크 포함)와 향후 테스트 위치 제안
+  - 커밋/PR 규칙(기존 히스토리 prefix 패턴 기반) 정리
