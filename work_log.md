@@ -554,3 +554,17 @@
 - 검증:
   - `npm run check` 통과
   - `npm run build` 통과
+
+### 37) UI 수정: 긴 채널 설명으로 상단 우측 버튼이 찌그러지는 문제 보완
+- 사용자 이슈:
+  - 채널 설명이 길어지면 상단 `채널 멤버` 버튼 레이아웃이 찌그러짐.
+- 조치 (`src/renderer/index.html`):
+  - 상단 컨테이너에 `gap` 추가
+  - 좌측 영역(`.top-left`)을 `flex: 1` + `min-width: 0`로 설정
+  - 우측 영역(`.top-right`)과 버튼(`.top-btn`)에 `flex-shrink` 방지(`flex: 0 0 auto`)
+  - 제목/서브텍스트(`#agent-title`, `#agent-subtitle`)에 말줄임(`ellipsis`) 적용
+- 결과:
+  - 채널 설명이 길어도 우측 `채널 멤버` 버튼 크기가 유지됨.
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
