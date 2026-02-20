@@ -337,3 +337,20 @@
 - 검증:
   - `npm run check` 통과
   - `npm run build` 통과
+
+### 26) UI 수정: 대화가 적을 때 입력창이 올라오는 레이아웃 깨짐 보완
+- 사용자 이슈:
+  - 대화 내용이 적으면 대화 패널이 충분히 확장되지 않아 입력창이 위로 올라와 보임.
+- 원인:
+  - `.messages-wrap`의 flex 방향이 기본 `row`로 적용되어 메시지 리스트가 세로 축으로 안정적으로 stretch되지 않음.
+- 조치 (`src/renderer/index.html`):
+  - `.main` 그리드 행을 `minmax(0, 1fr)`로 강화
+  - `.main`에 `height: 100%` 명시
+  - `.messages-wrap`에 `flex-direction: column`, `height: 100%` 추가
+  - `#messages`의 flex 값을 `flex: 1 1 auto`로 조정
+  - `.app`에 `min-height: 0` 추가
+- 결과:
+  - 메시지 수가 적거나 비어 있어도 대화 영역 높이가 유지되어 입력창 위치가 고정됨.
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
