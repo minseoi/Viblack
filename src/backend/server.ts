@@ -35,6 +35,9 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
 
   app.use(express.json({ limit: "1mb" }));
 
+  const sanitizeText = (value: unknown): string =>
+    typeof value === "string" ? value.trim() : "";
+
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true });
   });
@@ -47,6 +50,64 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
   app.get("/api/agents", (_req, res) => {
     const agents = db.listAgents();
     res.json({ agents });
+  });
+
+  app.post("/api/agents", (req, res) => {
+    const name = sanitizeText(req.body?.name);
+    const role = sanitizeText(req.body?.role);
+    const systemPrompt = sanitizeText(req.body?.systemPrompt);
+
+    if (!name || !role || !systemPrompt) {
+      res.status(400).json({ error: "name, role, systemPrompt are required" });
+      return;
+    }
+
+    try {
+      const agent = db.createAgent(name, role, systemPrompt);
+      res.status(201).json({ agent });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "unknown error";
+      res.status(500).json({ error: message });
+    }
+  });
+
+  app.patch("/api/agents/:agentId", (req, res) => {
+    const { agentId } = req.params;
+    const name = sanitizeText(req.body?.name);
+    const role = sanitizeText(req.body?.role);
+    const systemPrompt = sanitizeText(req.body?.systemPrompt);
+
+    if (!name || !role || !systemPrompt) {
+      res.status(400).json({ error: "name, role, systemPrompt are required" });
+      return;
+    }
+
+    try {
+      const agent = db.updateAgent(agentId, name, role, systemPrompt);
+      if (!agent) {
+        res.status(404).json({ error: "agent not found" });
+        return;
+      }
+      res.json({ agent });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "unknown error";
+      res.status(500).json({ error: message });
+    }
+  });
+
+  app.delete("/api/agents/:agentId", (req, res) => {
+    const { agentId } = req.params;
+    try {
+      const deleted = db.deleteAgent(agentId);
+      if (!deleted) {
+        res.status(404).json({ error: "agent not found" });
+        return;
+      }
+      res.json({ ok: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "unknown error";
+      res.status(500).json({ error: message });
+    }
   });
 
   app.get("/api/agents/:agentId/messages", (req, res) => {
@@ -62,7 +123,7 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
 
   app.post("/api/agents/:agentId/messages", async (req, res) => {
     const { agentId } = req.params;
-    const content = typeof req.body?.content === "string" ? req.body.content.trim() : "";
+    const content = sanitizeText(req.body?.content);
 
     if (!content) {
       res.status(400).json({ error: "content is required" });

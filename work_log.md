@@ -276,3 +276,37 @@
 - 검증:
   - `npm run check` 통과
   - `npm run build` 통과
+
+### 23) 기능 추가: 멤버 CRUD (추가/수정/삭제)
+- 사용자 요청:
+  - 멤버 추가는 `멤버` 헤더의 `+` 버튼 사용
+  - 멤버 항목 hover 시 하이라이트 + 우측 햄버거 메뉴 노출
+  - 햄버거 메뉴에서 `수정`/`제거`
+  - 추가/수정 입력은 팝업에서 처리, 저장 시 팝업 닫힘
+- 백엔드 조치:
+  - `src/backend/db.ts`
+    - `createAgent(name, role, systemPrompt)` 추가
+    - `updateAgent(agentId, ...)` 추가
+    - `deleteAgent(agentId)` 추가 (메시지/에이전트 동시 삭제)
+    - 에이전트 ID 자동 생성 로직 추가(이름 기반 slug + 중복 회피)
+  - `src/backend/server.ts`
+    - API 추가:
+      - `POST /api/agents`
+      - `PATCH /api/agents/:agentId`
+      - `DELETE /api/agents/:agentId`
+    - 입력 검증(`name`, `role`, `systemPrompt` 필수) 추가
+- 프론트 조치:
+  - `src/renderer/index.html`
+    - 멤버 리스트를 동적 렌더링 구조로 변경 (`#member-list`)
+    - hover 시 보이는 햄버거 버튼 스타일 추가
+    - 멤버 메뉴(`수정`, `제거`) UI 추가
+    - 멤버 추가/수정용 모달 폼(`dialog`) 추가
+  - `src/renderer/renderer.ts`
+    - 멤버 목록 로딩/렌더링/선택 상태 관리
+    - 멤버 `추가/수정/삭제` API 연동
+    - 헤더 `+` 버튼 -> 추가 모달 오픈
+    - 햄버거 메뉴 -> 수정/삭제 동작 연결
+    - 멤버가 없을 때 composer 비활성화 처리
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과

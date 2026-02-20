@@ -4,6 +4,7 @@ interface Agent {
   id: string;
   name: string;
   role: string;
+  systemPrompt: string;
   sessionId: string | null;
 }
 
@@ -15,8 +16,13 @@ interface ChatMessage {
 }
 
 let backendBaseUrl = "";
-let activeAgentId = "helper";
+let activeAgentId: string | null = null;
 let renderedMessages: ChatMessage[] = [];
+let agents: Agent[] = [];
+let codexReady = false;
+let openMemberMenuAgentId: string | null = null;
+let memberFormMode: "create" | "edit" = "create";
+let editingAgentId: string | null = null;
 
 function focusInput(): void {
   const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
@@ -46,6 +52,20 @@ function setStatus(text: string): void {
   }
 }
 
+function setComposerEnabled(enabled: boolean): void {
+  const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
+  const button = document.getElementById("send-btn") as HTMLButtonElement | null;
+  if (input) {
+    input.disabled = !enabled;
+    input.placeholder = enabled
+      ? "Helper에게 작업을 요청하세요. (Enter 전송, Shift+Enter 줄바꿈)"
+      : "먼저 멤버를 추가하세요.";
+  }
+  if (button) {
+    button.disabled = !enabled;
+  }
+}
+
 function showWarning(text: string | null): void {
   const warningEl = document.getElementById("warning");
   if (!warningEl) {
@@ -72,18 +92,11 @@ function initSidebarSections(): void {
       toggle.setAttribute("aria-expanded", String(!isCollapsed));
     });
   });
-
-  const addButtons = document.querySelectorAll<HTMLButtonElement>(".header-add");
-  addButtons.forEach((addBtn) => {
-    addBtn.addEventListener("click", (event: MouseEvent) => {
-      event.stopPropagation();
-      // Placeholder: actual add flow will be wired in a later step.
-    });
-  });
 }
 
-function renderMessages(messages: ChatMessage[]): void {
+function renderMessages(messages: ChatMessage[], agentName = "Agent"): void {
   const list = document.getElementById("messages");
+  const wrap = document.querySelector(".messages-wrap") as HTMLElement | null;
   if (!list) {
     return;
   }
@@ -96,7 +109,7 @@ function renderMessages(messages: ChatMessage[]): void {
     const sender = document.createElement("div");
     sender.className = "msg-sender";
     sender.textContent =
-      message.sender === "user" ? "You" : message.sender === "agent" ? "Helper" : "System";
+      message.sender === "user" ? "You" : message.sender === "agent" ? agentName : "System";
 
     const body = document.createElement("pre");
     body.className = "msg-content";
@@ -112,11 +125,184 @@ function renderMessages(messages: ChatMessage[]): void {
     list.appendChild(item);
   }
 
-  list.scrollTop = list.scrollHeight;
+  if (wrap) {
+    wrap.scrollTop = wrap.scrollHeight;
+  }
   renderedMessages = messages;
 }
 
+function closeMemberMenu(): void {
+  const menu = document.getElementById("member-menu");
+  if (!menu) {
+    return;
+  }
+  menu.classList.remove("show");
+  menu.setAttribute("aria-hidden", "true");
+  openMemberMenuAgentId = null;
+}
+
+function openMemberMenu(agentId: string, anchor: HTMLElement): void {
+  const menu = document.getElementById("member-menu");
+  if (!menu) {
+    return;
+  }
+  if (openMemberMenuAgentId === agentId && menu.classList.contains("show")) {
+    closeMemberMenu();
+    return;
+  }
+
+  openMemberMenuAgentId = agentId;
+  menu.classList.add("show");
+  menu.setAttribute("aria-hidden", "false");
+
+  const rect = anchor.getBoundingClientRect();
+  const width = menu.offsetWidth || 124;
+  const height = menu.offsetHeight || 76;
+  const margin = 8;
+
+  let left = rect.right - width;
+  let top = rect.bottom + 4;
+  left = Math.max(margin, Math.min(left, window.innerWidth - width - margin));
+  if (top + height > window.innerHeight - margin) {
+    top = rect.top - height - 4;
+  }
+  top = Math.max(margin, top);
+
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+}
+
+function renderMemberList(): void {
+  const list = document.getElementById("member-list");
+  if (!list) {
+    return;
+  }
+
+  list.innerHTML = "";
+  if (agents.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "member-empty";
+    empty.textContent = "멤버가 없습니다.";
+    list.appendChild(empty);
+    setComposerEnabled(false);
+    return;
+  }
+
+  for (const agent of agents) {
+    const item = document.createElement("li");
+    item.className = `member-item${agent.id === activeAgentId ? " active" : ""}`;
+
+    const mainBtn = document.createElement("button");
+    mainBtn.className = "member-main";
+    mainBtn.type = "button";
+    mainBtn.addEventListener("click", () => {
+      if (activeAgentId === agent.id) {
+        return;
+      }
+      activeAgentId = agent.id;
+      renderMemberList();
+      void refreshMessages();
+    });
+
+    const textWrap = document.createElement("div");
+    textWrap.className = "member-text";
+
+    const nameEl = document.createElement("div");
+    nameEl.className = "member-name";
+    nameEl.textContent = agent.name;
+
+    const roleEl = document.createElement("div");
+    roleEl.className = "member-role";
+    roleEl.textContent = agent.role;
+
+    textWrap.appendChild(nameEl);
+    textWrap.appendChild(roleEl);
+
+    const menuBtn = document.createElement("button");
+    menuBtn.className = "member-menu-btn";
+    menuBtn.type = "button";
+    menuBtn.textContent = "☰";
+    menuBtn.setAttribute("aria-label", `${agent.name} 메뉴`);
+    menuBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openMemberMenu(agent.id, menuBtn);
+    });
+
+    mainBtn.appendChild(textWrap);
+    mainBtn.appendChild(menuBtn);
+    item.appendChild(mainBtn);
+    list.appendChild(item);
+  }
+
+  setComposerEnabled(activeAgentId !== null);
+}
+
+function openMemberModal(mode: "create" | "edit", targetAgent: Agent | null): void {
+  const modal = document.getElementById("member-modal") as HTMLDialogElement | null;
+  const titleEl = document.getElementById("member-modal-title");
+  const nameInput = document.getElementById("member-name-input") as HTMLInputElement | null;
+  const roleInput = document.getElementById("member-role-input") as HTMLInputElement | null;
+  const promptInput = document.getElementById("member-prompt-input") as HTMLTextAreaElement | null;
+  if (!modal || !titleEl || !nameInput || !roleInput || !promptInput) {
+    return;
+  }
+
+  memberFormMode = mode;
+  editingAgentId = mode === "edit" && targetAgent ? targetAgent.id : null;
+
+  if (mode === "edit" && targetAgent) {
+    titleEl.textContent = "멤버 수정";
+    nameInput.value = targetAgent.name;
+    roleInput.value = targetAgent.role;
+    promptInput.value = targetAgent.systemPrompt;
+  } else {
+    titleEl.textContent = "멤버 추가";
+    nameInput.value = "";
+    roleInput.value = "";
+    promptInput.value =
+      "You are a practical AI teammate. Reply in concise Korean unless asked otherwise.";
+  }
+
+  if (modal.open) {
+    modal.close();
+  }
+  modal.showModal();
+  nameInput.focus();
+}
+
+function closeMemberModal(): void {
+  const modal = document.getElementById("member-modal") as HTMLDialogElement | null;
+  if (!modal || !modal.open) {
+    return;
+  }
+  modal.close();
+}
+
+async function refreshAgents(preferredAgentId?: string | null): Promise<void> {
+  const data = await fetchJson<{ agents: Agent[] }>(`${backendBaseUrl}/api/agents`);
+  agents = data.agents;
+
+  const preferred = preferredAgentId ?? activeAgentId;
+  if (preferred && agents.some((agent) => agent.id === preferred)) {
+    activeAgentId = preferred;
+  } else {
+    activeAgentId = agents.length > 0 ? agents[0].id : null;
+  }
+
+  renderMemberList();
+}
+
 async function refreshMessages(): Promise<void> {
+  if (!activeAgentId) {
+    const title = document.getElementById("agent-title");
+    if (title) {
+      title.textContent = "멤버를 추가하세요";
+    }
+    setStatus("No member selected");
+    renderMessages([]);
+    return;
+  }
+
   const data = await fetchJson<{ agent: Agent; messages: ChatMessage[] }>(
     `${backendBaseUrl}/api/agents/${activeAgentId}/messages`,
   );
@@ -124,7 +310,126 @@ async function refreshMessages(): Promise<void> {
   if (title) {
     title.textContent = `${data.agent.name} (${data.agent.role})`;
   }
-  renderMessages(data.messages);
+  renderMessages(data.messages, data.agent.name);
+  setStatus(codexReady ? "Ready" : "Codex unavailable");
+}
+
+async function saveMemberForm(): Promise<void> {
+  const nameInput = document.getElementById("member-name-input") as HTMLInputElement | null;
+  const roleInput = document.getElementById("member-role-input") as HTMLInputElement | null;
+  const promptInput = document.getElementById("member-prompt-input") as HTMLTextAreaElement | null;
+  if (!nameInput || !roleInput || !promptInput) {
+    return;
+  }
+
+  const payload = {
+    name: nameInput.value.trim(),
+    role: roleInput.value.trim(),
+    systemPrompt: promptInput.value.trim(),
+  };
+  if (!payload.name || !payload.role || !payload.systemPrompt) {
+    showWarning("이름, 역할, 시스템 프롬프트를 모두 입력하세요.");
+    return;
+  }
+
+  if (memberFormMode === "edit" && editingAgentId) {
+    await fetchJson<{ agent: Agent }>(`${backendBaseUrl}/api/agents/${editingAgentId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    await refreshAgents(editingAgentId);
+  } else {
+    const created = await fetchJson<{ agent: Agent }>(`${backendBaseUrl}/api/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    await refreshAgents(created.agent.id);
+  }
+
+  closeMemberModal();
+  closeMemberMenu();
+  await refreshMessages();
+}
+
+async function deleteMember(agentId: string): Promise<void> {
+  const target = agents.find((agent) => agent.id === agentId);
+  if (!target) {
+    return;
+  }
+  const ok = window.confirm(`"${target.name}" 멤버를 제거할까요? 기존 대화도 함께 삭제됩니다.`);
+  if (!ok) {
+    return;
+  }
+
+  await fetchJson<{ ok: boolean }>(`${backendBaseUrl}/api/agents/${agentId}`, {
+    method: "DELETE",
+  });
+
+  const nextPreferred = activeAgentId === agentId ? null : activeAgentId;
+  closeMemberMenu();
+  await refreshAgents(nextPreferred);
+  await refreshMessages();
+}
+
+function initMemberCrudUi(): void {
+  const addMemberBtn = document.getElementById("add-member-btn");
+  const modalForm = document.getElementById("member-form");
+  const cancelBtn = document.getElementById("member-cancel-btn");
+  const editBtn = document.getElementById("member-menu-edit");
+  const deleteBtn = document.getElementById("member-menu-delete");
+  const menu = document.getElementById("member-menu");
+
+  addMemberBtn?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    closeMemberMenu();
+    openMemberModal("create", null);
+  });
+
+  modalForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void saveMemberForm();
+  });
+
+  cancelBtn?.addEventListener("click", () => {
+    closeMemberModal();
+  });
+
+  editBtn?.addEventListener("click", () => {
+    if (!openMemberMenuAgentId) {
+      return;
+    }
+    const target = agents.find((agent) => agent.id === openMemberMenuAgentId) ?? null;
+    closeMemberMenu();
+    openMemberModal("edit", target);
+  });
+
+  deleteBtn?.addEventListener("click", () => {
+    if (!openMemberMenuAgentId) {
+      return;
+    }
+    void deleteMember(openMemberMenuAgentId);
+  });
+
+  document.addEventListener("click", (event) => {
+    const target = event.target as Node;
+    if (!menu) {
+      return;
+    }
+    if (menu.contains(target)) {
+      return;
+    }
+    const menuButton = (event.target as HTMLElement).closest(".member-menu-btn");
+    if (menuButton) {
+      return;
+    }
+    closeMemberMenu();
+  });
+
+  window.addEventListener("resize", () => {
+    closeMemberMenu();
+  });
 }
 
 async function init(): Promise<void> {
@@ -140,23 +445,22 @@ async function init(): Promise<void> {
         .filter((line) => line.length > 0)
         .join(" "),
     );
+    codexReady = false;
     setStatus("Codex unavailable");
   } else {
     showWarning(null);
+    codexReady = true;
     setStatus(`Ready (${codexStatus.command ?? "codex"})`);
   }
 
-  const agentsData = await fetchJson<{ agents: Agent[] }>(`${backendBaseUrl}/api/agents`);
-  if (agentsData.agents.length > 0) {
-    activeAgentId = agentsData.agents[0].id;
-  }
+  await refreshAgents();
   await refreshMessages();
 }
 
 async function sendMessage(): Promise<void> {
   const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
   const button = document.getElementById("send-btn") as HTMLButtonElement | null;
-  if (!input || !button) {
+  if (!input || !button || !activeAgentId) {
     return;
   }
 
@@ -167,7 +471,8 @@ async function sendMessage(): Promise<void> {
 
   input.value = "";
   button.disabled = true;
-  setStatus("Helper is working...");
+  const activeAgent = agents.find((agent) => agent.id === activeAgentId);
+  setStatus(`${activeAgent?.name ?? "Agent"} is working...`);
 
   const nowIso = new Date().toISOString();
   const optimisticUser: ChatMessage = {
@@ -191,7 +496,7 @@ async function sendMessage(): Promise<void> {
       body: JSON.stringify({ content }),
     });
     await refreshMessages();
-    setStatus("Ready");
+    setStatus(codexReady ? "Ready" : "Codex unavailable");
     focusInput();
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown error";
@@ -201,11 +506,15 @@ async function sendMessage(): Promise<void> {
     focusInput();
   } finally {
     button.disabled = false;
+    if (!activeAgentId) {
+      button.disabled = true;
+    }
   }
 }
 
 window.addEventListener("DOMContentLoaded", () => {
   initSidebarSections();
+  initMemberCrudUi();
 
   const form = document.getElementById("chat-form");
   const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;

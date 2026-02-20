@@ -43,6 +43,49 @@ export class ViblackDb {
     return this.mapAgent(row);
   }
 
+  createAgent(name: string, role: string, systemPrompt: string): Agent {
+    const id = this.generateAgentId(name);
+    const createdAt = nowIso();
+    const stmt = this.db.prepare(
+      `INSERT INTO agents (id, name, role, system_prompt, session_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    stmt.run(id, name, role, systemPrompt, null, createdAt);
+    const agent = this.getAgent(id);
+    if (!agent) {
+      throw new Error("failed to create agent");
+    }
+    return agent;
+  }
+
+  updateAgent(agentId: string, name: string, role: string, systemPrompt: string): Agent | null {
+    const stmt = this.db.prepare(
+      `UPDATE agents
+       SET name = ?, role = ?, system_prompt = ?
+       WHERE id = ?`,
+    );
+    const result = stmt.run(name, role, systemPrompt, agentId) as { changes?: number };
+    if (!result.changes || result.changes < 1) {
+      return null;
+    }
+    return this.getAgent(agentId);
+  }
+
+  deleteAgent(agentId: string): boolean {
+    this.db.exec("BEGIN");
+    try {
+      this.db.prepare(`DELETE FROM messages WHERE agent_id = ?`).run(agentId);
+      const result = this.db.prepare(`DELETE FROM agents WHERE id = ?`).run(agentId) as {
+        changes?: number;
+      };
+      this.db.exec("COMMIT");
+      return Boolean(result.changes && result.changes > 0);
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+
   updateAgentSession(agentId: string, sessionId: string): void {
     const stmt = this.db.prepare(`UPDATE agents SET session_id = ? WHERE id = ?`);
     stmt.run(sessionId, agentId);
@@ -137,5 +180,22 @@ export class ViblackDb {
       sessionId: row.session_id ? String(row.session_id) : null,
       createdAt: String(row.created_at),
     };
+  }
+
+  private generateAgentId(name: string): string {
+    const normalized = name
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    const base = normalized || "member";
+
+    let id = base;
+    let index = 2;
+    while (this.getAgent(id)) {
+      id = `${base}-${index}`;
+      index += 1;
+    }
+    return id;
   }
 }

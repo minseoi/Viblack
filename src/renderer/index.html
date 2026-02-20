@@ -142,7 +142,117 @@
         color: #6b7788;
         font-style: italic;
       }
+      .member-list {
+        list-style: none;
+        margin: 0;
+        padding: 6px;
+        display: grid;
+        gap: 4px;
+      }
+      .member-item {
+        border-radius: 8px;
+      }
+      .member-main {
+        width: 100%;
+        border: none;
+        border-radius: 8px;
+        background: transparent;
+        text-align: left;
+        padding: 8px 10px;
+        display: grid;
+        grid-template-columns: 1fr auto;
+        align-items: center;
+        gap: 8px;
+        transition: background-color 0.12s ease;
+        cursor: pointer;
+      }
+      .member-item:hover .member-main {
+        background: #f2f6fb;
+      }
+      .member-item.active .member-main {
+        background: #e8f2ff;
+      }
+      .member-text {
+        min-width: 0;
+      }
+      .member-name {
+        font-size: 13px;
+        font-weight: 600;
+        color: #1f3147;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .member-role {
+        margin-top: 2px;
+        font-size: 11px;
+        color: #6a7788;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .member-menu-btn {
+        border: none;
+        width: 24px;
+        height: 24px;
+        border-radius: 6px;
+        background: #d9e7fb;
+        color: #15457f;
+        font-size: 14px;
+        cursor: pointer;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.12s ease, background-color 0.12s ease;
+      }
+      .member-item:hover .member-menu-btn,
+      .member-menu-btn:focus-visible {
+        opacity: 1;
+        pointer-events: auto;
+      }
+      .member-menu-btn:hover {
+        background: #c6dcfb;
+      }
+      .member-empty {
+        color: #6b7788;
+        font-size: 13px;
+        padding: 8px 10px;
+        font-style: italic;
+      }
+      .member-menu {
+        position: fixed;
+        min-width: 120px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #fff;
+        box-shadow: 0 10px 20px rgba(13, 27, 45, 0.12);
+        padding: 4px;
+        z-index: 120;
+        display: none;
+      }
+      .member-menu.show {
+        display: block;
+      }
+      .member-menu button {
+        width: 100%;
+        border: none;
+        background: transparent;
+        border-radius: 8px;
+        padding: 8px 10px;
+        text-align: left;
+        font-size: 13px;
+        color: #24384f;
+        cursor: pointer;
+      }
+      .member-menu button:hover {
+        background: #f2f6fb;
+      }
+      .member-menu .danger {
+        color: #ae2f2f;
+      }
       .sidebar-section.collapsed .section-list {
+        display: none;
+      }
+      .sidebar-section.collapsed .member-list {
         display: none;
       }
       .sidebar-section.collapsed .section-caret {
@@ -264,6 +374,62 @@
         background: #9aabc0;
         cursor: not-allowed;
       }
+      #member-modal {
+        border: none;
+        border-radius: 12px;
+        padding: 0;
+        width: min(420px, calc(100vw - 24px));
+      }
+      #member-modal::backdrop {
+        background: rgba(9, 17, 28, 0.5);
+      }
+      .modal-inner {
+        padding: 16px;
+        display: grid;
+        gap: 10px;
+      }
+      .modal-title {
+        margin: 0;
+        font-size: 16px;
+      }
+      .modal-field {
+        display: grid;
+        gap: 6px;
+      }
+      .modal-field label {
+        font-size: 12px;
+        color: #415268;
+      }
+      .modal-field input,
+      .modal-field textarea {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-size: 13px;
+        font-family: inherit;
+      }
+      .modal-field textarea {
+        resize: vertical;
+        min-height: 100px;
+      }
+      .modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+      .btn {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        padding: 7px 12px;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      .btn.primary {
+        border-color: #1565c0;
+        background: #1565c0;
+        color: #fff;
+      }
     </style>
   </head>
   <body>
@@ -275,7 +441,7 @@
         </div>
 
         <div class="sidebar-sections">
-          <section class="sidebar-section">
+          <section class="sidebar-section" data-section="channels">
             <div class="section-header">
               <button class="section-toggle" type="button" aria-expanded="true">
                 <span class="section-caret">▾</span>
@@ -288,17 +454,22 @@
             </ul>
           </section>
 
-          <section class="sidebar-section">
+          <section class="sidebar-section" data-section="members">
             <div class="section-header">
               <button class="section-toggle" type="button" aria-expanded="true">
                 <span class="section-caret">▾</span>
                 <span>멤버</span>
               </button>
-              <button class="header-add" type="button" aria-label="멤버 추가">+</button>
+              <button
+                id="add-member-btn"
+                class="header-add"
+                type="button"
+                aria-label="멤버 추가"
+              >
+                +
+              </button>
             </div>
-            <ul class="section-list">
-              <li class="section-item active">Helper</li>
-            </ul>
+            <ul id="member-list" class="member-list"></ul>
           </section>
         </div>
       </aside>
@@ -325,6 +496,33 @@
         </footer>
       </main>
     </div>
+
+    <div id="member-menu" class="member-menu" role="menu" aria-hidden="true">
+      <button id="member-menu-edit" type="button">수정</button>
+      <button id="member-menu-delete" class="danger" type="button">제거</button>
+    </div>
+
+    <dialog id="member-modal">
+      <form id="member-form" method="dialog" class="modal-inner">
+        <h3 id="member-modal-title" class="modal-title">멤버 추가</h3>
+        <div class="modal-field">
+          <label for="member-name-input">이름</label>
+          <input id="member-name-input" name="name" maxlength="60" required />
+        </div>
+        <div class="modal-field">
+          <label for="member-role-input">역할</label>
+          <input id="member-role-input" name="role" maxlength="120" required />
+        </div>
+        <div class="modal-field">
+          <label for="member-prompt-input">시스템 프롬프트</label>
+          <textarea id="member-prompt-input" name="systemPrompt" required></textarea>
+        </div>
+        <div class="modal-actions">
+          <button id="member-cancel-btn" class="btn" type="button">취소</button>
+          <button class="btn primary" type="submit">저장</button>
+        </div>
+      </form>
+    </dialog>
 
     <script src="../../dist/renderer/renderer.js"></script>
   </body>
