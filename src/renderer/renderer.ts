@@ -24,6 +24,8 @@ let openMemberMenuAgentId: string | null = null;
 let memberFormMode: "create" | "edit" = "create";
 let editingAgentId: string | null = null;
 let pendingMemberAction: { type: "clear" | "delete"; agentId: string } | null = null;
+const unreadAgentIds = new Set<string>();
+const inflightAgentIds = new Set<string>();
 
 function focusInput(): void {
   const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
@@ -253,6 +255,7 @@ function renderMemberList(): void {
         return;
       }
       activeAgentId = agent.id;
+      unreadAgentIds.delete(agent.id);
       renderMemberList();
       void refreshMessages();
     });
@@ -266,7 +269,13 @@ function renderMemberList(): void {
 
     const roleEl = document.createElement("div");
     roleEl.className = "member-role";
-    roleEl.textContent = agent.role;
+    const roleParts = [agent.role];
+    if (inflightAgentIds.has(agent.id)) {
+      roleParts.push("응답 생성 중");
+    } else if (unreadAgentIds.has(agent.id)) {
+      roleParts.push("새 응답");
+    }
+    roleEl.textContent = roleParts.join(" · ");
 
     textWrap.appendChild(nameEl);
     textWrap.appendChild(roleEl);
@@ -335,6 +344,17 @@ function closeMemberModal(): void {
 async function refreshAgents(preferredAgentId?: string | null): Promise<void> {
   const data = await fetchJson<{ agents: Agent[] }>(`${backendBaseUrl}/api/agents`);
   agents = data.agents;
+  const validIds = new Set(agents.map((agent) => agent.id));
+  for (const unreadId of Array.from(unreadAgentIds)) {
+    if (!validIds.has(unreadId)) {
+      unreadAgentIds.delete(unreadId);
+    }
+  }
+  for (const inflightId of Array.from(inflightAgentIds)) {
+    if (!validIds.has(inflightId)) {
+      inflightAgentIds.delete(inflightId);
+    }
+  }
 
   const preferred = preferredAgentId ?? activeAgentId;
   if (preferred && agents.some((agent) => agent.id === preferred)) {
@@ -343,6 +363,26 @@ async function refreshAgents(preferredAgentId?: string | null): Promise<void> {
     activeAgentId = agents.length > 0 ? agents[0].id : null;
   }
 
+  renderMemberList();
+}
+
+async function refreshMessagesByAgent(agentId: string): Promise<void> {
+  const data = await fetchJson<{ agent: Agent; messages: ChatMessage[] }>(
+    `${backendBaseUrl}/api/agents/${agentId}/messages`,
+  );
+  if (activeAgentId === agentId) {
+    unreadAgentIds.delete(agentId);
+    const title = document.getElementById("agent-title");
+    if (title) {
+      title.textContent = `${data.agent.name} (${data.agent.role})`;
+    }
+    renderMessages(data.messages, data.agent.name);
+    setStatus(codexReady ? "Ready" : "Codex unavailable");
+    renderMemberList();
+    return;
+  }
+
+  unreadAgentIds.add(agentId);
   renderMemberList();
 }
 
@@ -579,7 +619,8 @@ async function init(): Promise<void> {
 async function sendMessage(): Promise<void> {
   const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
   const button = document.getElementById("send-btn") as HTMLButtonElement | null;
-  if (!input || !button || !activeAgentId) {
+  const targetAgentId = activeAgentId;
+  if (!input || !button || !targetAgentId) {
     return;
   }
 
@@ -590,7 +631,9 @@ async function sendMessage(): Promise<void> {
 
   input.value = "";
   button.disabled = true;
-  const activeAgent = agents.find((agent) => agent.id === activeAgentId);
+  inflightAgentIds.add(targetAgentId);
+  const activeAgent = agents.find((agent) => agent.id === targetAgentId);
+  renderMemberList();
   setStatus(`${activeAgent?.name ?? "Agent"} is working...`);
 
   const nowIso = new Date().toISOString();
@@ -603,21 +646,27 @@ async function sendMessage(): Promise<void> {
   renderMessages([...renderedMessages, optimisticUser]);
 
   try {
-    await fetchJson(`${backendBaseUrl}/api/agents/${activeAgentId}/messages`, {
+    await fetchJson(`${backendBaseUrl}/api/agents/${targetAgentId}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content }),
     });
-    await refreshMessages();
-    setStatus(codexReady ? "Ready" : "Codex unavailable");
+    await refreshMessagesByAgent(targetAgentId);
+    if (activeAgentId === targetAgentId) {
+      setStatus(codexReady ? "Ready" : "Codex unavailable");
+    }
     focusInput();
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown error";
     setStatus(`Error: ${message}`);
     showWarning(`메시지 전송 실패: ${message}`);
-    await refreshMessages();
+    if (activeAgentId === targetAgentId) {
+      await refreshMessages();
+    }
     focusInput();
   } finally {
+    inflightAgentIds.delete(targetAgentId);
+    renderMemberList();
     button.disabled = false;
     if (!activeAgentId) {
       button.disabled = true;
