@@ -23,6 +23,7 @@ let codexReady = false;
 let openMemberMenuAgentId: string | null = null;
 let memberFormMode: "create" | "edit" = "create";
 let editingAgentId: string | null = null;
+let pendingMemberAction: { type: "clear" | "delete"; agentId: string } | null = null;
 
 function focusInput(): void {
   const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
@@ -33,6 +34,16 @@ function focusInput(): void {
     input.focus();
     const len = input.value.length;
     input.setSelectionRange(len, len);
+  }, 0);
+}
+
+function restoreInputFocus(): void {
+  const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
+  if (!input || input.disabled) {
+    return;
+  }
+  setTimeout(() => {
+    input.focus();
   }, 0);
 }
 
@@ -146,6 +157,41 @@ function closeMemberMenu(): void {
   menu.classList.remove("show");
   menu.setAttribute("aria-hidden", "true");
   openMemberMenuAgentId = null;
+}
+
+function openActionModal(
+  action: { type: "clear" | "delete"; agentId: string },
+  title: string,
+  description: string,
+  confirmLabel: string,
+): void {
+  const modal = document.getElementById("action-modal") as HTMLDialogElement | null;
+  const titleEl = document.getElementById("action-modal-title");
+  const descEl = document.getElementById("action-modal-desc");
+  const confirmBtn = document.getElementById("action-confirm-btn");
+  if (!modal || !titleEl || !descEl || !confirmBtn) {
+    return;
+  }
+
+  pendingMemberAction = action;
+  titleEl.textContent = title;
+  descEl.textContent = description;
+  confirmBtn.textContent = confirmLabel;
+
+  if (modal.open) {
+    modal.close();
+  }
+  modal.showModal();
+}
+
+function closeActionModal(): void {
+  const modal = document.getElementById("action-modal") as HTMLDialogElement | null;
+  pendingMemberAction = null;
+  if (!modal || !modal.open) {
+    return;
+  }
+  modal.close();
+  restoreInputFocus();
 }
 
 function openMemberMenu(agentId: string, anchor: HTMLElement): void {
@@ -283,6 +329,7 @@ function closeMemberModal(): void {
     return;
   }
   modal.close();
+  restoreInputFocus();
 }
 
 async function refreshAgents(preferredAgentId?: string | null): Promise<void> {
@@ -361,15 +408,6 @@ async function saveMemberForm(): Promise<void> {
 }
 
 async function deleteMember(agentId: string): Promise<void> {
-  const target = agents.find((agent) => agent.id === agentId);
-  if (!target) {
-    return;
-  }
-  const ok = window.confirm(`"${target.name}" 멤버를 제거할까요? 기존 대화도 함께 삭제됩니다.`);
-  if (!ok) {
-    return;
-  }
-
   await fetchJson<{ ok: boolean }>(`${backendBaseUrl}/api/agents/${agentId}`, {
     method: "DELETE",
   });
@@ -381,15 +419,6 @@ async function deleteMember(agentId: string): Promise<void> {
 }
 
 async function clearMemberDm(agentId: string): Promise<void> {
-  const target = agents.find((agent) => agent.id === agentId);
-  if (!target) {
-    return;
-  }
-  const ok = window.confirm(`"${target.name}" DM 대화를 모두 지울까요?`);
-  if (!ok) {
-    return;
-  }
-
   await fetchJson<{ ok: boolean }>(`${backendBaseUrl}/api/agents/${agentId}/messages`, {
     method: "DELETE",
   });
@@ -400,13 +429,31 @@ async function clearMemberDm(agentId: string): Promise<void> {
   }
 }
 
+async function runPendingMemberAction(): Promise<void> {
+  const action = pendingMemberAction;
+  if (!action) {
+    return;
+  }
+
+  closeActionModal();
+  if (action.type === "clear") {
+    await clearMemberDm(action.agentId);
+    return;
+  }
+  await deleteMember(action.agentId);
+}
+
 function initMemberCrudUi(): void {
   const addMemberBtn = document.getElementById("add-member-btn");
+  const memberModal = document.getElementById("member-modal") as HTMLDialogElement | null;
   const modalForm = document.getElementById("member-form");
   const cancelBtn = document.getElementById("member-cancel-btn");
   const clearBtn = document.getElementById("member-menu-clear");
   const editBtn = document.getElementById("member-menu-edit");
   const deleteBtn = document.getElementById("member-menu-delete");
+  const actionCancelBtn = document.getElementById("action-cancel-btn");
+  const actionConfirmBtn = document.getElementById("action-confirm-btn");
+  const actionModal = document.getElementById("action-modal") as HTMLDialogElement | null;
   const menu = document.getElementById("member-menu");
 
   addMemberBtn?.addEventListener("click", (event) => {
@@ -424,11 +471,25 @@ function initMemberCrudUi(): void {
     closeMemberModal();
   });
 
+  memberModal?.addEventListener("close", () => {
+    restoreInputFocus();
+  });
+
   clearBtn?.addEventListener("click", () => {
     if (!openMemberMenuAgentId) {
       return;
     }
-    void clearMemberDm(openMemberMenuAgentId);
+    const target = agents.find((agent) => agent.id === openMemberMenuAgentId);
+    if (!target) {
+      return;
+    }
+    closeMemberMenu();
+    openActionModal(
+      { type: "clear", agentId: target.id },
+      "DM 클리어",
+      `"${target.name}"과의 DM 대화를 모두 지울까요?`,
+      "클리어",
+    );
   });
 
   editBtn?.addEventListener("click", () => {
@@ -444,7 +505,30 @@ function initMemberCrudUi(): void {
     if (!openMemberMenuAgentId) {
       return;
     }
-    void deleteMember(openMemberMenuAgentId);
+    const target = agents.find((agent) => agent.id === openMemberMenuAgentId);
+    if (!target) {
+      return;
+    }
+    closeMemberMenu();
+    openActionModal(
+      { type: "delete", agentId: target.id },
+      "멤버 제거",
+      `"${target.name}" 멤버를 제거할까요? 기존 DM 대화도 함께 삭제됩니다.`,
+      "제거",
+    );
+  });
+
+  actionCancelBtn?.addEventListener("click", () => {
+    closeActionModal();
+  });
+
+  actionConfirmBtn?.addEventListener("click", () => {
+    void runPendingMemberAction();
+  });
+
+  actionModal?.addEventListener("close", () => {
+    pendingMemberAction = null;
+    restoreInputFocus();
   });
 
   document.addEventListener("click", (event) => {

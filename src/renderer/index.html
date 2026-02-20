@@ -392,7 +392,16 @@
         padding: 0;
         width: min(420px, calc(100vw - 24px));
       }
+      #action-modal {
+        border: none;
+        border-radius: 12px;
+        padding: 0;
+        width: min(360px, calc(100vw - 24px));
+      }
       #member-modal::backdrop {
+        background: rgba(9, 17, 28, 0.5);
+      }
+      #action-modal::backdrop {
         background: rgba(9, 17, 28, 0.5);
       }
       .modal-inner {
@@ -441,6 +450,17 @@
         border-color: #1565c0;
         background: #1565c0;
         color: #fff;
+      }
+      .btn.danger {
+        border-color: #b63f3f;
+        background: #b63f3f;
+        color: #fff;
+      }
+      .modal-desc {
+        margin: 0;
+        color: #4a5a70;
+        font-size: 13px;
+        line-height: 1.5;
       }
     </style>
   </head>
@@ -535,6 +555,17 @@
           <button class="btn primary" type="submit">저장</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog id="action-modal">
+      <div class="modal-inner">
+        <h3 id="action-modal-title" class="modal-title">확인</h3>
+        <p id="action-modal-desc" class="modal-desc"></p>
+        <div class="modal-actions">
+          <button id="action-cancel-btn" class="btn" type="button">취소</button>
+          <button id="action-confirm-btn" class="btn danger" type="button">확인</button>
+        </div>
+      </div>
     </dialog>
 
     <script src="../../dist/renderer/renderer.js"></script>

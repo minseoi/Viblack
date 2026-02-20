@@ -389,3 +389,23 @@
 - 검증:
   - `npm run check` 통과
   - `npm run build` 통과
+
+### 29) UX 수정: 네이티브 confirm 제거 + 전용 확인 팝업 적용
+- 사용자 이슈:
+  - 모달 사용 이후 메시지 입력창 포커스가 비정상 동작.
+  - `alert/confirm` 대신 멤버 수정과 같은 전용 팝업 사용 요청.
+- 조치:
+  - `src/renderer/renderer.ts`
+    - `window.confirm` 사용 제거
+    - `pendingMemberAction` 상태 + `openActionModal/closeActionModal` 추가
+    - 멤버 `DM 클리어/제거`는 커스텀 확인 팝업에서 확인 후 실행
+    - 멤버 모달/확인 모달 close 시 `restoreInputFocus()`로 입력창 포커스 복구
+  - `src/renderer/index.html`
+    - 확인 전용 `dialog`(`action-modal`) 추가
+    - 확인 팝업용 설명 텍스트 및 danger 버튼 스타일 추가
+- 결과:
+  - 네이티브 confirm/alert 없이 동일한 UX로 동작
+  - 모달 종료 후 입력창 포커스 복구 동작 일관화
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
