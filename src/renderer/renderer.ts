@@ -40,7 +40,8 @@ type PendingAction =
   | { target: "member"; type: "clear" | "delete"; agentId: string }
   | { target: "channel"; type: "delete"; channelId: string };
 let pendingAction: PendingAction | null = null;
-let selectedChannelMemberAddId: string | null = null;
+let openChannelMemberMenuMemberId: string | null = null;
+const selectedChannelMemberAddIds = new Set<string>();
 const unreadAgentIds = new Set<string>();
 const inflightAgentIds = new Set<string>();
 
@@ -476,6 +477,47 @@ function openChannelMenu(channelId: string, anchor: HTMLElement): void {
   menu.style.top = `${top}px`;
 }
 
+function closeChannelMemberMenu(): void {
+  const menu = document.getElementById("channel-member-menu");
+  if (!menu) {
+    return;
+  }
+  menu.classList.remove("show");
+  menu.setAttribute("aria-hidden", "true");
+  openChannelMemberMenuMemberId = null;
+}
+
+function openChannelMemberMenu(memberId: string, anchor: HTMLElement): void {
+  const menu = document.getElementById("channel-member-menu");
+  if (!menu) {
+    return;
+  }
+  if (openChannelMemberMenuMemberId === memberId && menu.classList.contains("show")) {
+    closeChannelMemberMenu();
+    return;
+  }
+
+  openChannelMemberMenuMemberId = memberId;
+  menu.classList.add("show");
+  menu.setAttribute("aria-hidden", "false");
+
+  const rect = anchor.getBoundingClientRect();
+  const width = menu.offsetWidth || 124;
+  const height = menu.offsetHeight || 44;
+  const margin = 8;
+
+  let left = rect.right - width;
+  let top = rect.bottom + 4;
+  left = Math.max(margin, Math.min(left, window.innerWidth - width - margin));
+  if (top + height > window.innerHeight - margin) {
+    top = rect.top - height - 4;
+  }
+  top = Math.max(margin, top);
+
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+}
+
 function openActionModal(
   action: PendingAction,
   title: string,
@@ -724,6 +766,7 @@ function renderChannelMembersModalContent(): void {
     return;
   }
 
+  closeChannelMemberMenu();
   title.textContent = `# ${channel.name} 멤버`;
   list.innerHTML = "";
   const keyword = normalizeSearchKeyword(searchInput?.value ?? "");
@@ -743,7 +786,9 @@ function renderChannelMembersModalContent(): void {
 
   for (const member of members) {
     const item = document.createElement("div");
-    item.className = "modal-list-item";
+    item.className = "modal-list-item member-entry";
+
+    const infoWrap = document.createElement("div");
 
     const nameEl = document.createElement("div");
     nameEl.className = "name";
@@ -753,8 +798,21 @@ function renderChannelMembersModalContent(): void {
     subEl.className = "sub";
     subEl.textContent = member.role;
 
-    item.appendChild(nameEl);
-    item.appendChild(subEl);
+    infoWrap.appendChild(nameEl);
+    infoWrap.appendChild(subEl);
+
+    const menuBtn = document.createElement("button");
+    menuBtn.className = "channel-member-menu-btn";
+    menuBtn.type = "button";
+    menuBtn.textContent = "☰";
+    menuBtn.setAttribute("aria-label", `${member.name} 멤버 메뉴`);
+    menuBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openChannelMemberMenu(member.id, menuBtn);
+    });
+
+    item.appendChild(infoWrap);
+    item.appendChild(menuBtn);
     list.appendChild(item);
   }
 }
@@ -780,6 +838,7 @@ function openChannelMembersModal(): void {
 
 function closeChannelMembersModal(): void {
   const modal = document.getElementById("channel-members-modal") as HTMLDialogElement | null;
+  closeChannelMemberMenu();
   if (!modal || !modal.open) {
     return;
   }
@@ -799,12 +858,12 @@ function renderChannelMemberAddList(): void {
   const keyword = normalizeSearchKeyword(searchInput?.value ?? "");
   const visibleAgents = agents.filter((agent) => matchesAgentSearch(agent, keyword));
 
-  if (selectedChannelMemberAddId) {
-    const selectedVisible = visibleAgents.some(
-      (agent) => agent.id === selectedChannelMemberAddId && !channel.memberIds.includes(agent.id),
+  for (const selectedId of Array.from(selectedChannelMemberAddIds)) {
+    const stillSelectable = agents.some(
+      (agent) => agent.id === selectedId && !channel.memberIds.includes(agent.id),
     );
-    if (!selectedVisible) {
-      selectedChannelMemberAddId = null;
+    if (!stillSelectable) {
+      selectedChannelMemberAddIds.delete(selectedId);
     }
   }
 
@@ -815,12 +874,13 @@ function renderChannelMemberAddList(): void {
     empty.textContent = "검색 결과가 없습니다.";
     list.appendChild(empty);
     submitBtn.disabled = true;
+    submitBtn.textContent = "추가";
     return;
   }
 
   for (const agent of visibleAgents) {
     const alreadyAdded = channel.memberIds.includes(agent.id);
-    const isSelected = selectedChannelMemberAddId === agent.id;
+    const isSelected = selectedChannelMemberAddIds.has(agent.id);
 
     const item = document.createElement("div");
     const classes = ["modal-list-item"];
@@ -847,7 +907,11 @@ function renderChannelMemberAddList(): void {
 
     if (!alreadyAdded) {
       item.addEventListener("click", () => {
-        selectedChannelMemberAddId = agent.id;
+        if (selectedChannelMemberAddIds.has(agent.id)) {
+          selectedChannelMemberAddIds.delete(agent.id);
+        } else {
+          selectedChannelMemberAddIds.add(agent.id);
+        }
         renderChannelMemberAddList();
       });
     }
@@ -855,7 +919,9 @@ function renderChannelMemberAddList(): void {
     list.appendChild(item);
   }
 
-  submitBtn.disabled = selectedChannelMemberAddId === null;
+  submitBtn.disabled = selectedChannelMemberAddIds.size === 0;
+  submitBtn.textContent =
+    selectedChannelMemberAddIds.size > 0 ? `${selectedChannelMemberAddIds.size}명 추가` : "추가";
 }
 
 function openChannelMemberAddModal(): void {
@@ -866,7 +932,7 @@ function openChannelMemberAddModal(): void {
     return;
   }
 
-  selectedChannelMemberAddId = null;
+  selectedChannelMemberAddIds.clear();
   searchInput.value = "";
   renderChannelMemberAddList();
 
@@ -879,7 +945,7 @@ function openChannelMemberAddModal(): void {
 
 function closeChannelMemberAddModal(): void {
   const modal = document.getElementById("channel-member-add-modal") as HTMLDialogElement | null;
-  selectedChannelMemberAddId = null;
+  selectedChannelMemberAddIds.clear();
   if (!modal || !modal.open) {
     return;
   }
@@ -930,19 +996,35 @@ function saveChannel(channelName: string, channelDescription: string): void {
   closeChannelModal();
 }
 
-function addSelectedMemberToActiveChannel(memberId: string): void {
+function addSelectedMembersToActiveChannel(memberIds: string[]): void {
   const channel = getChannelById(activeChannelId);
   if (!channel) {
     return;
   }
-  if (!memberId || channel.memberIds.includes(memberId)) {
+
+  const toAdd = memberIds.filter(
+    (memberId) => memberId && !channel.memberIds.includes(memberId),
+  );
+  if (toAdd.length === 0) {
     return;
   }
 
-  channel.memberIds = [...channel.memberIds, memberId];
+  channel.memberIds = [...channel.memberIds, ...toAdd];
   channels = channels.map((item) => (item.id === channel.id ? channel : item));
   closeChannelMemberAddModal();
   openChannelMembersModal();
+}
+
+function removeMemberFromActiveChannel(memberId: string): void {
+  const channel = getChannelById(activeChannelId);
+  if (!channel) {
+    return;
+  }
+
+  channel.memberIds = channel.memberIds.filter((id) => id !== memberId);
+  channels = channels.map((item) => (item.id === channel.id ? channel : item));
+  closeChannelMemberMenu();
+  renderChannelMembersModalContent();
 }
 
 function deleteChannel(channelId: string): void {
@@ -1140,6 +1222,8 @@ function initMemberCrudUi(): void {
   const channelMembersSearchInput = document.getElementById(
     "channel-members-search-input",
   ) as HTMLInputElement | null;
+  const channelMemberMenu = document.getElementById("channel-member-menu");
+  const channelMemberMenuRemoveBtn = document.getElementById("channel-member-menu-remove");
   const channelMembersAddBtn = document.getElementById("channel-members-add-btn");
   const channelMembersCloseBtn = document.getElementById("channel-members-close-btn");
   const channelMemberAddModal = document.getElementById("channel-member-add-modal") as HTMLDialogElement | null;
@@ -1166,6 +1250,7 @@ function initMemberCrudUi(): void {
     event.stopPropagation();
     closeMemberMenu();
     closeChannelMenu();
+    closeChannelMemberMenu();
     openChannelModal("create", null);
   });
 
@@ -1219,6 +1304,13 @@ function initMemberCrudUi(): void {
     renderChannelMembersModalContent();
   });
 
+  channelMemberMenuRemoveBtn?.addEventListener("click", () => {
+    if (!openChannelMemberMenuMemberId) {
+      return;
+    }
+    removeMemberFromActiveChannel(openChannelMemberMenuMemberId);
+  });
+
   channelMembersAddBtn?.addEventListener("click", () => {
     closeChannelMembersModal();
     openChannelMemberAddModal();
@@ -1234,10 +1326,11 @@ function initMemberCrudUi(): void {
 
   channelMemberAddForm?.addEventListener("submit", (event) => {
     event.preventDefault();
-    if (!selectedChannelMemberAddId) {
+    const selectedIds = Array.from(selectedChannelMemberAddIds);
+    if (selectedIds.length === 0) {
       return;
     }
-    addSelectedMemberToActiveChannel(selectedChannelMemberAddId);
+    addSelectedMembersToActiveChannel(selectedIds);
   });
 
   channelMemberAddSearchInput?.addEventListener("input", () => {
@@ -1256,6 +1349,7 @@ function initMemberCrudUi(): void {
     event.stopPropagation();
     closeMemberMenu();
     closeChannelMenu();
+    closeChannelMemberMenu();
     openMemberModal("create", null);
   });
 
@@ -1343,11 +1437,19 @@ function initMemberCrudUi(): void {
         closeChannelMenu();
       }
     }
+
+    if (channelMemberMenu && !channelMemberMenu.contains(target)) {
+      const channelMemberMenuButton = (event.target as HTMLElement).closest(".channel-member-menu-btn");
+      if (!channelMemberMenuButton) {
+        closeChannelMemberMenu();
+      }
+    }
   });
 
   window.addEventListener("resize", () => {
     closeMemberMenu();
     closeChannelMenu();
+    closeChannelMemberMenu();
   });
 }
 
