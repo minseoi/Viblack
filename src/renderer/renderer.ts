@@ -44,6 +44,7 @@ let openChannelMemberMenuMemberId: string | null = null;
 const selectedChannelMemberAddIds = new Set<string>();
 const unreadAgentIds = new Set<string>();
 const inflightAgentIds = new Set<string>();
+let isGeneratingMemberPrompt = false;
 
 function escapeHtml(value: string): string {
   return value
@@ -703,17 +704,58 @@ function openMemberModal(mode: "create" | "edit", targetAgent: Agent | null): vo
   if (modal.open) {
     modal.close();
   }
+  setMemberPromptGeneratingState(false);
   modal.showModal();
   nameInput.focus();
 }
 
 function closeMemberModal(): void {
+  if (isGeneratingMemberPrompt) {
+    showWarning("시스템 프롬프트 생성 중에는 멤버 창을 닫을 수 없습니다.");
+    return;
+  }
   const modal = document.getElementById("member-modal") as HTMLDialogElement | null;
   if (!modal || !modal.open) {
     return;
   }
   modal.close();
   restoreInputFocus();
+}
+
+function setMemberPromptGeneratingState(isGenerating: boolean): void {
+  isGeneratingMemberPrompt = isGenerating;
+
+  const nameInput = document.getElementById("member-name-input") as HTMLInputElement | null;
+  const roleInput = document.getElementById("member-role-input") as HTMLInputElement | null;
+  const promptInput = document.getElementById("member-prompt-input") as HTMLTextAreaElement | null;
+  const generateBtn = document.getElementById(
+    "member-generate-prompt-btn",
+  ) as HTMLButtonElement | null;
+  const cancelBtn = document.getElementById("member-cancel-btn") as HTMLButtonElement | null;
+  const saveBtn = document.querySelector<HTMLButtonElement>("#member-form button[type='submit']");
+  const memberModal = document.getElementById("member-modal") as HTMLDialogElement | null;
+
+  if (nameInput) {
+    nameInput.disabled = isGenerating;
+  }
+  if (roleInput) {
+    roleInput.disabled = isGenerating;
+  }
+  if (promptInput) {
+    promptInput.disabled = isGenerating;
+  }
+  if (generateBtn) {
+    generateBtn.disabled = isGenerating;
+  }
+  if (cancelBtn) {
+    cancelBtn.disabled = isGenerating;
+  }
+  if (saveBtn) {
+    saveBtn.disabled = isGenerating;
+  }
+  if (memberModal) {
+    memberModal.setAttribute("aria-busy", String(isGenerating));
+  }
 }
 
 function openChannelModal(mode: "create" | "edit", channel: Channel | null): void {
@@ -1127,6 +1169,10 @@ async function refreshMessages(): Promise<void> {
 }
 
 async function generateMemberSystemPrompt(): Promise<void> {
+  if (isGeneratingMemberPrompt) {
+    return;
+  }
+
   const nameInput = document.getElementById("member-name-input") as HTMLInputElement | null;
   const roleInput = document.getElementById("member-role-input") as HTMLInputElement | null;
   const promptInput = document.getElementById("member-prompt-input") as HTMLTextAreaElement | null;
@@ -1145,7 +1191,7 @@ async function generateMemberSystemPrompt(): Promise<void> {
   }
 
   const originalLabel = generateBtn.textContent ?? "시스템 프롬프트 자동 생성";
-  generateBtn.disabled = true;
+  setMemberPromptGeneratingState(true);
   generateBtn.textContent = "생성 중...";
   setStatus("Generating prompt...");
 
@@ -1173,12 +1219,16 @@ async function generateMemberSystemPrompt(): Promise<void> {
     showWarning(`시스템 프롬프트 자동 생성 실패: ${message}`);
     setStatus(`Error: ${message}`);
   } finally {
-    generateBtn.disabled = false;
+    setMemberPromptGeneratingState(false);
     generateBtn.textContent = originalLabel;
   }
 }
 
 async function saveMemberForm(): Promise<void> {
+  if (isGeneratingMemberPrompt) {
+    return;
+  }
+
   const nameInput = document.getElementById("member-name-input") as HTMLInputElement | null;
   const roleInput = document.getElementById("member-role-input") as HTMLInputElement | null;
   const promptInput = document.getElementById("member-prompt-input") as HTMLTextAreaElement | null;
@@ -1421,6 +1471,13 @@ function initMemberCrudUi(): void {
 
   memberModal?.addEventListener("close", () => {
     restoreInputFocus();
+  });
+
+  memberModal?.addEventListener("cancel", (event) => {
+    if (!isGeneratingMemberPrompt) {
+      return;
+    }
+    event.preventDefault();
   });
 
   clearBtn?.addEventListener("click", () => {

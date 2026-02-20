@@ -664,3 +664,18 @@
 - 검증:
   - `npm run check` 통과
   - `npm run build` 통과
+
+### 45) UX 보완: 시스템 프롬프트 자동 생성 중 멤버 모달 동작 잠금
+- 사용자 요청:
+  - 자동 생성 진행 중에는 다른 행동을 할 수 없도록 제한.
+- 조치:
+  - `src/renderer/renderer.ts`
+    - `isGeneratingMemberPrompt` 상태 추가
+    - 생성 중 모달 입력/버튼(`이름`, `역할`, `시스템 프롬프트`, `자동 생성`, `취소`, `저장`) 비활성화
+    - 생성 중 `closeMemberModal()` 차단
+    - 생성 중 `saveMemberForm()` 차단
+    - 멤버 모달 `cancel` 이벤트(ESC 닫기) 차단
+    - 모달 재오픈 시 잠금 상태 초기화
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
