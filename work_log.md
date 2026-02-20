@@ -70,3 +70,13 @@
 ### 9) 커밋 로그
 - `1e7b22c`: `chore_init_viblack_repo_and_planning_docs`
 - `ae19861`: `feat_add_electron_typescript_mvp_scaffold`
+
+### 10) 실행 확인
+- `npm run start` 1차 실행:
+  - 빌드(`tsc`)는 성공
+  - Electron 프로세스 비정상 종료 코드: `-1073741819`
+- `npm run start` 권한 상승 재실행:
+  - 빌드 성공
+  - Electron 실행 명령은 정상 종료 코드(`0`) 확인
+- 공통 참고:
+  - `node:sqlite` 실험 기능 경고 출력(동작 자체는 진행)
