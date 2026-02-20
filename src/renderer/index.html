@@ -38,6 +38,9 @@
         padding: 16px;
         background: #f8fafc;
         overflow-y: auto;
+        display: grid;
+        grid-template-rows: auto auto 1fr;
+        gap: 14px;
       }
       .brand {
         font-size: 22px;
@@ -47,22 +50,79 @@
       .desc {
         color: var(--sub);
         font-size: 13px;
-        margin-bottom: 20px;
       }
-      .agent-card {
+      .sidebar-sections {
+        display: grid;
+        gap: 12px;
+        align-content: start;
+      }
+      .sidebar-section {
         border: 1px solid var(--line);
-        border-radius: 12px;
+        border-radius: 10px;
         background: #fff;
-        padding: 12px;
+        overflow: hidden;
       }
-      .agent-title {
-        font-size: 16px;
-        font-weight: 600;
-      }
-      .agent-sub {
-        margin-top: 6px;
-        color: var(--sub);
+      .section-header {
+        width: 100%;
+        border: none;
+        background: #fff;
+        border-bottom: 1px solid #eef1f5;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 10px 9px;
+        color: #314054;
         font-size: 13px;
+        font-weight: 700;
+        cursor: default;
+        transition: background-color 0.12s ease, color 0.12s ease;
+      }
+      .section-header:hover {
+        background: #edf3fb;
+        color: #15457f;
+      }
+      .header-add {
+        border: none;
+        width: 20px;
+        height: 20px;
+        border-radius: 6px;
+        background: #d9e7fb;
+        color: #15457f;
+        font-size: 15px;
+        line-height: 20px;
+        text-align: center;
+        cursor: pointer;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.12s ease, background-color 0.12s ease;
+      }
+      .section-header:hover .header-add,
+      .section-header:focus-within .header-add {
+        opacity: 1;
+        pointer-events: auto;
+      }
+      .header-add:hover {
+        background: #c6dcfb;
+      }
+      .section-list {
+        list-style: none;
+        margin: 0;
+        padding: 6px;
+      }
+      .section-item {
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-size: 13px;
+        color: #2f3f55;
+        transition: background-color 0.12s ease;
+      }
+      .section-item:hover {
+        background: #f2f6fb;
+      }
+      .section-item.active {
+        background: #e8f2ff;
+        color: #124885;
+        font-weight: 600;
       }
       .main {
         display: grid;
@@ -185,11 +245,31 @@
   <body>
     <div class="app">
       <aside class="sidebar">
-        <div class="brand">Viblack</div>
-        <div class="desc">Codex CLI 기반 AI 에이전트 메신저 MVP</div>
-        <div class="agent-card">
-          <div class="agent-title">Helper</div>
-          <div class="agent-sub">초기 기본 에이전트 (1명)</div>
+        <div>
+          <div class="brand">Viblack</div>
+          <div class="desc">Codex CLI 기반 AI 에이전트 메신저 MVP</div>
+        </div>
+
+        <div class="sidebar-sections">
+          <section class="sidebar-section">
+            <button class="section-header" type="button">
+              <span>채널</span>
+              <span class="header-add" aria-label="채널 추가">+</span>
+            </button>
+            <ul class="section-list">
+              <li class="section-item active"># general</li>
+            </ul>
+          </section>
+
+          <section class="sidebar-section">
+            <button class="section-header" type="button">
+              <span>멤버</span>
+              <span class="header-add" aria-label="멤버 추가">+</span>
+            </button>
+            <ul class="section-list">
+              <li class="section-item active">Helper</li>
+            </ul>
+          </section>
         </div>
       </aside>
 
