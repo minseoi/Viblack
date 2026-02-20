@@ -629,3 +629,12 @@
 - 조치:
   - `docs/images/` 경로 생성
   - Git 추적 유지를 위해 `docs/images/.gitkeep` 추가
+
+### 43) 문서 수정: README 타이틀 이미지 반영
+- 사용자 요청:
+  - `title.png`를 반영해 `README.md` 업데이트.
+- 조치:
+  - `README.md` 상단에 타이틀 이미지 추가:
+    - `![Viblack Title](docs/images/title.png)`
+  - 현재 동작과 맞도록 안내 문구 보정:
+    - Codex 미동작 시 안내를 `팝업` -> `상단 경고 배너`로 수정

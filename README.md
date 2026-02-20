@@ -1,5 +1,7 @@
 # Viblack
 
+![Viblack Title](docs/images/title.png)
+
 Electron + TypeScript 기반의 로컬 MVP 협업 앱입니다.  
 프론트에서 메시지를 보내면 백엔드가 `codex exec`/`codex exec resume`를 호출해 Helper 에이전트를 실행합니다.
 
@@ -22,7 +24,7 @@ npm run start
 
 ## 동작 플로우
 1. 앱 시작 시 `codex --version` 체크
-2. 실패하면 Electron 팝업으로 경고 표시
+2. 실패하면 상단 경고 배너로 안내 표시
 3. 성공하면 Helper 1명으로 채팅 시작
 4. 첫 요청: `codex exec --json ...`
 5. 이후 요청: `codex exec resume <session_id> --json ...`
