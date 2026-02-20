@@ -306,6 +306,10 @@
         align-items: center;
         justify-content: space-between;
       }
+      .top-left {
+        display: grid;
+        gap: 2px;
+      }
       .top-right {
         display: flex;
         align-items: center;
@@ -329,6 +333,10 @@
       #agent-title {
         font-size: 16px;
         font-weight: 600;
+      }
+      #agent-subtitle {
+        font-size: 12px;
+        color: #6c7788;
       }
       #status {
         color: var(--sub);
@@ -700,7 +708,10 @@
 
       <main class="main">
         <header class="top">
-          <div id="agent-title">Helper</div>
+          <div class="top-left">
+            <div id="agent-title">Helper</div>
+            <div id="agent-subtitle">General assistant</div>
+          </div>
           <div class="top-right">
             <button id="channel-members-btn" class="top-btn hidden" type="button">채널 멤버</button>
             <div id="status">Loading...</div>

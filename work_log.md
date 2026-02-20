@@ -515,3 +515,20 @@
 - 검증:
   - `npm run check` 통과
   - `npm run build` 통과
+
+### 35) UI 수정: 상단바 2줄 표시 + 사이드바 채널 설명 제거
+- 사용자 요청:
+  - DM 상단: `이름` 1줄 + 아래 `역할`(작은 회색) 1줄
+  - 채널 상단: `채널 이름` 1줄 + 아래 `채널 설명`(작은 회색) 1줄
+  - 좌측 사이드바 채널 목록: 채널 설명은 표시하지 않음
+- 조치:
+  - `src/renderer/index.html`
+    - 상단 좌측을 `#agent-title`, `#agent-subtitle` 2줄 구조로 변경
+    - `#agent-subtitle` 스타일(작은 회색 텍스트) 추가
+  - `src/renderer/renderer.ts`
+    - 상단 텍스트 갱신 공통 함수 `setHeader(title, subtitle)` 추가
+    - DM/채널/빈 상태에서 상단 제목+서브텍스트를 일관되게 갱신
+    - 채널 목록 렌더링에서 설명 줄 DOM 제거(채널명만 렌더링)
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과

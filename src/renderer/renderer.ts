@@ -219,6 +219,17 @@ function setStatus(text: string): void {
   }
 }
 
+function setHeader(title: string, subtitle = ""): void {
+  const titleEl = document.getElementById("agent-title");
+  const subtitleEl = document.getElementById("agent-subtitle");
+  if (titleEl) {
+    titleEl.textContent = title;
+  }
+  if (subtitleEl) {
+    subtitleEl.textContent = subtitle;
+  }
+}
+
 function setComposerEnabled(enabled: boolean, disabledPlaceholder = "먼저 멤버를 추가하세요."): void {
   const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
   const button = document.getElementById("send-btn") as HTMLButtonElement | null;
@@ -329,14 +340,9 @@ function renderChannelList(): void {
 
     const nameEl = document.createElement("div");
     nameEl.className = "channel-name";
-    nameEl.textContent = `# ${channel.name}`;
-
-    const descEl = document.createElement("div");
-    descEl.className = "channel-desc";
-    descEl.textContent = channel.description;
+    nameEl.textContent = channel.name;
 
     item.appendChild(nameEl);
-    item.appendChild(descEl);
 
     item.addEventListener("click", () => {
       activeChannelId = channel.id;
@@ -344,10 +350,7 @@ function renderChannelList(): void {
       renderMemberList();
       updateChannelMembersButton();
 
-      const title = document.getElementById("agent-title");
-      if (title) {
-        title.textContent = `# ${channel.name}`;
-      }
+      setHeader(channel.name, channel.description);
       setStatus("Channel selected");
       setComposerEnabled(false, "채널 대화 기능은 준비 중입니다.");
       renderMessages([]);
@@ -826,11 +829,7 @@ function saveChannel(channelName: string, channelDescription: string): void {
   renderChannelList();
   renderMemberList();
   updateChannelMembersButton();
-
-  const title = document.getElementById("agent-title");
-  if (title) {
-    title.textContent = `# ${channel.name}`;
-  }
+  setHeader(channel.name, channel.description);
   setStatus("Channel selected");
   setComposerEnabled(false, "채널 대화 기능은 준비 중입니다.");
   renderMessages([]);
@@ -895,10 +894,7 @@ async function refreshMessagesByAgent(agentId: string): Promise<void> {
   );
   if (activeAgentId === agentId) {
     unreadAgentIds.delete(agentId);
-    const title = document.getElementById("agent-title");
-    if (title) {
-      title.textContent = `${data.agent.name} (${data.agent.role})`;
-    }
+    setHeader(data.agent.name, data.agent.role);
     renderMessages(data.messages, data.agent.name);
     setStatus(codexReady ? "Ready" : "Codex unavailable");
     renderMemberList();
@@ -914,10 +910,7 @@ async function refreshMessages(): Promise<void> {
 
   if (activeChannelId) {
     const channel = getChannelById(activeChannelId);
-    const title = document.getElementById("agent-title");
-    if (title) {
-      title.textContent = channel ? `# ${channel.name}` : "채널";
-    }
+    setHeader(channel ? channel.name : "채널", channel?.description ?? "");
     setStatus("Channel selected");
     setComposerEnabled(false, "채널 대화 기능은 준비 중입니다.");
     renderMessages([]);
@@ -925,10 +918,7 @@ async function refreshMessages(): Promise<void> {
   }
 
   if (!activeAgentId) {
-    const title = document.getElementById("agent-title");
-    if (title) {
-      title.textContent = "멤버를 추가하세요";
-    }
+    setHeader("멤버를 추가하세요", "");
     setStatus("No member selected");
     renderMessages([]);
     return;
@@ -937,10 +927,7 @@ async function refreshMessages(): Promise<void> {
   const data = await fetchJson<{ agent: Agent; messages: ChatMessage[] }>(
     `${backendBaseUrl}/api/agents/${activeAgentId}/messages`,
   );
-  const title = document.getElementById("agent-title");
-  if (title) {
-    title.textContent = `${data.agent.name} (${data.agent.role})`;
-  }
+  setHeader(data.agent.name, data.agent.role);
   renderMessages(data.messages, data.agent.name);
   setStatus(codexReady ? "Ready" : "Codex unavailable");
 }
