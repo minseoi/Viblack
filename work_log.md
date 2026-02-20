@@ -599,3 +599,10 @@
 - 검증:
   - `npm run check` 통과
   - `npm run build` 통과
+
+### 40) 설정: 앱 아이콘 리소스 폴더 생성
+- 사용자 요청:
+  - 앱 아이콘 파일을 넣을 폴더 생성.
+- 조치:
+  - `src/assets/icons/` 경로 생성
+  - Git 추적 유지를 위해 `src/assets/icons/.gitkeep` 추가
