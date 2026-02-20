@@ -622,3 +622,10 @@
 - 검증:
   - `npm run check` 통과
   - `npm run build` 통과
+
+### 42) 설정: README 타이틀 이미지 폴더 생성
+- 사용자 요청:
+  - README 타이틀 이미지 저장용 폴더 생성.
+- 조치:
+  - `docs/images/` 경로 생성
+  - Git 추적 유지를 위해 `docs/images/.gitkeep` 추가
