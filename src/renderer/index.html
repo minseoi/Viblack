@@ -647,6 +647,23 @@
         justify-content: flex-end;
         gap: 8px;
       }
+      .member-modal-actions {
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .modal-actions-right {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+      #member-generate-prompt-btn {
+        white-space: nowrap;
+      }
+      #member-generate-prompt-btn:disabled {
+        cursor: not-allowed;
+        opacity: 0.72;
+      }
       .btn {
         border: 1px solid var(--line);
         border-radius: 8px;
@@ -858,9 +875,14 @@
           <label for="member-prompt-input">시스템 프롬프트</label>
           <textarea id="member-prompt-input" name="systemPrompt" required></textarea>
         </div>
-        <div class="modal-actions">
-          <button id="member-cancel-btn" class="btn" type="button">취소</button>
-          <button class="btn primary" type="submit">저장</button>
+        <div class="modal-actions member-modal-actions">
+          <button id="member-generate-prompt-btn" class="btn" type="button">
+            시스템 프롬프트 자동 생성
+          </button>
+          <div class="modal-actions-right">
+            <button id="member-cancel-btn" class="btn" type="button">취소</button>
+            <button class="btn primary" type="submit">저장</button>
+          </div>
         </div>
       </form>
     </dialog>

@@ -1126,6 +1126,58 @@ async function refreshMessages(): Promise<void> {
   setStatus(codexReady ? "Ready" : "Codex unavailable");
 }
 
+async function generateMemberSystemPrompt(): Promise<void> {
+  const nameInput = document.getElementById("member-name-input") as HTMLInputElement | null;
+  const roleInput = document.getElementById("member-role-input") as HTMLInputElement | null;
+  const promptInput = document.getElementById("member-prompt-input") as HTMLTextAreaElement | null;
+  const generateBtn = document.getElementById(
+    "member-generate-prompt-btn",
+  ) as HTMLButtonElement | null;
+  if (!nameInput || !roleInput || !promptInput || !generateBtn) {
+    return;
+  }
+
+  const role = roleInput.value.trim();
+  if (!role) {
+    showWarning("역할을 먼저 입력하세요.");
+    roleInput.focus();
+    return;
+  }
+
+  const originalLabel = generateBtn.textContent ?? "시스템 프롬프트 자동 생성";
+  generateBtn.disabled = true;
+  generateBtn.textContent = "생성 중...";
+  setStatus("Generating prompt...");
+
+  try {
+    const payload = await fetchJson<{ systemPrompt: string }>(
+      `${backendBaseUrl}/api/system/generate-system-prompt`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: nameInput.value.trim(),
+          role,
+        }),
+      },
+    );
+
+    promptInput.value = payload.systemPrompt;
+    showWarning(null);
+    setStatus(codexReady ? "Ready" : "Codex unavailable");
+    promptInput.focus();
+    const len = promptInput.value.length;
+    promptInput.setSelectionRange(len, len);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "unknown error";
+    showWarning(`시스템 프롬프트 자동 생성 실패: ${message}`);
+    setStatus(`Error: ${message}`);
+  } finally {
+    generateBtn.disabled = false;
+    generateBtn.textContent = originalLabel;
+  }
+}
+
 async function saveMemberForm(): Promise<void> {
   const nameInput = document.getElementById("member-name-input") as HTMLInputElement | null;
   const roleInput = document.getElementById("member-role-input") as HTMLInputElement | null;
@@ -1238,6 +1290,7 @@ function initMemberCrudUi(): void {
   const memberModal = document.getElementById("member-modal") as HTMLDialogElement | null;
   const modalForm = document.getElementById("member-form");
   const cancelBtn = document.getElementById("member-cancel-btn");
+  const generatePromptBtn = document.getElementById("member-generate-prompt-btn");
   const clearBtn = document.getElementById("member-menu-clear");
   const editBtn = document.getElementById("member-menu-edit");
   const deleteBtn = document.getElementById("member-menu-delete");
@@ -1356,6 +1409,10 @@ function initMemberCrudUi(): void {
   modalForm?.addEventListener("submit", (event) => {
     event.preventDefault();
     void saveMemberForm();
+  });
+
+  generatePromptBtn?.addEventListener("click", () => {
+    void generateMemberSystemPrompt();
   });
 
   cancelBtn?.addEventListener("click", () => {

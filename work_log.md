@@ -638,3 +638,29 @@
     - `![Viblack Title](docs/images/title.png)`
   - 현재 동작과 맞도록 안내 문구 보정:
     - Codex 미동작 시 안내를 `팝업` -> `상단 경고 배너`로 수정
+
+### 44) 기능 추가: 멤버 시스템 프롬프트 자동 생성 버튼 (Codex 연동)
+- 사용자 요청:
+  - 멤버 추가/수정 팝업에서 역할 기반으로 시스템 프롬프트를 자동 생성.
+  - `취소/저장` 옆에 `시스템 프롬프트 자동 생성` 버튼 추가.
+- 백엔드 조치:
+  - `src/backend/server.ts`
+    - `POST /api/system/generate-system-prompt` 추가
+    - 입력: `name`, `role` (`role` 필수)
+    - Codex로 프롬프트 생성 후 `{ systemPrompt }` 반환
+    - 코드펜스(```` ... ````) 응답 정리 처리 추가
+    - Codex 미가용/실패 시 상태코드와 에러 메시지 반환
+- 프론트 조치:
+  - `src/renderer/index.html`
+    - 멤버 모달 하단 액션 영역에 `시스템 프롬프트 자동 생성` 버튼 추가
+    - 버튼 + 기존 `취소/저장` 공존 레이아웃 스타일 추가
+  - `src/renderer/renderer.ts`
+    - `generateMemberSystemPrompt()` 추가
+      - 역할 입력 검증
+      - 생성 API 호출
+      - 성공 시 시스템 프롬프트 textarea 자동 채움
+      - 실패 시 경고/상태 메시지 표시
+    - 버튼 클릭 이벤트 연결
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
