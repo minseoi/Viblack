@@ -86,6 +86,16 @@ export class ViblackDb {
     }
   }
 
+  clearAgentMessages(agentId: string): boolean {
+    const agent = this.getAgent(agentId);
+    if (!agent) {
+      return false;
+    }
+    this.db.prepare(`DELETE FROM messages WHERE agent_id = ?`).run(agentId);
+    this.db.prepare(`UPDATE agents SET session_id = NULL WHERE id = ?`).run(agentId);
+    return true;
+  }
+
   updateAgentSession(agentId: string, sessionId: string): void {
     const stmt = this.db.prepare(`UPDATE agents SET session_id = ? WHERE id = ?`);
     stmt.run(sessionId, agentId);

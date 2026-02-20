@@ -380,10 +380,31 @@ async function deleteMember(agentId: string): Promise<void> {
   await refreshMessages();
 }
 
+async function clearMemberDm(agentId: string): Promise<void> {
+  const target = agents.find((agent) => agent.id === agentId);
+  if (!target) {
+    return;
+  }
+  const ok = window.confirm(`"${target.name}" DM 대화를 모두 지울까요?`);
+  if (!ok) {
+    return;
+  }
+
+  await fetchJson<{ ok: boolean }>(`${backendBaseUrl}/api/agents/${agentId}/messages`, {
+    method: "DELETE",
+  });
+
+  closeMemberMenu();
+  if (activeAgentId === agentId) {
+    await refreshMessages();
+  }
+}
+
 function initMemberCrudUi(): void {
   const addMemberBtn = document.getElementById("add-member-btn");
   const modalForm = document.getElementById("member-form");
   const cancelBtn = document.getElementById("member-cancel-btn");
+  const clearBtn = document.getElementById("member-menu-clear");
   const editBtn = document.getElementById("member-menu-edit");
   const deleteBtn = document.getElementById("member-menu-delete");
   const menu = document.getElementById("member-menu");
@@ -401,6 +422,13 @@ function initMemberCrudUi(): void {
 
   cancelBtn?.addEventListener("click", () => {
     closeMemberModal();
+  });
+
+  clearBtn?.addEventListener("click", () => {
+    if (!openMemberMenuAgentId) {
+      return;
+    }
+    void clearMemberDm(openMemberMenuAgentId);
   });
 
   editBtn?.addEventListener("click", () => {

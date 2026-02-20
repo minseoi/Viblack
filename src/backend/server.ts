@@ -110,6 +110,21 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
     }
   });
 
+  app.delete("/api/agents/:agentId/messages", async (req, res) => {
+    const { agentId } = req.params;
+    try {
+      const cleared = await withAgentLock(agentId, async () => db.clearAgentMessages(agentId));
+      if (!cleared) {
+        res.status(404).json({ error: "agent not found" });
+        return;
+      }
+      res.json({ ok: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "unknown error";
+      res.status(500).json({ error: message });
+    }
+  });
+
   app.get("/api/agents/:agentId/messages", (req, res) => {
     const { agentId } = req.params;
     const agent = db.getAgent(agentId);

@@ -368,3 +368,24 @@
 - 검증:
   - `npm run check` 통과
   - `npm run build` 통과
+
+### 28) 기능 추가: 특정 멤버 DM 대화 내용 클리어
+- 사용자 요청:
+  - 특정 에이전트와의 DM 내용만 지우는 기능 추가.
+- 백엔드 조치:
+  - `src/backend/db.ts`
+    - `clearAgentMessages(agentId)` 추가
+    - 대상 에이전트의 메시지 전체 삭제 + `session_id` 초기화(NULL)
+  - `src/backend/server.ts`
+    - `DELETE /api/agents/:agentId/messages` 추가
+    - 에이전트별 lock 내부에서 클리어 실행(동시 요청 충돌 방지)
+- 프론트 조치:
+  - `src/renderer/index.html`
+    - 멤버 햄버거 메뉴에 `DM 클리어` 항목 추가
+  - `src/renderer/renderer.ts`
+    - `clearMemberDm(agentId)` 구현
+    - 확인 창 후 API 호출, 성공 시 메뉴 닫기
+    - 현재 활성 멤버를 클리어한 경우 메시지 화면 즉시 갱신
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
