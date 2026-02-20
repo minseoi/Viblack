@@ -31,6 +31,10 @@ function trackProcess(child: ChildProcess): void {
   });
 }
 
+function needsShellOnWindows(command: string): boolean {
+  return process.platform === "win32" && command.toLowerCase().endsWith(".cmd");
+}
+
 function getCandidateCommands(): string[] {
   const candidates = [codexCommand, "codex"];
 
@@ -38,12 +42,12 @@ function getCandidateCommands(): string[] {
     const appData = process.env.APPDATA;
     const userProfile = process.env.USERPROFILE;
     if (appData) {
-      candidates.push(path.join(appData, "npm", "codex.cmd"));
       candidates.push(path.join(appData, "npm", "codex"));
+      candidates.push(path.join(appData, "npm", "codex.cmd"));
     }
     if (userProfile) {
-      candidates.push(path.join(userProfile, "AppData", "Roaming", "npm", "codex.cmd"));
       candidates.push(path.join(userProfile, "AppData", "Roaming", "npm", "codex"));
+      candidates.push(path.join(userProfile, "AppData", "Roaming", "npm", "codex.cmd"));
     }
   } else {
     candidates.push("/usr/local/bin/codex");
@@ -65,14 +69,25 @@ function getCandidateCommands(): string[] {
 
 async function runCodexVersion(command: string, cwd: string): Promise<CodexStatus> {
   return new Promise((resolve) => {
-    const child = spawn(command, ["--version"], { cwd });
+    let child: ChildProcess;
+    try {
+      child = spawn(command, ["--version"], {
+        cwd,
+        windowsHide: true,
+        shell: needsShellOnWindows(command),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      resolve({ ok: false, command, error: message });
+      return;
+    }
     let output = "";
     let err = "";
 
-    child.stdout.on("data", (chunk) => {
+    child.stdout?.on("data", (chunk) => {
       output += String(chunk);
     });
-    child.stderr.on("data", (chunk) => {
+    child.stderr?.on("data", (chunk) => {
       err += String(chunk);
     });
     child.on("error", (spawnErr) => {
@@ -156,7 +171,23 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
     : ["exec", "--skip-git-repo-check", "--json", prompt];
 
   return new Promise((resolve) => {
-    const child = spawn(codexCommand, args, { cwd: params.cwd });
+    let child: ChildProcess;
+    try {
+      child = spawn(codexCommand, args, {
+        cwd: params.cwd,
+        windowsHide: true,
+        shell: needsShellOnWindows(codexCommand),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      resolve({
+        ok: false,
+        reply: "",
+        sessionId: params.sessionId,
+        error: message,
+      });
+      return;
+    }
     trackProcess(child);
     let stdoutBuffer = "";
     let stderrOutput = "";
@@ -210,12 +241,12 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
       child.kill();
     }, timeoutMs);
 
-    child.stdout.on("data", (chunk) => {
+    child.stdout?.on("data", (chunk) => {
       stdoutBuffer += String(chunk);
       flushLines(false);
     });
 
-    child.stderr.on("data", (chunk) => {
+    child.stderr?.on("data", (chunk) => {
       stderrOutput += String(chunk);
     });
 

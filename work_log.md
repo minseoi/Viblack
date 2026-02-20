@@ -124,3 +124,20 @@
 - 검증:
   - `npm run check` 통과
   - `npm run build` 통과
+
+### 14) 이슈 대응: Codex 탐지 `spawn EINVAL/ENOENT`
+- 사용자 런타임 로그:
+  - `spawn EINVAL` / `spawn codex ENOENT` / `spawn ...\\codex ENOENT`
+- 원인:
+  - Windows에서 `codex.cmd`를 일반 `spawn`으로 실행하면 실패할 수 있음.
+  - Electron 런타임 PATH와 터미널 PATH 차이로 `codex`/`...\\npm\\codex` 탐색 실패 가능.
+- 조치:
+  - `src/backend/codex.ts`
+    - `.cmd` 실행 시 `shell` 경유 실행 처리(`needsShellOnWindows`) 추가
+    - `spawn` 동기 예외를 모두 안전 처리하도록 보강
+    - Windows 후보 경로 우선순위를 `codex` -> `codex.cmd`로 정렬
+  - `src/main.ts`
+    - Codex 체크/부트 실패 시 앱이 죽지 않도록 `try/catch` 및 부트 fallback 추가
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과

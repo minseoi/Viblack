@@ -33,7 +33,12 @@ async function boot(): Promise<void> {
   backendServer = await startServer({ dbPath, workspaceDir });
   backendBaseUrl = `http://127.0.0.1:${backendServer.port}`;
 
-  bootCodexStatus = await checkCodexAvailability(workspaceDir);
+  try {
+    bootCodexStatus = await checkCodexAvailability(workspaceDir);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    bootCodexStatus = { ok: false, error: `codex check failed: ${message}` };
+  }
 
   createWindow();
 }
@@ -61,7 +66,11 @@ async function shutdownApp(): Promise<void> {
 }
 
 app.whenReady().then(() => {
-  void boot();
+  void boot().catch((err) => {
+    const message = err instanceof Error ? err.message : String(err);
+    bootCodexStatus = { ok: false, error: `boot failed: ${message}` };
+    createWindow();
+  });
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
