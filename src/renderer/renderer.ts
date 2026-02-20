@@ -27,6 +27,149 @@ let pendingMemberAction: { type: "clear" | "delete"; agentId: string } | null = 
 const unreadAgentIds = new Set<string>();
 const inflightAgentIds = new Set<string>();
 
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function escapeAttr(value: string): string {
+  return value.replaceAll('"', "&quot;");
+}
+
+function renderInlineMarkdown(text: string): string {
+  const inlineCodeTokens: string[] = [];
+  const withTokens = text.replace(/`([^`\n]+)`/g, (_matched, codeText: string) => {
+    const token = `@@INLINE_CODE_${inlineCodeTokens.length}@@`;
+    inlineCodeTokens.push(`<code>${escapeHtml(codeText)}</code>`);
+    return token;
+  });
+
+  let html = escapeHtml(withTokens);
+  html = html
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+    .replace(/~~([^~]+)~~/g, "<del>$1</del>");
+
+  for (let i = 0; i < inlineCodeTokens.length; i += 1) {
+    html = html.replace(`@@INLINE_CODE_${i}@@`, inlineCodeTokens[i]);
+  }
+  return html;
+}
+
+function parseMarkdownTextBlock(block: string): string {
+  const lines = block.split("\n");
+  const htmlParts: string[] = [];
+  let index = 0;
+
+  const isListOrBlockStart = (line: string): boolean =>
+    /^#{1,6}\s+/.test(line) ||
+    /^>\s?/.test(line) ||
+    /^[-*_]{3,}\s*$/.test(line) ||
+    /^[-+*]\s+/.test(line) ||
+    /^\d+\.\s+/.test(line);
+
+  while (index < lines.length) {
+    const line = lines[index];
+    if (!line.trim()) {
+      index += 1;
+      continue;
+    }
+
+    const headingMatch = line.match(/^(#{1,6})\s+(.*)$/);
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      htmlParts.push(`<h${level}>${renderInlineMarkdown(headingMatch[2].trim())}</h${level}>`);
+      index += 1;
+      continue;
+    }
+
+    if (/^[-*_]{3,}\s*$/.test(line)) {
+      htmlParts.push("<hr />");
+      index += 1;
+      continue;
+    }
+
+    if (/^>\s?/.test(line)) {
+      const quoteLines: string[] = [];
+      while (index < lines.length && /^>\s?/.test(lines[index])) {
+        quoteLines.push(lines[index].replace(/^>\s?/, ""));
+        index += 1;
+      }
+      htmlParts.push(`<blockquote>${quoteLines.map(renderInlineMarkdown).join("<br />")}</blockquote>`);
+      continue;
+    }
+
+    if (/^[-+*]\s+/.test(line)) {
+      const items: string[] = [];
+      while (index < lines.length && /^[-+*]\s+/.test(lines[index])) {
+        items.push(lines[index].replace(/^[-+*]\s+/, ""));
+        index += 1;
+      }
+      htmlParts.push(`<ul>${items.map((item) => `<li>${renderInlineMarkdown(item)}</li>`).join("")}</ul>`);
+      continue;
+    }
+
+    if (/^\d+\.\s+/.test(line)) {
+      const items: string[] = [];
+      while (index < lines.length && /^\d+\.\s+/.test(lines[index])) {
+        items.push(lines[index].replace(/^\d+\.\s+/, ""));
+        index += 1;
+      }
+      htmlParts.push(`<ol>${items.map((item) => `<li>${renderInlineMarkdown(item)}</li>`).join("")}</ol>`);
+      continue;
+    }
+
+    const paragraphLines: string[] = [];
+    while (
+      index < lines.length &&
+      lines[index].trim() &&
+      !isListOrBlockStart(lines[index])
+    ) {
+      paragraphLines.push(lines[index]);
+      index += 1;
+    }
+    htmlParts.push(`<p>${paragraphLines.map(renderInlineMarkdown).join("<br />")}</p>`);
+  }
+
+  return htmlParts.join("");
+}
+
+function renderMarkdown(text: string): string {
+  const normalized = text.replace(/\r\n/g, "\n");
+  const codeBlockPattern = /```([a-zA-Z0-9_-]+)?\n([\s\S]*?)```/g;
+
+  let cursor = 0;
+  const htmlParts: string[] = [];
+  let match = codeBlockPattern.exec(normalized);
+
+  while (match) {
+    const start = match.index;
+    const end = codeBlockPattern.lastIndex;
+    const plainText = normalized.slice(cursor, start);
+    if (plainText.trim()) {
+      htmlParts.push(parseMarkdownTextBlock(plainText));
+    }
+
+    const lang = (match[1] ?? "").trim();
+    const code = match[2] ?? "";
+    const classAttr = lang ? ` class="language-${escapeAttr(lang)}"` : "";
+    htmlParts.push(`<pre><code${classAttr}>${escapeHtml(code)}</code></pre>`);
+    cursor = end;
+    match = codeBlockPattern.exec(normalized);
+  }
+
+  const tail = normalized.slice(cursor);
+  if (tail.trim()) {
+    htmlParts.push(parseMarkdownTextBlock(tail));
+  }
+
+  return htmlParts.join("") || `<p>${escapeHtml(text)}</p>`;
+}
+
 function focusInput(): void {
   const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
   if (!input) {
@@ -131,9 +274,9 @@ function renderMessages(messages: ChatMessage[], agentName = "Agent"): void {
     sender.textContent =
       message.sender === "user" ? "You" : message.sender === "agent" ? agentName : "System";
 
-    const body = document.createElement("pre");
+    const body = document.createElement("div");
     body.className = "msg-content";
-    body.textContent = message.content;
+    body.innerHTML = renderMarkdown(message.content);
 
     const ts = document.createElement("div");
     ts.className = "msg-time";

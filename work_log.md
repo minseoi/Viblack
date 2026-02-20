@@ -443,3 +443,26 @@
 - 검증:
   - `npm run check` 통과
   - `npm run build` 통과
+
+### 32) 기능 추가: 채팅 본문 Markdown 렌더링 지원
+- 사용자 요청:
+  - 채팅 텍스트가 Markdown 문법을 지원하도록 개선.
+- 조치:
+  - `src/renderer/renderer.ts`
+    - 안전한 escape 기반 Markdown 렌더러 추가
+    - 지원 항목:
+      - 제목(`#` ~ `######`)
+      - 강조(`**bold**`, `*italic*`, `~~strike~~`)
+      - 인라인 코드(`\`code\``)
+      - 코드 블록(```` ```lang ... ``` ````)
+      - 인용문(`>`)
+      - 목록(`-`, `*`, `+`, `1.`)
+      - 구분선(`---`, `***`, `___`)
+    - 메시지 본문 렌더링을 `textContent` -> `innerHTML(renderMarkdown(...))`로 변경
+  - `src/renderer/index.html`
+    - Markdown 요소(`h1~h6`, `p`, `ul/ol`, `blockquote`, `code`, `pre`, `hr`) 스타일 추가
+- 결과:
+  - 에이전트/사용자 메시지 본문에서 Markdown 문법이 시각적으로 렌더링됨.
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
