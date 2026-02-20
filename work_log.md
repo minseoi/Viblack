@@ -186,3 +186,22 @@
 - 검증:
   - `npm run check` 통과
   - `npm run build` 통과
+
+### 18) 이슈 대응: `"응답 텍스트를 파싱하지 못했습니다."` 지속
+- 사용자 이슈:
+  - 최신 수정 후에도 응답 파싱 실패 문구가 표시됨.
+- 원인 추정:
+  - Codex JSON 이벤트가 stdout 이외 채널(stderr) 또는 기존 파서가 놓치는 이벤트 형태로 전달될 수 있음.
+- 조치:
+  - `src/backend/codex.ts` 파서 보강
+    - stdout/stderr 모두 JSON 라인 파싱
+    - 이벤트 타입 제한 완화(텍스트 파트가 있으면 수집)
+    - 최종 응답 선택 로직 강화:
+      1) 파일 응답(`exec` 초기 호출)
+      2) 가장 긴 full message
+      3) delta 조합
+      4) stdout 비JSON 텍스트 fallback
+    - stderr 비JSON 라인은 오류 메시지로 유지
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과

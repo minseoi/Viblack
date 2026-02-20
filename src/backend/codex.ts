@@ -194,50 +194,64 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
     }
     trackProcess(child);
     let stdoutBuffer = "";
+    let stderrBuffer = "";
     let stderrOutput = "";
+    let stdoutOutput = "";
     let sessionId = params.sessionId;
     const deltaParts: string[] = [];
     const fullParts: string[] = [];
 
-    const flushLines = (flushAll: boolean): void => {
-      const lines = stdoutBuffer.split(/\r?\n/);
-      stdoutBuffer = flushAll ? "" : (lines.pop() ?? "");
+    const processLine = (rawLine: string, source: "stdout" | "stderr"): void => {
+      const line = rawLine.trim();
+      if (!line) {
+        return;
+      }
+
+      try {
+        const event = JSON.parse(line) as Record<string, unknown>;
+        const type = typeof event.type === "string" ? event.type : "";
+
+        if (type === "thread.started" && typeof event.thread_id === "string") {
+          sessionId = event.thread_id;
+        }
+
+        if (type === "error") {
+          return;
+        }
+
+        const parts = extractTextParts(event)
+          .map((part) => part.trim())
+          .filter((part) => part.length > 0);
+
+        if (parts.length > 0) {
+          if (type.includes("delta")) {
+            deltaParts.push(...parts);
+          } else {
+            fullParts.push(...parts);
+          }
+        }
+      } catch {
+        // Some Codex builds print warnings/non-JSON lines; keep them for fallback/error.
+        if (source === "stderr") {
+          stderrOutput += `${line}\n`;
+        } else {
+          stdoutOutput += `${line}\n`;
+        }
+      }
+    };
+
+    const flushLines = (source: "stdout" | "stderr", flushAll: boolean): void => {
+      const buffer = source === "stdout" ? stdoutBuffer : stderrBuffer;
+      const lines = buffer.split(/\r?\n/);
+      const remain = flushAll ? "" : (lines.pop() ?? "");
+      if (source === "stdout") {
+        stdoutBuffer = remain;
+      } else {
+        stderrBuffer = remain;
+      }
+
       for (const rawLine of lines) {
-        const line = rawLine.trim();
-        if (!line) {
-          continue;
-        }
-        try {
-          const event = JSON.parse(line) as Record<string, unknown>;
-          const type = typeof event.type === "string" ? event.type : "";
-
-          if (type === "thread.started" && typeof event.thread_id === "string") {
-            sessionId = event.thread_id;
-          }
-
-          if (type === "error") {
-            continue;
-          }
-
-          const parts = extractTextParts(event)
-            .map((part) => part.trim())
-            .filter((part) => part.length > 0);
-
-          if (parts.length > 0) {
-            if (type.includes("delta")) {
-              deltaParts.push(...parts);
-            } else if (
-              type.includes("assistant") ||
-              type.includes("message") ||
-              type.includes("output") ||
-              type.includes("completed")
-            ) {
-              fullParts.push(...parts);
-            }
-          }
-        } catch {
-          // Ignore non-JSON noise lines.
-        }
+        processLine(rawLine, source);
       }
     };
 
@@ -247,11 +261,12 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
 
     child.stdout?.on("data", (chunk) => {
       stdoutBuffer += String(chunk);
-      flushLines(false);
+      flushLines("stdout", false);
     });
 
     child.stderr?.on("data", (chunk) => {
-      stderrOutput += String(chunk);
+      stderrBuffer += String(chunk);
+      flushLines("stderr", false);
     });
 
     child.on("error", (err) => {
@@ -271,7 +286,8 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
 
     child.on("close", (code) => {
       clearTimeout(timeoutHandle);
-      flushLines(true);
+      flushLines("stdout", true);
+      flushLines("stderr", true);
 
       let fileReply = "";
       try {
@@ -283,7 +299,13 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
         // Ignore output file read/cleanup failures.
       }
 
-      const mergedReply = (fileReply || fullParts[fullParts.length - 1] || deltaParts.join("")).trim();
+      const bestFull = [...fullParts].sort((a, b) => b.length - a.length)[0] ?? "";
+      const mergedReply = (
+        fileReply ||
+        bestFull ||
+        deltaParts.join("") ||
+        stdoutOutput.trim()
+      ).trim();
       if (code === 0) {
         resolve({
           ok: true,
