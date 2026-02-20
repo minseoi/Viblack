@@ -172,14 +172,17 @@
   - `npm run check` 통과
   - `npm run build` 통과
 
-### 17) 문서 작업: AGENTS.md 작성
-- 사용자 요청:
-  - 저장소 기여 가이드 `AGENTS.md` 생성
-  - 제목: `Repository Guidelines`
-  - 200~400 단어, 구조화된 섹션, 실무형 지침
-- 반영 내용:
-  - 프로젝트 구조(backend/main/preload/renderer) 설명
-  - 주요 명령(`install`, `check`, `build`, `start`) 정리
-  - TypeScript 코딩 규칙/네이밍 규칙 명시
-  - 현재 테스트 체계(수동 스모크 포함)와 향후 테스트 위치 제안
-  - 커밋/PR 규칙(기존 히스토리 prefix 패턴 기반) 정리
+### 17) 이슈 대응: `resume`에서 `--output-last-message` 미지원
+- 사용자 런타임 오류:
+  - `error: unexpected argument '--output-last-message' found`
+  - `Usage: codex exec resume ...`
+- 원인:
+  - 현 Codex CLI에서 `--output-last-message`는 `codex exec`에는 지원되지만 `codex exec resume`에는 미지원.
+- 조치:
+  - `src/backend/codex.ts`
+    - 초기 호출(`exec`)에만 `--output-last-message <file>` 사용
+    - 재개 호출(`exec resume`)에서는 옵션 제거
+    - 파일 기반 최종 응답 파싱은 초기 호출일 때만 실행되도록 분기
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과

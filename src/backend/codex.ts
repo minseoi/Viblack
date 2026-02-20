@@ -166,23 +166,13 @@ export async function checkCodexAvailability(cwd: string): Promise<CodexStatus> 
 export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> {
   const prompt = buildPrompt(params.systemPrompt, params.prompt, Boolean(params.sessionId));
   const timeoutMs = params.timeoutMs ?? 120_000;
-  const outputFilePath = path.join(
-    os.tmpdir(),
-    `viblack-codex-last-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`,
-  );
+  const outputFilePath = params.sessionId
+    ? null
+    : path.join(os.tmpdir(), `viblack-codex-last-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
 
   const args = params.sessionId
-    ? [
-        "exec",
-        "resume",
-        "--skip-git-repo-check",
-        "--json",
-        "--output-last-message",
-        outputFilePath,
-        params.sessionId,
-        "-",
-      ]
-    : ["exec", "--skip-git-repo-check", "--json", "--output-last-message", outputFilePath, "-"];
+    ? ["exec", "resume", "--skip-git-repo-check", "--json", params.sessionId, "-"]
+    : ["exec", "--skip-git-repo-check", "--json", "--output-last-message", outputFilePath!, "-"];
 
   return new Promise((resolve) => {
     let child: ChildProcess;
@@ -285,7 +275,7 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
 
       let fileReply = "";
       try {
-        if (fs.existsSync(outputFilePath)) {
+        if (outputFilePath && fs.existsSync(outputFilePath)) {
           fileReply = fs.readFileSync(outputFilePath, "utf8").trim();
           fs.unlinkSync(outputFilePath);
         }
