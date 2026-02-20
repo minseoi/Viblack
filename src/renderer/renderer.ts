@@ -271,18 +271,12 @@ function renderMemberList(): void {
     nameRowEl.className = "member-name-row";
     nameRowEl.appendChild(nameEl);
 
-    const dot = document.createElement("span");
-    if (unreadAgentIds.has(agent.id)) {
-      dot.className = "member-dot-badge unread";
-      dot.title = "새 응답";
-    } else if (inflightAgentIds.has(agent.id)) {
-      dot.className = "member-dot-badge working";
-      dot.title = "응답 생성 중";
-    } else {
-      dot.className = "member-dot-badge ready";
-      dot.title = "대화 가능";
+    if (inflightAgentIds.has(agent.id) || unreadAgentIds.has(agent.id)) {
+      const dot = document.createElement("span");
+      dot.className = `member-dot-badge ${inflightAgentIds.has(agent.id) ? "working" : "unread"}`;
+      dot.title = inflightAgentIds.has(agent.id) ? "응답 생성 중" : "새 응답";
+      nameRowEl.appendChild(dot);
     }
-    nameRowEl.appendChild(dot);
 
     const roleEl = document.createElement("div");
     roleEl.className = "member-role";
