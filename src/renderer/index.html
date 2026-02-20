@@ -682,6 +682,18 @@
         background: #b63f3f;
         color: #fff;
       }
+      .btn:disabled {
+        border-color: #c7d0dc;
+        background: #f0f3f8;
+        color: #7b8798;
+        cursor: not-allowed;
+      }
+      .btn.primary:disabled,
+      .btn.danger:disabled {
+        border-color: #9fb0c8;
+        background: #9fb0c8;
+        color: #edf2f8;
+      }
       .modal-desc {
         margin: 0;
         color: #4a5a70;
@@ -881,7 +893,7 @@
           </button>
           <div class="modal-actions-right">
             <button id="member-cancel-btn" class="btn" type="button">취소</button>
-            <button class="btn primary" type="submit">저장</button>
+            <button id="member-save-btn" class="btn primary" type="submit">저장</button>
           </div>
         </div>
       </form>

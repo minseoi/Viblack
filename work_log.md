@@ -679,3 +679,17 @@
 - 검증:
   - `npm run check` 통과
   - `npm run build` 통과
+
+### 46) UI 보완: 생성 중 저장 버튼 비활성화 시각 피드백 강화
+- 사용자 이슈:
+  - 자동 생성 중 `저장` 버튼이 비활성화되지 않은 것처럼 보임.
+- 조치:
+  - `src/renderer/index.html`
+    - 공통 버튼 disabled 스타일 추가 (`.btn:disabled`)
+    - `primary/danger` 버튼 disabled 스타일 추가 (`.btn.primary:disabled`, `.btn.danger:disabled`)
+    - 멤버 모달 저장 버튼에 id 추가: `member-save-btn`
+  - `src/renderer/renderer.ts`
+    - 생성 잠금 시 저장 버튼 참조를 `querySelector`에서 `#member-save-btn` 직접 참조로 변경
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과

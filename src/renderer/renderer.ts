@@ -732,7 +732,7 @@ function setMemberPromptGeneratingState(isGenerating: boolean): void {
     "member-generate-prompt-btn",
   ) as HTMLButtonElement | null;
   const cancelBtn = document.getElementById("member-cancel-btn") as HTMLButtonElement | null;
-  const saveBtn = document.querySelector<HTMLButtonElement>("#member-form button[type='submit']");
+  const saveBtn = document.getElementById("member-save-btn") as HTMLButtonElement | null;
   const memberModal = document.getElementById("member-modal") as HTMLDialogElement | null;
 
   if (nameInput) {
