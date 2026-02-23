@@ -245,6 +245,25 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     await expect(channelMessages).toHaveCount(beforeRementionCount + 3, { timeout: 7000 });
     await expect(betaSenderItems).toHaveCount(beforeBetaSenderCount + 1, { timeout: 7000 });
 
+    const beforeBounceCount = await channelMessages.count();
+    const beforeBounceAlphaSenderCount = await alphaSenderItems.count();
+    const beforeBounceBetaSenderCount = await betaSenderItems.count();
+    await page.fill(
+      "#chat-input",
+      `@{${memberAlphaEdited}} FORCE_BOUNCE_MENTIONS:${memberAlphaEdited},${memberBeta}`,
+    );
+    await page.click("#send-btn");
+
+    // Expected chain: user -> Alpha -> Beta -> Alpha.
+    await expect(channelMessages).toHaveCount(beforeBounceCount + 4, { timeout: 7000 });
+    await expect(alphaSenderItems).toHaveCount(beforeBounceAlphaSenderCount + 2, { timeout: 7000 });
+    await expect(betaSenderItems).toHaveCount(beforeBounceBetaSenderCount + 1, { timeout: 7000 });
+    await expect(
+      page.locator("#messages .msg-user .msg-content", {
+        hasText: `FORCE_BOUNCE_MENTIONS:${memberAlphaEdited},${memberBeta}`,
+      }),
+    ).toHaveCount(1);
+
     await page.click("#channel-members-btn");
     await expect(page.locator("#channel-members-modal[open]")).toHaveCount(1);
     const betaMemberRow = page.locator("#channel-members-list .modal-list-item.member-entry", {

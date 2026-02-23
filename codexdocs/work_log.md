@@ -71,3 +71,6 @@
 - 70) Implemented renderer in-flight channel polling during POST /api/channels/:id/messages so intermediate chained replies are rendered before request completion. Updated fake-codex to support delayed chained replies and extended E2E assertions for first-reply-before-chain-complete visibility.
 - 71) Verified fix with npm run verify (check/build/e2e all passed). E2E now asserts chained remention first responder appears before delayed second responder.
 - 72) Fixed channel duplicate-user-message regression: added channel-scoped optimistic message tracking/reconciliation so SSE/API persisted user messages replace local pending bubbles instead of rendering twice.
+- 73) Investigating channel mention-chain bug report: `A -> B` executes but `B -> A` remention does not. Reviewing backend queue/dedupe condition and preparing targeted E2E reproduction for bounce remention.
+- 74) Implemented mention-chain queue fix to allow re-queue of previously executed agents (bounded by existing chain depth/execution limits), and added fake-codex + Playwright E2E scenario for `A -> B -> A` bounce remention regression coverage.
+- 75) Verified fix with `npm run verify` (check/build/e2e passed). Non-elevated run hit Windows Playwright `spawn EPERM`, then succeeded via elevated verify run.

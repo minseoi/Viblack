@@ -505,7 +505,6 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
     };
 
     const queuedAgentIds = new Set<string>();
-    const executedAgentIds = new Set<string>();
     const taskQueue: MentionTask[] = [];
     const results: Array<Awaited<ReturnType<typeof executeMentionedAgent>>> = [];
 
@@ -515,7 +514,7 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
       resultMessageKind: ChannelMessageKind,
     ): void => {
       for (const mention of nextMentions) {
-        if (executedAgentIds.has(mention.agentId) || queuedAgentIds.has(mention.agentId)) {
+        if (queuedAgentIds.has(mention.agentId)) {
           continue;
         }
         if (!memberById.has(mention.agentId)) {
@@ -568,7 +567,6 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
 
       for (const batchResult of batchResults) {
         results.push(batchResult);
-        executedAgentIds.add(batchResult.agentId);
       }
 
       for (const batchResult of batchResults) {

@@ -31,6 +31,18 @@ function buildReply(promptText) {
   if (promptText.includes("SYSTEM PROMPT를 작성하세요")) {
     return "당신은 테스트용 에이전트입니다. 한국어로 간결하고 정확하게 응답하세요.";
   }
+  const bounceSeedMatch = promptText.match(
+    /FORCE_BOUNCE_MENTIONS:\s*([^\s,\r\n]+)\s*,\s*([^\s,\r\n]+)/,
+  );
+  if (bounceSeedMatch) {
+    const returnTarget = bounceSeedMatch[1];
+    const nextTarget = bounceSeedMatch[2];
+    return `테스트 바운스 1단계: @{${nextTarget}} FORCE_BOUNCE_RETURN:${returnTarget}`;
+  }
+  const bounceReturnMatch = promptText.match(/FORCE_BOUNCE_RETURN:\s*([^\s\r\n]+)/);
+  if (bounceReturnMatch) {
+    return `테스트 바운스 2단계: @{${bounceReturnMatch[1]}} FORCE_BOUNCE_DONE`;
+  }
   const forcedMentionMatch = promptText.match(/FORCE_MENTION_NAME:\s*([^\s\r\n]+)/);
   if (forcedMentionMatch) {
     return `테스트 재멘션: @{${forcedMentionMatch[1]}} FORCE_DELAY_MS:1800 확인 부탁합니다.`;
