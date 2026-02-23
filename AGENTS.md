@@ -11,9 +11,6 @@
   - `types.ts`: shared backend types.
 - `src/types/node-sqlite.d.ts`: local typing shim for `node:sqlite`.
 - Product/planning docs live in `codexdocs/`:
-  - `codexdocs/Idea.md`
-  - `codexdocs/idea_plan.md`
-  - `codexdocs/work_log.md`
 
 ## Agent Workflow Rules
 - Always check relevant context in `codexdocs/` before implementation.
@@ -28,6 +25,7 @@
 - `npm run check`: TypeScript type-check only (`tsc --noEmit`).
 - `npm run build`: compile TS to `dist/`.
 - `npm run start`: build then launch Electron app.
+- `npm run test:e2e`: build then run Playwright Electron E2E tests.
 
 Example:
 ```bash
@@ -45,12 +43,21 @@ npm run start
 - Prefer small, single-purpose functions; handle runtime failures with explicit fallbacks.
 
 ## Testing Guidelines
-- No automated test framework is configured yet.
+- Playwright-based Electron E2E tests are configured.
 - Minimum quality gate for changes:
   1. `npm run check`
   2. `npm run build`
   3. Manual smoke test via `npm run start` (send a message, verify response flow).
-- When adding tests later, place them near source as `*.test.ts` or under `tests/`.
+- Playwright E2E run:
+  1. `npm run test:e2e`
+- Playwright files:
+  - config: `playwright.config.ts`
+  - tests: `tests/e2e/*.spec.ts`
+  - current smoke test: `tests/e2e/electron.smoke.spec.ts`
+- Windows note:
+  - If `spawn EPERM` occurs during Playwright run, rerun with elevated terminal/admin permissions.
+- Playwright outputs:
+  - `test-results/`, `playwright-report/` (git-ignored)
 
 ## Commit & Pull Request Guidelines
 - Current history uses prefix-style commit subjects:

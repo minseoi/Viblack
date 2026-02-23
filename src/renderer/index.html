@@ -638,9 +638,27 @@
         font-size: 13px;
         font-family: inherit;
       }
+      .modal-field input.field-error {
+        border-color: #c93d3d;
+        background: #fff6f6;
+        box-shadow: 0 0 0 2px rgba(201, 61, 61, 0.14);
+      }
+      .modal-field input.field-error:focus {
+        outline: none;
+        border-color: #c93d3d;
+      }
       .modal-field textarea {
         resize: vertical;
         min-height: 100px;
+      }
+      .field-error-text {
+        display: none;
+        color: #c93d3d;
+        font-size: 12px;
+        line-height: 1.3;
+      }
+      .field-error-text.show {
+        display: block;
       }
       .modal-actions {
         display: flex;
@@ -878,6 +896,7 @@
         <div class="modal-field">
           <label for="member-name-input">이름</label>
           <input id="member-name-input" name="name" maxlength="60" required />
+          <div id="member-name-error" class="field-error-text" role="alert" aria-live="polite"></div>
         </div>
         <div class="modal-field">
           <label for="member-role-input">역할</label>

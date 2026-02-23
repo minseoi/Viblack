@@ -675,6 +675,31 @@ function renderMemberList(): void {
   }
 }
 
+function setMemberNameInputError(isError: boolean, reason?: string): void {
+  const nameInput = document.getElementById("member-name-input") as HTMLInputElement | null;
+  const errorText = document.getElementById("member-name-error") as HTMLDivElement | null;
+  if (!nameInput || !errorText) {
+    return;
+  }
+
+  if (isError) {
+    nameInput.classList.add("field-error");
+    nameInput.setAttribute("aria-invalid", "true");
+    errorText.textContent = reason ?? "이미 사용 중인 멤버 표시명입니다.";
+    errorText.classList.add("show");
+    return;
+  }
+
+  nameInput.classList.remove("field-error");
+  nameInput.removeAttribute("aria-invalid");
+  errorText.textContent = "";
+  errorText.classList.remove("show");
+}
+
+function isDuplicateNameErrorMessage(message: string): boolean {
+  return message.toLowerCase().includes("agent display name already exists");
+}
+
 function openMemberModal(mode: "create" | "edit", targetAgent: Agent | null): void {
   const modal = document.getElementById("member-modal") as HTMLDialogElement | null;
   const titleEl = document.getElementById("member-modal-title");
@@ -704,6 +729,7 @@ function openMemberModal(mode: "create" | "edit", targetAgent: Agent | null): vo
   if (modal.open) {
     modal.close();
   }
+  setMemberNameInputError(false);
   setMemberPromptGeneratingState(false);
   modal.showModal();
   nameInput.focus();
@@ -1246,25 +1272,50 @@ async function saveMemberForm(): Promise<void> {
     return;
   }
 
-  if (memberFormMode === "edit" && editingAgentId) {
-    await fetchJson<{ agent: Agent }>(`${backendBaseUrl}/api/agents/${editingAgentId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    await refreshAgents(editingAgentId);
-  } else {
-    const created = await fetchJson<{ agent: Agent }>(`${backendBaseUrl}/api/agents`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    await refreshAgents(created.agent.id);
+  setMemberNameInputError(false);
+  const normalizedDisplayName = payload.name.toLowerCase();
+  const duplicateAgent = agents.find(
+    (agent) =>
+      agent.id !== editingAgentId && agent.name.trim().toLowerCase() === normalizedDisplayName,
+  );
+  if (duplicateAgent) {
+    setMemberNameInputError(true, "이미 사용 중인 멤버 표시명입니다. 다른 이름을 입력하세요.");
+    nameInput.focus();
+    return;
   }
 
-  closeMemberModal();
-  closeMemberMenu();
-  await refreshMessages();
+  try {
+    if (memberFormMode === "edit" && editingAgentId) {
+      await fetchJson<{ agent: Agent }>(`${backendBaseUrl}/api/agents/${editingAgentId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      await refreshAgents(editingAgentId);
+    } else {
+      const created = await fetchJson<{ agent: Agent }>(`${backendBaseUrl}/api/agents`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      await refreshAgents(created.agent.id);
+    }
+
+    showWarning(null);
+    setMemberNameInputError(false);
+    closeMemberModal();
+    closeMemberMenu();
+    await refreshMessages();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "unknown error";
+    if (isDuplicateNameErrorMessage(message)) {
+      setMemberNameInputError(true, "이미 사용 중인 멤버 표시명입니다. 다른 이름을 입력하세요.");
+      nameInput.focus();
+      return;
+    }
+    showWarning(`멤버 저장 실패: ${message}`);
+    setStatus(`Error: ${message}`);
+  }
 }
 
 async function deleteMember(agentId: string): Promise<void> {
@@ -1339,6 +1390,7 @@ function initMemberCrudUi(): void {
   const addMemberBtn = document.getElementById("add-member-btn");
   const memberModal = document.getElementById("member-modal") as HTMLDialogElement | null;
   const modalForm = document.getElementById("member-form");
+  const memberNameInput = document.getElementById("member-name-input") as HTMLInputElement | null;
   const cancelBtn = document.getElementById("member-cancel-btn");
   const generatePromptBtn = document.getElementById("member-generate-prompt-btn");
   const clearBtn = document.getElementById("member-menu-clear");
@@ -1459,6 +1511,10 @@ function initMemberCrudUi(): void {
   modalForm?.addEventListener("submit", (event) => {
     event.preventDefault();
     void saveMemberForm();
+  });
+
+  memberNameInput?.addEventListener("input", () => {
+    setMemberNameInputError(false);
   });
 
   generatePromptBtn?.addEventListener("click", () => {

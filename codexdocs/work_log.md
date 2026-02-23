@@ -713,3 +713,104 @@
     - (ê¸°ì¡´ ì´ë™ í¬í•¨) `idea_plan.md` -> `codexdocs/idea_plan.md`
   - `.gitignore`:
     - `codexdocs/` ignore ê·œì¹™ ì œê±°
+
+## 2026-02-23
+
+### 48) í…ŒìŠ¤íŠ¸ í™˜ê²½ ì¤€ë¹„: Playwright ì˜ì¡´ì„± ì„¤ì¹˜ ì‹œì‘
+- ì‚¬ìš©ì ìš”ì²­ì— ë”°ë¼ `@playwright/test` ë¶€ì¬ ìƒíƒœë¥¼ í™•ì¸í•˜ê³  ì„¤ì¹˜ë¥¼ ì‹œì‘í•¨.
+- ì„¤ì¹˜ ì „ í™•ì¸:
+  - `package.json`ì˜ `devDependencies`ì— Playwright ê´€ë ¨ íŒ¨í‚¤ì§€ê°€ ì—†ìŒ.
+  - `npm ls @playwright/test --depth=0` ê²°ê³¼ `(empty)` í™•ì¸.
+- ì„¤ì¹˜ ì§„í–‰:
+  - ì¼ë°˜ ê¶Œí•œ `npm install -D @playwright/test playwright`ëŠ” íƒ€ì„ì•„ì›ƒ í›„ `EACCES`ë¡œ ì‹¤íŒ¨.
+  - ê¶Œí•œ ìƒìŠ¹ìœ¼ë¡œ ë™ì¼ ëª…ë ¹ ì¬ì‹¤í–‰ í›„ ì„¤ì¹˜ ì„±ê³µ.
+- ì„¤ì¹˜ ê²°ê³¼:
+  - `@playwright/test` `^1.58.2`
+  - `playwright` `^1.58.2`
+  - ë³€ê²½ íŒŒì¼: `package.json`, `package-lock.json`
+- ê²€ì¦:
+  - `npm run check` í†µê³¼
+  - `npm run build` í†µê³¼
+
+### 49) í…ŒìŠ¤íŠ¸ ìë™í™”: Electron E2E ìŠ¤ëª¨í¬ í…ŒìŠ¤íŠ¸ ì‘ì—… ì‹œì‘
+- ì‚¬ìš©ì ìš”ì²­: "í…ŒìŠ¤íŠ¸ í•´ ë³´ì."
+- ê³„íš:
+  - Playwright test runner ì„¤ì • ì¶”ê°€
+  - Electron ì•± ë¶€íŒ… ìŠ¤ëª¨í¬ í…ŒìŠ¤íŠ¸ 1ê°œ ì¶”ê°€
+  - `npm run check`, `npm run build`, `npm run test:e2e` ì‹¤í–‰
+- êµ¬í˜„:
+  - `package.json`
+    - ìŠ¤í¬ë¦½íŠ¸ ì¶”ê°€: `test:e2e` (`npm run build && playwright test`)
+  - `playwright.config.ts` ì¶”ê°€
+    - `tests/e2e` ê¸°ì¤€ ì„¤ì •, ë‹¨ì¼ ì›Œì»¤, ê¸°ë³¸ ë¦¬í¬í„° êµ¬ì„±
+  - `tests/e2e/electron.smoke.spec.ts` ì¶”ê°€
+    - Electron ì•± ì‹¤í–‰
+    - ê¸°ë³¸ UI ë¡œë“œ í™•ì¸(íƒ€ì´í‹€/ìƒíƒœ/ë©¤ë²„ ëª©ë¡)
+    - ë©¤ë²„ ì¶”ê°€ ëª¨ë‹¬ ì—´ê¸°/ë‹«ê¸° í™•ì¸
+    - ì±„ë„ ìƒì„± í›„ ì±„ë„ ì„ íƒ ë° composer ë¹„í™œì„±í™” í™•ì¸
+- ê²€ì¦:
+  - `npm run check` í†µê³¼
+  - `npm run build` í†µê³¼
+  - `npm run test:e2e`
+    - ì¼ë°˜ ê¶Œí•œ ì‹¤í–‰: `spawn EPERM`ë¡œ ì‹¤íŒ¨
+    - ê¶Œí•œ ìƒìŠ¹ ì‹¤í–‰: `1 passed` í†µê³¼
+- ì •ë¦¬:
+  - `.gitignore`ì— Playwright ì‚°ì¶œë¬¼ ì œì™¸ ê·œì¹™ ì¶”ê°€
+    - `test-results/`
+    - `playwright-report/`
+
+### 50) ë¬¸ì„œí™”: AGENTS.mdì— Playwright ì‚¬ìš©ë²• ì •ë¦¬
+- ì‚¬ìš©ì ìš”ì²­:
+  - AGENTS.mdì— Playwright ì‚¬ìš© ë°©ë²•ì„ ì €ì¥í•´ë‘˜ ê²ƒ.
+- ì§„í–‰:
+  - `AGENTS.md`ì˜ í…ŒìŠ¤íŠ¸/ëª…ë ¹ ì„¹ì…˜ì— Playwright E2E ì‹¤í–‰ ë°©ë²•, íŒŒì¼ ìœ„ì¹˜, Windows ê¶Œí•œ ì´ìŠˆ ëŒ€ì‘ ê°€ì´ë“œë¥¼ ë°˜ì˜ ì˜ˆì •.
+- ë°˜ì˜:
+  - `Build, Test, and Development Commands`ì— `npm run test:e2e` ì¶”ê°€
+  - `Testing Guidelines`ë¥¼ Playwright ê¸°ë°˜ìœ¼ë¡œ ê°±ì‹ 
+    - ì‹¤í–‰ ëª…ë ¹: `npm run test:e2e`
+  - ê´€ë ¨ íŒŒì¼: `playwright.config.ts`, `tests/e2e/*.spec.ts`
+  - í˜„ì¬ ìŠ¤ëª¨í¬ í…ŒìŠ¤íŠ¸ íŒŒì¼: `tests/e2e/electron.smoke.spec.ts`
+  - Windows `spawn EPERM` ë°œìƒ ì‹œ ê¶Œí•œ ìƒìŠ¹ ì¬ì‹¤í–‰ ì•ˆë‚´
+  - ì‚°ì¶œë¬¼ ê²½ë¡œ(`test-results/`, `playwright-report/`) ì•ˆë‚´
+
+### 51) ë¬¸ì„œ ë¶„ì„: `channel-methodology` ê¸°ë°˜ êµ¬í˜„ ê³„íš ìˆ˜ë¦½ ì°©ìˆ˜
+- ì‚¬ìš©ì ìš”ì²­:
+  - `codexdocs/channel-methodology.md`ë¥¼ ë¶„ì„í•´ êµ¬í˜„ ê³„íš ì‘ì„±.
+- ë¶„ì„ ë²”ìœ„:
+  - `codexdocs/channel-methodology.md`, `codexdocs/Idea.md`, `codexdocs/idea_plan.md`
+  - í˜„ì¬ ì½”ë“œ ê·¼ê±° íŒŒì¼:
+    - `src/backend/db.ts`
+    - `src/backend/server.ts`
+    - `src/backend/types.ts`
+    - `src/renderer/renderer.ts`
+- í™•ì¸ëœ í•µì‹¬ ê°­:
+  - ì±„ë„ ë°ì´í„°ê°€ DB/ë°±ì—”ë“œ APIì— ì—†ìŒ (ë Œë”ëŸ¬ ë¡œì»¬ ìƒíƒœë§Œ ì¡´ì¬).
+  - ì±„ë„ ë©”ì‹œì§€/ë©˜ì…˜ íŒŒì‹±/ë©˜ì…˜ ëŒ€ìƒ ì‹¤í–‰ ë¼ìš°íŒ… ë¯¸êµ¬í˜„.
+  - ë¬´ë©˜ì…˜ ë©”ì‹œì§€ ë¡œê·¸ ì €ì¥(ì‹¤í–‰ ì—†ìŒ) ê·œì¹™ ë¯¸êµ¬í˜„.
+  - ì—­í•  í”„ë¡œí•„ ê¸°ë°˜ ë©¤ë²„ ì¡°íšŒ/ì¬ë©˜ì…˜ ìš”ì²­ í¬ë§· ê°•ì œ ë¯¸êµ¬í˜„.
+- ë‹¤ìŒ ë‹¨ê³„:
+  - ë¬¸ì„œ ì›ì¹™(ëª…ì‹œì  ë©˜ì…˜ ê¸°ë°˜ ì‹¤í–‰, ì—ì´ì „íŠ¸ë³„ ì§ë ¬ ì‹¤í–‰ ìœ ì§€)ì— ë§ì¶˜
+    DB ìŠ¤í‚¤ë§ˆ/API/ë Œë”ëŸ¬/ì‹¤í–‰ ë¼ìš°íŒ… ë‹¨ê³„ë³„ êµ¬í˜„ ê³„íšì„ ì •ì˜í•´ ê³µìœ  ì˜ˆì •.
+
+### 52) ±¸Çö °èÈ¹ ÃÊ¾È È®Á¤: Ã¤³Î ¸Ş½ÃÂ¡/¸à¼Ç ¶ó¿ìÆÃ Áß½É ´Ü°è ºĞÇÒ
+- °èÈ¹ ¿øÄ¢: ¹«¸à¼Ç=·Î±×¸¸, ¸à¼Ç ½Ã ½ÇÇà, withAgentLock À¯Áö.
+- ´Ü°è 1: DB È®Àå (channels/channel_members/channel_messages/channel_message_mentions).
+- ´Ü°è 2: ¹é¿£µå API (Ã¤³Î CRUD, ¸â¹ö °ü¸®, Ã¤³Î ¸Ş½ÃÁö Á¶È¸/Àü¼Û).
+- ´Ü°è 3: ¶ó¿ìÆÃ ±ÔÄ¢ (¹«¸à¼Ç ÀúÀå¸¸, ¸à¼Ç ´ë»ó¸¸ Codex ½ÇÇà).
+- ´Ü°è 4: ·»´õ·¯ ÀüÈ¯ (·ÎÄÃ channels »óÅÂ¸¦ ¹é¿£µå ¿¬µ¿À¸·Î ±³Ã¼, Ã¤³Î composer È°¼ºÈ­).
+- ´Ü°è 5: °ËÁõ (¸à¼Ç/¹«¸à¼Ç/µ¿½Ã¼º/DM ºĞ¸® E2E º¸°­).
+ 
+### 53) ¸â¹ö Ç¥½Ã¸í Áßº¹ ¹æÁö ±¸Çö 
+- »ç¿ëÀÚ °áÁ¤ ¹İ¿µ: ¸à¼Ç ±âÁØÀº Ç¥½Ã¸í name À¸·Î À¯Áö. 
+- ¹é¿£µå °ËÁõ Ãß°¡: src/backend/db.ts ¿¡¼­ Ç¥½Ã¸í ´ë¼Ò¹®ÀÚ ¹«½Ã Áßº¹ °Ë»ç. 
+- API Ã³¸® Ãß°¡: src/backend/server.ts ¿¡¼­ Áßº¹ ½Ã 409 ¹İÈ¯. 
+- ÇÁ·ĞÆ® ¼±°ËÁõ Ãß°¡: src/renderer/renderer.ts saveMemberForm ¿¡¼­ Áßº¹ Ç¥½Ã¸í Â÷´Ü. 
+- ÇÁ·ĞÆ® ¿¹¿Ü Ã³¸® º¸°­: ÀúÀå ½ÇÆĞ ½Ã °æ°í¿Í »óÅÂ ¸Ş½ÃÁö Ç¥½Ã.
+- 54) Duplicate-name UX change started: switch from top warning to in-modal red input state.
+- 54) Updated renderer duplicate handling: no top warning for duplicate, mark member-name input as field-error. 
+- 54) Added modal CSS for member-name input error state and auto-clear on input change.
+- 54) Duplicate-name reason text added: member modal now shows inline error message under name input. 
+- 55) channel-methodology ±â¹İ ±¸Çö °èÈ¹ ¹®¼­ Ãß°¡: codexdocs/channel-implementation-plan.md 
+- 55) ¹®¼­¿¡ ¸à¼Ç ±âÁØ(@Ç¥½Ã¸í), Ç¥½Ã¸í Áßº¹ ±İÁö, ¹«¸à¼Ç ÀúÀå-only ±ÔÄ¢, ´Ü°èº° ±¸Çö/Å×½ºÆ® °èÈ¹ ¹İ¿µ. 
+- 56) »ç¿ëÀÚ Áö½Ã¿¡ µû¶ó Çö º¯°æºĞÀ» ±âÁØ Ä¿¹ÔÀ¸·Î ¸ÕÀú °íÁ¤ÇÏ±â·Î °áÁ¤. 
+- 56) ±âÁØ Ä¿¹Ô Àü °ËÁõ: npm run check, npm run build Åë°ú.

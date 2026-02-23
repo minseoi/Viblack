@@ -1,7 +1,7 @@
 import http from "node:http";
 import express from "express";
 import { checkCodexAvailability, runCodex } from "./codex";
-import { ViblackDb } from "./db";
+import { DuplicateAgentNameError, ViblackDb } from "./db";
 
 interface StartServerOptions {
   dbPath: string;
@@ -131,6 +131,10 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
       const agent = db.createAgent(name, role, systemPrompt);
       res.status(201).json({ agent });
     } catch (err) {
+      if (err instanceof DuplicateAgentNameError) {
+        res.status(409).json({ error: "agent display name already exists" });
+        return;
+      }
       const message = err instanceof Error ? err.message : "unknown error";
       res.status(500).json({ error: message });
     }
@@ -155,6 +159,10 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
       }
       res.json({ agent });
     } catch (err) {
+      if (err instanceof DuplicateAgentNameError) {
+        res.status(409).json({ error: "agent display name already exists" });
+        return;
+      }
       const message = err instanceof Error ? err.message : "unknown error";
       res.status(500).json({ error: message });
     }

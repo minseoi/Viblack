@@ -5,6 +5,13 @@ import type { Agent, ChatMessage, SenderType } from "./types";
 
 const HELPER_AGENT_ID = "helper";
 
+export class DuplicateAgentNameError extends Error {
+  constructor(name: string) {
+    super(`agent name already exists: ${name}`);
+    this.name = "DuplicateAgentNameError";
+  }
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -44,6 +51,7 @@ export class ViblackDb {
   }
 
   createAgent(name: string, role: string, systemPrompt: string): Agent {
+    this.assertUniqueAgentName(name);
     const id = this.generateAgentId(name);
     const createdAt = nowIso();
     const stmt = this.db.prepare(
@@ -59,6 +67,7 @@ export class ViblackDb {
   }
 
   updateAgent(agentId: string, name: string, role: string, systemPrompt: string): Agent | null {
+    this.assertUniqueAgentName(name, agentId);
     const stmt = this.db.prepare(
       `UPDATE agents
        SET name = ?, role = ?, system_prompt = ?
@@ -207,5 +216,20 @@ export class ViblackDb {
       index += 1;
     }
     return id;
+  }
+
+  private assertUniqueAgentName(name: string, excludeAgentId?: string): void {
+    const stmt = this.db.prepare(`SELECT id FROM agents WHERE name = ? COLLATE NOCASE LIMIT 1`);
+    const row = stmt.get(name) as Record<string, unknown> | undefined;
+    if (!row) {
+      return;
+    }
+
+    const existingId = String(row.id);
+    if (excludeAgentId && existingId === excludeAgentId) {
+      return;
+    }
+
+    throw new DuplicateAgentNameError(name);
   }
 }
