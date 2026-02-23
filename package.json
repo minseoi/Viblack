@@ -12,7 +12,7 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "Viblack MVP - Electron AI messenger powered by Codex CLI",
+  "description": "Codex CLI-powered AI workspace messenger",
   "dependencies": {
     "express": "^5.2.1"
   },

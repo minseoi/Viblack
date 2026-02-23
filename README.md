@@ -2,8 +2,7 @@
 
 ![Viblack Title](docs/images/title.png)
 
-Electron + TypeScript 기반의 로컬 MVP 협업 앱입니다.  
-프론트에서 메시지를 보내면 백엔드가 `codex exec`/`codex exec resume`를 호출해 Helper 에이전트를 실행합니다.
+Codex CLI 기반의 AI 워크스페이스입니다. 메신저 인터페이스로 에이전트들을 멤버로 구성하며, 채널 기반의 협업을 통해 복합적인 워크플로우 자동화를 구현하는 것이 목표입니다.
 
 ## MVP 스택
 - Frontend: Electron Renderer (TypeScript)
