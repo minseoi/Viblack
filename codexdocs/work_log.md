@@ -790,4 +790,9 @@
   - 역할 프로필 기반 멤버 조회/재멘션 요청 포맷 강제 미구현.
 - 다음 단계:
   - 문서 원칙(명시적 멘션 기반 실행, 에이전트별 직렬 실행 유지)에 맞춘
-    DB 스키마/API/렌더러/실행 라우팅 단계별 구현 계획을 정의해 공유 예정.
+    DB 스키마/API/렌더러/실행 라우팅 단계별 구현 계획을 정의해 공유 예정 
+### 52) Feature: Add @{agent-name} mention parsing/highlight 
+- renderer: highlight @name and @{name} in message text. 
+- backend: parse @name and @{name} as executable mentions. 
+- e2e: switched channel mention input to @{memberName} and asserted mention highlight span. 
+- validation: npm run check (pass), npm run build (pass), npm run test:e2e (pass with elevated permission after EPERM on normal run).

@@ -78,6 +78,18 @@ function escapeAttr(value: string): string {
   return value.replaceAll('"', "&quot;");
 }
 
+function highlightInlineMentions(text: string): string {
+  return text
+    .replace(
+      /(^|[\s.,!?;:()[\]{}<>"'`])(@\{[^{}\r\n]+\})/g,
+      '$1<span class="mention">$2</span>',
+    )
+    .replace(
+      /(^|[\s.,!?;:()[\]{}<>"'`])(@(?![@{])[^\s.,!?;:()[\]{}<>"'`]+)/g,
+      '$1<span class="mention">$2</span>',
+    );
+}
+
 function renderInlineMarkdown(text: string): string {
   const inlineCodeTokens: string[] = [];
   const withTokens = text.replace(/`([^`\n]+)`/g, (_matched, codeText: string) => {
@@ -91,6 +103,7 @@ function renderInlineMarkdown(text: string): string {
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/\*([^*]+)\*/g, "<em>$1</em>")
     .replace(/~~([^~]+)~~/g, "<del>$1</del>");
+  html = highlightInlineMentions(html);
 
   for (let i = 0; i < inlineCodeTokens.length; i += 1) {
     html = html.replace(`@@INLINE_CODE_${i}@@`, inlineCodeTokens[i]);

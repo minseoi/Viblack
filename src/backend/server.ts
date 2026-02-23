@@ -73,22 +73,29 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
     const mentions: Array<{ agentId: string; mentionName: string }> = [];
 
     for (const candidate of candidates) {
-      const token = `@${candidate.name.toLowerCase()}`;
-      let index = normalizedContent.indexOf(token);
-      while (index >= 0) {
-        const before = index > 0 ? normalizedContent[index - 1] : undefined;
-        const afterIndex = index + token.length;
-        const after =
-          afterIndex < normalizedContent.length ? normalizedContent[afterIndex] : undefined;
+      const normalizedName = candidate.name.toLowerCase();
+      const mentionTokens = [`@${normalizedName}`, `@{${normalizedName}}`];
 
-        if (isMentionBoundaryChar(before) && isMentionBoundaryChar(after)) {
-          if (!seenAgentIds.has(candidate.id)) {
-            seenAgentIds.add(candidate.id);
-            mentions.push({ agentId: candidate.id, mentionName: candidate.name });
+      for (const token of mentionTokens) {
+        let index = normalizedContent.indexOf(token);
+        while (index >= 0) {
+          const before = index > 0 ? normalizedContent[index - 1] : undefined;
+          const afterIndex = index + token.length;
+          const after =
+            afterIndex < normalizedContent.length ? normalizedContent[afterIndex] : undefined;
+
+          if (isMentionBoundaryChar(before) && isMentionBoundaryChar(after)) {
+            if (!seenAgentIds.has(candidate.id)) {
+              seenAgentIds.add(candidate.id);
+              mentions.push({ agentId: candidate.id, mentionName: candidate.name });
+            }
+            break;
           }
+          index = normalizedContent.indexOf(token, index + 1);
+        }
+        if (seenAgentIds.has(candidate.id)) {
           break;
         }
-        index = normalizedContent.indexOf(token, index + 1);
       }
     }
     return mentions;

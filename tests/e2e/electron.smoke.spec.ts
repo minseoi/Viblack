@@ -200,12 +200,17 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     await expect(channelMessages).toHaveCount(beforeLogOnlyCount + 1);
 
     const beforeMentionCount = await channelMessages.count();
-    await page.fill("#chat-input", `@${memberAlphaEdited} 멘션 응답 테스트`);
+    await page.fill("#chat-input", `@{${memberAlphaEdited}} 멘션 응답 테스트`);
     await page.click("#send-btn");
     await expect(channelMessages).toHaveCount(beforeMentionCount + 2);
     await expect(page.locator("#messages .msg-agent .msg-sender", { hasText: memberAlphaEdited })).toHaveCount(
       1,
     );
+    await expect(
+      page.locator("#messages .msg-user .msg-content .mention", {
+        hasText: `@{${memberAlphaEdited}}`,
+      }),
+    ).toHaveCount(1);
     await expect(page.locator("#messages .msg-agent .msg-content")).toContainText("테스트 응답");
 
     await openChannelMenu(page, editedChannelName);
