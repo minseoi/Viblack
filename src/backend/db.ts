@@ -313,14 +313,24 @@ export class ViblackDb {
     };
   }
 
-  listChannelMessages(channelId: string): ChannelMessage[] {
+  listChannelMessages(channelId: string, afterMessageId?: number): ChannelMessage[] {
+    const hasAfter = typeof afterMessageId === "number" && Number.isFinite(afterMessageId);
     const stmt = this.db.prepare(
-      `SELECT id, channel_id, sender_type, sender_id, content, message_kind, created_at
-       FROM channel_messages
-       WHERE channel_id = ?
-       ORDER BY id ASC`,
+      hasAfter
+        ? `SELECT id, channel_id, sender_type, sender_id, content, message_kind, created_at
+           FROM channel_messages
+           WHERE channel_id = ? AND id > ?
+           ORDER BY id ASC`
+        : `SELECT id, channel_id, sender_type, sender_id, content, message_kind, created_at
+           FROM channel_messages
+           WHERE channel_id = ?
+           ORDER BY id ASC`,
     );
-    const rows = stmt.all(channelId) as Array<Record<string, unknown>>;
+    const rows = hasAfter
+      ? (stmt.all(channelId, Math.max(0, Math.trunc(afterMessageId ?? 0))) as Array<
+          Record<string, unknown>
+        >)
+      : (stmt.all(channelId) as Array<Record<string, unknown>>);
     return rows.map((row) => ({
       id: Number(row.id),
       channelId: String(row.channel_id),

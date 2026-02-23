@@ -33,9 +33,27 @@ function buildReply(promptText) {
   }
   const forcedMentionMatch = promptText.match(/FORCE_MENTION_NAME:\s*([^\s\r\n]+)/);
   if (forcedMentionMatch) {
-    return `테스트 재멘션: @{${forcedMentionMatch[1]}} 확인 부탁합니다.`;
+    return `테스트 재멘션: @{${forcedMentionMatch[1]}} FORCE_DELAY_MS:1800 확인 부탁합니다.`;
   }
   return "테스트 응답: 요청을 정상 처리했습니다.";
+}
+
+function parseForcedDelayMs(promptText) {
+  const match = promptText.match(/FORCE_DELAY_MS:\s*(\d{1,5})/);
+  if (!match) {
+    return 0;
+  }
+  const parsed = Number(match[1]);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return 0;
+  }
+  return Math.min(parsed, 10000);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 async function main() {
@@ -63,6 +81,10 @@ async function main() {
   }
 
   const promptText = await readStdin();
+  const forcedDelayMs = parseForcedDelayMs(promptText);
+  if (forcedDelayMs > 0) {
+    await sleep(forcedDelayMs);
+  }
   const reply = buildReply(promptText);
   const effectiveSessionId = sessionId || `fake-session-${Date.now()}`;
 

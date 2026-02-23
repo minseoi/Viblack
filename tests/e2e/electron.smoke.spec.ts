@@ -200,6 +200,9 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     await page.fill("#chat-input", "channel log-only message");
     await page.click("#send-btn");
     await expect(channelMessages).toHaveCount(beforeLogOnlyCount + 1);
+    await expect(
+      page.locator("#messages .msg-user .msg-content", { hasText: "channel log-only message" }),
+    ).toHaveCount(1);
 
     const beforeMentionCount = await channelMessages.count();
     await page.fill("#chat-input", `@{${memberAlphaEdited}} mention response test`);
@@ -213,18 +216,34 @@ test("electron full feature regression flow", async ({}, testInfo) => {
         hasText: `@{${memberAlphaEdited}}`,
       }),
     ).toHaveCount(1);
+    await expect(
+      page.locator("#messages .msg-user .msg-content", { hasText: "mention response test" }),
+    ).toHaveCount(1);
     await expect(page.locator("#messages .msg-agent .msg-content")).toContainText("테스트 응답");
 
     const beforeRementionCount = await channelMessages.count();
+    const alphaSenderItems = page.locator("#messages .msg-agent .msg-sender", {
+      hasText: memberAlphaEdited,
+    });
+    const betaSenderItems = page.locator("#messages .msg-agent .msg-sender", {
+      hasText: memberBeta,
+    });
+    const beforeAlphaSenderCount = await alphaSenderItems.count();
+    const beforeBetaSenderCount = await betaSenderItems.count();
     await page.fill("#chat-input", `@{${memberAlphaEdited}} FORCE_MENTION_NAME:${memberBeta}`);
     await page.click("#send-btn");
-    await expect(channelMessages).toHaveCount(beforeRementionCount + 3);
-    await expect(page.locator("#messages .msg-agent .msg-sender", { hasText: memberBeta })).toHaveCount(1);
+
+    // The first agent reply should appear before chained mention execution finishes.
+    await expect(alphaSenderItems).toHaveCount(beforeAlphaSenderCount + 1, { timeout: 1500 });
+    await expect(betaSenderItems).toHaveCount(beforeBetaSenderCount, { timeout: 700 });
     await expect(
-      page.locator("#messages .msg-agent .msg-content .mention", {
-        hasText: `@{${memberBeta}}`,
+      page.locator("#messages .msg-user .msg-content", {
+        hasText: `FORCE_MENTION_NAME:${memberBeta}`,
       }),
     ).toHaveCount(1);
+
+    await expect(channelMessages).toHaveCount(beforeRementionCount + 3, { timeout: 7000 });
+    await expect(betaSenderItems).toHaveCount(beforeBetaSenderCount + 1, { timeout: 7000 });
 
     await page.click("#channel-members-btn");
     await expect(page.locator("#channel-members-modal[open]")).toHaveCount(1);

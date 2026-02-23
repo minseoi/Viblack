@@ -19,6 +19,7 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
   const app = express();
   const db = new ViblackDb(options.dbPath);
   const locks = new Map<string, Promise<unknown>>();
+  const channelEventClients = new Set<http.ServerResponse>();
 
   const withAgentLock = async <T>(agentId: string, task: () => Promise<T>): Promise<T> => {
     const previous = locks.get(agentId) ?? Promise.resolve();
@@ -35,6 +36,38 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
   };
 
   app.use(express.json({ limit: "1mb" }));
+
+  const writeSseEvent = (res: http.ServerResponse, event: string, payload: unknown): void => {
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  };
+
+  const broadcastChannelMessageEvent = (channelId: string, messageId: number): void => {
+    if (channelEventClients.size === 0) {
+      return;
+    }
+
+    const payload = { channelId, messageId };
+    for (const client of Array.from(channelEventClients)) {
+      try {
+        writeSseEvent(client, "channel_message", payload);
+      } catch {
+        channelEventClients.delete(client);
+      }
+    }
+  };
+
+  const appendChannelMessageAndNotify = (
+    channelId: string,
+    senderType: "user" | "agent" | "system",
+    senderId: string | null,
+    content: string,
+    messageKind: ChannelMessageKind,
+  ) => {
+    const message = db.appendChannelMessage(channelId, senderType, senderId, content, messageKind);
+    broadcastChannelMessageEvent(channelId, message.id);
+    return message;
+  };
 
   const sanitizeText = (value: unknown): string =>
     typeof value === "string" ? value.trim() : "";
@@ -193,6 +226,35 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
     res.json({ channels });
   });
 
+  app.get("/api/channels/events", (req, res) => {
+    res.status(200);
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders?.();
+
+    channelEventClients.add(res);
+    writeSseEvent(res, "ready", { ok: true });
+
+    const heartbeat = setInterval(() => {
+      try {
+        res.write(": heartbeat\n\n");
+      } catch {
+        channelEventClients.delete(res);
+        clearInterval(heartbeat);
+      }
+    }, 20_000);
+
+    const cleanup = (): void => {
+      clearInterval(heartbeat);
+      channelEventClients.delete(res);
+    };
+
+    req.on("close", cleanup);
+    req.on("aborted", cleanup);
+  });
+
   app.post("/api/channels", (req, res) => {
     const name = sanitizeText(req.body?.name);
     const description = sanitizeText(req.body?.description);
@@ -313,8 +375,15 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
       return;
     }
 
+    const afterRaw = req.query.after;
+    const afterValue = Array.isArray(afterRaw) ? afterRaw[0] : afterRaw;
+    const parsedAfter =
+      typeof afterValue === "string" ? Number.parseInt(afterValue, 10) : Number.NaN;
+    const afterMessageId =
+      Number.isInteger(parsedAfter) && parsedAfter > 0 ? parsedAfter : undefined;
+
     const members = db.listChannelMemberAgents(channelId);
-    const messages = db.listChannelMessages(channelId);
+    const messages = db.listChannelMessages(channelId, afterMessageId);
     const mentionsByMessage: Record<number, Array<{ agentId: string; mentionName: string }>> = {};
     for (const message of messages) {
       mentionsByMessage[message.id] = db
@@ -377,7 +446,7 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
                 .filter((line) => line.length > 0)
                 .join("\n");
 
-          const message = db.appendChannelMessage(
+          const message = appendChannelMessageAndNotify(
             channelId,
             codexResult.ok ? "agent" : "system",
             codexResult.ok ? targetAgent.id : null,
@@ -397,7 +466,13 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
       } catch (err) {
         const messageText = err instanceof Error ? err.message : "unknown error";
         const fallbackText = `에이전트 실행 중 예외 발생 (@${targetAgent.name}): ${messageText}`;
-        const systemMessage = db.appendChannelMessage(channelId, "system", null, fallbackText, "result");
+        const systemMessage = appendChannelMessageAndNotify(
+          channelId,
+          "system",
+          null,
+          fallbackText,
+          "result",
+        );
         return {
           agentId: targetAgent.id,
           agentName: targetAgent.name,
@@ -408,7 +483,7 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
       }
     };
 
-    const userMessage = db.appendChannelMessage(channelId, "user", null, content, messageKind);
+    const userMessage = appendChannelMessageAndNotify(channelId, "user", null, content, messageKind);
     const mentions = extractMentionedAgents(content, members);
     const mentionRecords = db.addChannelMessageMentions(userMessage.id, mentions);
 
@@ -471,7 +546,7 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
           const targetAgent = memberById.get(task.agentId);
           if (!targetAgent) {
             const missingReply = "멘션 대상 에이전트를 찾지 못했습니다.";
-            const systemMessage = db.appendChannelMessage(
+            const systemMessage = appendChannelMessageAndNotify(
               channelId,
               "system",
               null,
@@ -697,6 +772,14 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
             return;
           }
           done = true;
+          for (const client of Array.from(channelEventClients)) {
+            try {
+              client.end();
+            } catch {
+              // Ignore SSE client close errors during shutdown.
+            }
+          }
+          channelEventClients.clear();
           try {
             db.close();
           } catch {

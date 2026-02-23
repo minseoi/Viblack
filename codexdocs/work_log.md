@@ -67,3 +67,7 @@
 - 프로그램 설명 문구를 `README.md` 상단에 반영.
 - `package.json`의 `description`은 메타데이터 특성에 맞게 간결 문구로 유지.
 - 68) Prepared commit for channel mention-chain execution update: server mention routing now supports chained remention processing with execution/depth guards, and E2E + fake-codex fixtures were updated accordingly.
+- 69) Investigating reported channel remention UX bug: first agent reply is persisted before chained agent finishes, but renderer only refreshes after POST completes. Implementing in-flight channel message polling plus E2E regression to confirm first reply appears before chained reply.
+- 70) Implemented renderer in-flight channel polling during POST /api/channels/:id/messages so intermediate chained replies are rendered before request completion. Updated fake-codex to support delayed chained replies and extended E2E assertions for first-reply-before-chain-complete visibility.
+- 71) Verified fix with npm run verify (check/build/e2e all passed). E2E now asserts chained remention first responder appears before delayed second responder.
+- 72) Fixed channel duplicate-user-message regression: added channel-scoped optimistic message tracking/reconciliation so SSE/API persisted user messages replace local pending bubbles instead of rendering twice.
