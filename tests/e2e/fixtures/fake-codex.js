@@ -31,6 +31,10 @@ function buildReply(promptText) {
   if (promptText.includes("SYSTEM PROMPT를 작성하세요")) {
     return "당신은 테스트용 에이전트입니다. 한국어로 간결하고 정확하게 응답하세요.";
   }
+  const forcedMentionMatch = promptText.match(/FORCE_MENTION_NAME:\s*([^\s\r\n]+)/);
+  if (forcedMentionMatch) {
+    return `테스트 재멘션: @{${forcedMentionMatch[1]}} 확인 부탁합니다.`;
+  }
   return "테스트 응답: 요청을 정상 처리했습니다.";
 }
 

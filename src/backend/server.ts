@@ -325,6 +325,8 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
   });
 
   app.post("/api/channels/:channelId/messages", async (req, res) => {
+    const MAX_MENTION_CHAIN_DEPTH = 4;
+    const MAX_MENTION_EXECUTIONS = 12;
     const { channelId } = req.params;
     const content = sanitizeText(req.body?.content);
     const messageKind = sanitizeChannelMessageKind(req.body?.messageKind);
@@ -344,6 +346,68 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
     }
 
     const members = db.listChannelMemberAgents(channelId);
+    const memberById = new Map<string, Agent>(members.map((member) => [member.id, member]));
+
+    const executeMentionedAgent = async (
+      targetAgent: Agent,
+      triggerContent: string,
+      resultMessageKind: ChannelMessageKind,
+    ) => {
+      try {
+        return await withAgentLock(targetAgent.id, async () => {
+          const codexResult = await runCodex({
+            prompt: buildChannelPrompt(channel.name, triggerContent),
+            systemPrompt: targetAgent.systemPrompt,
+            sessionId: targetAgent.sessionId,
+            cwd: options.workspaceDir,
+            timeoutMs: 120_000,
+          });
+
+          if (codexResult.sessionId && codexResult.sessionId !== targetAgent.sessionId) {
+            db.updateAgentSession(targetAgent.id, codexResult.sessionId);
+          }
+
+          const replyText = codexResult.ok
+            ? codexResult.reply
+            : [
+                "Codex 실행 실패:",
+                codexResult.error ?? "unknown error",
+                codexResult.reply ? `partial: ${codexResult.reply}` : "",
+              ]
+                .filter((line) => line.length > 0)
+                .join("\n");
+
+          const message = db.appendChannelMessage(
+            channelId,
+            codexResult.ok ? "agent" : "system",
+            codexResult.ok ? targetAgent.id : null,
+            replyText,
+            resultMessageKind,
+          );
+
+          return {
+            agentId: targetAgent.id,
+            agentName: targetAgent.name,
+            ok: codexResult.ok,
+            reply: replyText,
+            sessionId: codexResult.sessionId,
+            message,
+          };
+        });
+      } catch (err) {
+        const messageText = err instanceof Error ? err.message : "unknown error";
+        const fallbackText = `에이전트 실행 중 예외 발생 (@${targetAgent.name}): ${messageText}`;
+        const systemMessage = db.appendChannelMessage(channelId, "system", null, fallbackText, "result");
+        return {
+          agentId: targetAgent.id,
+          agentName: targetAgent.name,
+          ok: false,
+          reply: fallbackText,
+          message: systemMessage,
+        };
+      }
+    };
+
     const userMessage = db.appendChannelMessage(channelId, "user", null, content, messageKind);
     const mentions = extractMentionedAgents(content, members);
     const mentionRecords = db.addChannelMessageMentions(userMessage.id, mentions);
@@ -359,88 +423,97 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
       return;
     }
 
-    const results = await Promise.all(
-      mentions.map(async (mention) => {
-        const targetAgent = members.find((member) => member.id === mention.agentId);
-        if (!targetAgent) {
-          const missingReply = `멘션 대상 에이전트를 찾지 못했습니다: @${mention.mentionName}`;
-          const systemMessage = db.appendChannelMessage(
-            channelId,
-            "system",
-            null,
-            missingReply,
-            "result",
-          );
-          return {
-            agentId: mention.agentId,
-            agentName: mention.mentionName,
-            ok: false,
-            reply: missingReply,
-            message: systemMessage,
-          };
+    type MentionTask = {
+      agentId: string;
+      sourceContent: string;
+      resultMessageKind: ChannelMessageKind;
+    };
+
+    const queuedAgentIds = new Set<string>();
+    const executedAgentIds = new Set<string>();
+    const taskQueue: MentionTask[] = [];
+    const results: Array<Awaited<ReturnType<typeof executeMentionedAgent>>> = [];
+
+    const enqueueMentions = (
+      nextMentions: Array<{ agentId: string; mentionName: string }>,
+      sourceContent: string,
+      resultMessageKind: ChannelMessageKind,
+    ): void => {
+      for (const mention of nextMentions) {
+        if (executedAgentIds.has(mention.agentId) || queuedAgentIds.has(mention.agentId)) {
+          continue;
         }
+        if (!memberById.has(mention.agentId)) {
+          continue;
+        }
+        taskQueue.push({ agentId: mention.agentId, sourceContent, resultMessageKind });
+        queuedAgentIds.add(mention.agentId);
+      }
+    };
 
-        try {
-          return await withAgentLock(targetAgent.id, async () => {
-            const codexResult = await runCodex({
-              prompt: buildChannelPrompt(channel.name, content),
-              systemPrompt: targetAgent.systemPrompt,
-              sessionId: targetAgent.sessionId,
-              cwd: options.workspaceDir,
-              timeoutMs: 120_000,
-            });
+    enqueueMentions(mentions, content, "result");
 
-            if (codexResult.sessionId && codexResult.sessionId !== targetAgent.sessionId) {
-              db.updateAgentSession(targetAgent.id, codexResult.sessionId);
-            }
+    let chainDepth = 0;
+    while (
+      taskQueue.length > 0 &&
+      chainDepth < MAX_MENTION_CHAIN_DEPTH &&
+      results.length < MAX_MENTION_EXECUTIONS
+    ) {
+      const currentBatch = taskQueue.splice(0, taskQueue.length);
+      const availableSlots = MAX_MENTION_EXECUTIONS - results.length;
+      const runnableBatch = currentBatch.slice(0, availableSlots);
+      for (const task of currentBatch) {
+        queuedAgentIds.delete(task.agentId);
+      }
 
-            const replyText = codexResult.ok
-              ? codexResult.reply
-              : [
-                  "Codex 실행 실패:",
-                  codexResult.error ?? "unknown error",
-                  codexResult.reply ? `partial: ${codexResult.reply}` : "",
-                ]
-                  .filter((line) => line.length > 0)
-                  .join("\n");
-
-            const message = db.appendChannelMessage(
+      const batchResults = await Promise.all(
+        runnableBatch.map(async (task) => {
+          const targetAgent = memberById.get(task.agentId);
+          if (!targetAgent) {
+            const missingReply = "멘션 대상 에이전트를 찾지 못했습니다.";
+            const systemMessage = db.appendChannelMessage(
               channelId,
-              codexResult.ok ? "agent" : "system",
-              codexResult.ok ? targetAgent.id : null,
-              replyText,
+              "system",
+              null,
+              missingReply,
               "result",
             );
-
             return {
-              agentId: targetAgent.id,
-              agentName: targetAgent.name,
-              ok: codexResult.ok,
-              reply: replyText,
-              sessionId: codexResult.sessionId,
-              message,
+              agentId: task.agentId,
+              agentName: "unknown",
+              ok: false,
+              reply: missingReply,
+              message: systemMessage,
             };
-          });
-        } catch (err) {
-          const messageText = err instanceof Error ? err.message : "unknown error";
-          const fallbackText = `에이전트 실행 중 예외 발생 (@${targetAgent.name}): ${messageText}`;
-          const systemMessage = db.appendChannelMessage(
-            channelId,
-            "system",
-            null,
-            fallbackText,
-            "result",
-          );
-          return {
-            agentId: targetAgent.id,
-            agentName: targetAgent.name,
-            ok: false,
-            reply: fallbackText,
-            message: systemMessage,
-          };
+          }
+
+          return executeMentionedAgent(targetAgent, task.sourceContent, task.resultMessageKind);
+        }),
+      );
+
+      for (const batchResult of batchResults) {
+        results.push(batchResult);
+        executedAgentIds.add(batchResult.agentId);
+      }
+
+      for (const batchResult of batchResults) {
+        if (!batchResult.ok || batchResult.message.senderType !== "agent") {
+          continue;
         }
-      }),
-    );
+
+        const chainedMentions = extractMentionedAgents(batchResult.reply, members).filter(
+          (mention) => mention.agentId !== batchResult.agentId,
+        );
+        if (chainedMentions.length === 0) {
+          continue;
+        }
+
+        db.addChannelMessageMentions(batchResult.message.id, chainedMentions);
+        enqueueMentions(chainedMentions, batchResult.reply, "remention");
+      }
+
+      chainDepth += 1;
+    }
 
     res.json({
       ok: true,

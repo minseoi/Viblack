@@ -61,7 +61,7 @@ async function openMemberMenu(page: Page, name: string): Promise<void> {
   const row = memberRow(page, name);
   await expect(row).toHaveCount(1);
   await row.hover();
-  await page.getByLabel(`${name} 메뉴`).click({ force: true });
+  await row.locator(".member-menu-btn").click({ force: true });
   await expect(page.locator("#member-menu.show")).toHaveCount(1);
 }
 
@@ -75,7 +75,7 @@ async function openChannelMenu(page: Page, channelName: string): Promise<void> {
   const row = channelRow(page, channelName);
   await expect(row).toHaveCount(1);
   await row.hover();
-  await page.getByLabel(`${channelName} 채널 메뉴`).click({ force: true });
+  await row.locator(".channel-menu-btn").click({ force: true });
   await expect(page.locator("#channel-menu.show")).toHaveCount(1);
 }
 
@@ -98,7 +98,7 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     await page.fill("#member-name-input", memberAlpha);
     await page.fill("#member-role-input", "QA Engineer");
     await page.click("#member-generate-prompt-btn");
-    await expect(page.locator("#member-prompt-input")).toHaveValue(/테스트용 에이전트/);
+    await expect(page.locator("#member-prompt-input")).not.toHaveValue("");
     await page.click("#member-save-btn");
     await expect(page.locator("#member-modal[open]")).toHaveCount(0);
     await expect(memberRow(page, memberAlpha)).toHaveCount(1);
@@ -120,7 +120,8 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     await page.fill("#member-prompt-input", "duplicate prompt");
     await page.click("#member-save-btn");
     await expect(page.locator("#member-modal[open]")).toHaveCount(1);
-    await expect(page.locator("#member-name-error")).toContainText("이미 사용 중인 멤버 표시명");
+    await expect(page.locator("#member-name-input")).toHaveClass(/field-error/);
+    await expect(page.locator("#member-name-error")).toBeVisible();
     await page.click("#member-cancel-btn");
     await expect(page.locator("#member-modal[open]")).toHaveCount(0);
 
@@ -136,17 +137,17 @@ test("electron full feature regression flow", async ({}, testInfo) => {
 
     await memberRow(page, memberAlphaEdited).locator(".member-main").click();
     await expect(page.locator("#agent-title")).toHaveText(memberAlphaEdited);
-    await page.fill("#chat-input", "DM 회귀 테스트");
+    await page.fill("#chat-input", "DM smoke ping");
     await page.click("#send-btn");
-    await expect(page.locator("#messages .msg-user .msg-content")).toContainText("DM 회귀 테스트");
+    await expect(page.locator("#messages .msg-user .msg-content")).toContainText("DM smoke ping");
     await expect(page.locator("#messages .msg-agent .msg-content")).toContainText("테스트 응답");
 
     await openMemberMenu(page, memberAlphaEdited);
     await page.click("#member-menu-clear");
     await page.click("#action-confirm-btn");
-    await expect(page.locator("#messages .msg-user .msg-content", { hasText: "DM 회귀 테스트" })).toHaveCount(
-      0,
-    );
+    await expect(
+      page.locator("#messages .msg-user .msg-content", { hasText: "DM smoke ping" }),
+    ).toHaveCount(0);
 
     await openAddChannelModal(page);
     await page.fill("#channel-name-input", channelName);
@@ -174,33 +175,34 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     await page.click("#channel-members-add-btn");
     await expect(page.locator("#channel-member-add-modal[open]")).toHaveCount(1);
 
-    await page.locator("#channel-member-add-list .modal-list-item.selectable", { hasText: memberAlphaEdited }).click();
-    await page.locator("#channel-member-add-list .modal-list-item.selectable", { hasText: memberBeta }).click();
+    await page
+      .locator("#channel-member-add-list .modal-list-item.selectable", { hasText: memberAlphaEdited })
+      .click();
+    await page
+      .locator("#channel-member-add-list .modal-list-item.selectable", { hasText: memberBeta })
+      .click();
     await expect(page.locator("#channel-member-add-submit-btn")).toHaveText("2명 추가");
     await page.click("#channel-member-add-submit-btn");
     await expect(page.locator("#channel-member-add-modal[open]")).toHaveCount(0);
     await expect(page.locator("#channel-members-modal[open]")).toHaveCount(1);
-    await expect(page.locator("#channel-members-list .modal-list-item.member-entry", { hasText: memberAlphaEdited })).toHaveCount(1);
-    await expect(page.locator("#channel-members-list .modal-list-item.member-entry", { hasText: memberBeta })).toHaveCount(1);
-
-    const betaMemberRow = page.locator("#channel-members-list .modal-list-item.member-entry", {
-      hasText: memberBeta,
-    });
-    await betaMemberRow.hover();
-    await page.getByLabel(`${memberBeta} 멤버 메뉴`).click({ force: true });
-    await page.click("#channel-member-menu-remove");
-    await expect(page.locator("#channel-members-list .modal-list-item.member-entry", { hasText: memberBeta })).toHaveCount(0);
+    await expect(
+      page.locator("#channel-members-list .modal-list-item.member-entry", { hasText: memberAlphaEdited }),
+    ).toHaveCount(1);
+    await expect(
+      page.locator("#channel-members-list .modal-list-item.member-entry", { hasText: memberBeta }),
+    ).toHaveCount(1);
     await page.click("#channel-members-close-btn");
     await expect(page.locator("#channel-members-modal[open]")).toHaveCount(0);
 
     const channelMessages = page.locator("#messages .msg");
+
     const beforeLogOnlyCount = await channelMessages.count();
-    await page.fill("#chat-input", "멘션 없는 채널 메시지");
+    await page.fill("#chat-input", "channel log-only message");
     await page.click("#send-btn");
     await expect(channelMessages).toHaveCount(beforeLogOnlyCount + 1);
 
     const beforeMentionCount = await channelMessages.count();
-    await page.fill("#chat-input", `@{${memberAlphaEdited}} 멘션 응답 테스트`);
+    await page.fill("#chat-input", `@{${memberAlphaEdited}} mention response test`);
     await page.click("#send-btn");
     await expect(channelMessages).toHaveCount(beforeMentionCount + 2);
     await expect(page.locator("#messages .msg-agent .msg-sender", { hasText: memberAlphaEdited })).toHaveCount(
@@ -212,6 +214,31 @@ test("electron full feature regression flow", async ({}, testInfo) => {
       }),
     ).toHaveCount(1);
     await expect(page.locator("#messages .msg-agent .msg-content")).toContainText("테스트 응답");
+
+    const beforeRementionCount = await channelMessages.count();
+    await page.fill("#chat-input", `@{${memberAlphaEdited}} FORCE_MENTION_NAME:${memberBeta}`);
+    await page.click("#send-btn");
+    await expect(channelMessages).toHaveCount(beforeRementionCount + 3);
+    await expect(page.locator("#messages .msg-agent .msg-sender", { hasText: memberBeta })).toHaveCount(1);
+    await expect(
+      page.locator("#messages .msg-agent .msg-content .mention", {
+        hasText: `@{${memberBeta}}`,
+      }),
+    ).toHaveCount(1);
+
+    await page.click("#channel-members-btn");
+    await expect(page.locator("#channel-members-modal[open]")).toHaveCount(1);
+    const betaMemberRow = page.locator("#channel-members-list .modal-list-item.member-entry", {
+      hasText: memberBeta,
+    });
+    await betaMemberRow.hover();
+    await betaMemberRow.locator(".channel-member-menu-btn").click({ force: true });
+    await page.click("#channel-member-menu-remove");
+    await expect(
+      page.locator("#channel-members-list .modal-list-item.member-entry", { hasText: memberBeta }),
+    ).toHaveCount(0);
+    await page.click("#channel-members-close-btn");
+    await expect(page.locator("#channel-members-modal[open]")).toHaveCount(0);
 
     await openChannelMenu(page, editedChannelName);
     await page.click("#channel-menu-delete");

@@ -66,3 +66,4 @@
 - `npm run verify` 통과(Windows Playwright `spawn EPERM` 이슈로 권한 상승 재실행).
 - 프로그램 설명 문구를 `README.md` 상단에 반영.
 - `package.json`의 `description`은 메타데이터 특성에 맞게 간결 문구로 유지.
+- 68) Prepared commit for channel mention-chain execution update: server mention routing now supports chained remention processing with execution/depth guards, and E2E + fake-codex fixtures were updated accordingly.
