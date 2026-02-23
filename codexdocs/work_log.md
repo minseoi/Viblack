@@ -814,3 +814,5 @@
 - 55) 문서에 멘션 기준(@표시명), 표시명 중복 금지, 무멘션 저장-only 규칙, 단계별 구현/테스트 계획 반영. 
 - 56) 사용자 지시에 따라 현 변경분을 기준 커밋으로 먼저 고정하기로 결정. 
 - 56) 기준 커밋 전 검증: npm run check, npm run build 통과.
+- 57) Phase 1 진행: src/backend/types.ts 에 channel 관련 타입과 Agent.roleProfile 필드 추가. 
+- 57) Phase 1 진행: src/backend/db.ts 에 channels/channel_members/channel_messages/channel_message_mentions 스키마 및 Repository 메서드 추가.
