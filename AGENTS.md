@@ -22,6 +22,7 @@
   2. `npm run build`
   3. `npm run verify`
 - Keep commit scope focused and aligned with the logged work.
+- Exception for documentation-only changes (`README.md`, `AGENTS.md`, `codexdocs/*`): skip `codexdocs/work_log.md` logging and skip Playwright/verify gates unless explicitly requested.
 
 ## Build, Test, and Development Commands
 - `npm install`: install dependencies.
@@ -53,6 +54,7 @@ npm run start
   2. `npm run build`
   3. `npm run verify`
   4. Manual smoke test via `npm run start` (send a message, verify response flow).
+- Documentation-only changes are exempt from Playwright and verify/check/build gates unless explicitly requested.
 - Feature-to-test sync rule:
   - If a feature is added/changed, the related E2E scenario must be added/updated in the same PR/commit scope.
   - If no test update is needed, leave an explicit reason in the PR description.
