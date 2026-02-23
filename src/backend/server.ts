@@ -373,45 +373,65 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
           };
         }
 
-        return withAgentLock(targetAgent.id, async () => {
-          const codexResult = await runCodex({
-            prompt: buildChannelPrompt(channel.name, content),
-            systemPrompt: targetAgent.systemPrompt,
-            sessionId: targetAgent.sessionId,
-            cwd: options.workspaceDir,
+        try {
+          return await withAgentLock(targetAgent.id, async () => {
+            const codexResult = await runCodex({
+              prompt: buildChannelPrompt(channel.name, content),
+              systemPrompt: targetAgent.systemPrompt,
+              sessionId: targetAgent.sessionId,
+              cwd: options.workspaceDir,
+              timeoutMs: 120_000,
+            });
+
+            if (codexResult.sessionId && codexResult.sessionId !== targetAgent.sessionId) {
+              db.updateAgentSession(targetAgent.id, codexResult.sessionId);
+            }
+
+            const replyText = codexResult.ok
+              ? codexResult.reply
+              : [
+                  "Codex 실행 실패:",
+                  codexResult.error ?? "unknown error",
+                  codexResult.reply ? `partial: ${codexResult.reply}` : "",
+                ]
+                  .filter((line) => line.length > 0)
+                  .join("\n");
+
+            const message = db.appendChannelMessage(
+              channelId,
+              codexResult.ok ? "agent" : "system",
+              codexResult.ok ? targetAgent.id : null,
+              replyText,
+              "result",
+            );
+
+            return {
+              agentId: targetAgent.id,
+              agentName: targetAgent.name,
+              ok: codexResult.ok,
+              reply: replyText,
+              sessionId: codexResult.sessionId,
+              message,
+            };
           });
-
-          if (codexResult.sessionId && codexResult.sessionId !== targetAgent.sessionId) {
-            db.updateAgentSession(targetAgent.id, codexResult.sessionId);
-          }
-
-          const replyText = codexResult.ok
-            ? codexResult.reply
-            : [
-                "Codex 실행 실패:",
-                codexResult.error ?? "unknown error",
-                codexResult.reply ? `partial: ${codexResult.reply}` : "",
-              ]
-                .filter((line) => line.length > 0)
-                .join("\n");
-
-          const message = db.appendChannelMessage(
+        } catch (err) {
+          const messageText = err instanceof Error ? err.message : "unknown error";
+          const fallbackText = `에이전트 실행 중 예외 발생 (@${targetAgent.name}): ${messageText}`;
+          const systemMessage = db.appendChannelMessage(
             channelId,
-            codexResult.ok ? "agent" : "system",
-            codexResult.ok ? targetAgent.id : null,
-            replyText,
+            "system",
+            null,
+            fallbackText,
             "result",
           );
-
           return {
             agentId: targetAgent.id,
             agentName: targetAgent.name,
-            ok: codexResult.ok,
-            reply: replyText,
-            sessionId: codexResult.sessionId,
-            message,
+            ok: false,
+            reply: fallbackText,
+            message: systemMessage,
           };
-        });
+        }
       }),
     );
 

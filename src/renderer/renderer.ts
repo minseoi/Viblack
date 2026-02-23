@@ -63,6 +63,7 @@ const selectedChannelMemberAddIds = new Set<string>();
 const unreadAgentIds = new Set<string>();
 const inflightAgentIds = new Set<string>();
 let isGeneratingMemberPrompt = false;
+let isSendingMessage = false;
 
 function escapeHtml(value: string): string {
   return value
@@ -932,16 +933,22 @@ async function openChannelMembersModal(): Promise<void> {
     return;
   }
 
-  await refreshActiveChannelMembers();
-  if (searchInput) {
-    searchInput.value = "";
+  try {
+    await refreshActiveChannelMembers();
+    if (searchInput) {
+      searchInput.value = "";
+    }
+    renderChannelMembersModalContent();
+    if (modal.open) {
+      modal.close();
+    }
+    modal.showModal();
+    searchInput?.focus();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "unknown error";
+    showWarning(`채널 멤버 조회 실패: ${message}`);
+    setStatus(`Error: ${message}`);
   }
-  renderChannelMembersModalContent();
-  if (modal.open) {
-    modal.close();
-  }
-  modal.showModal();
-  searchInput?.focus();
 }
 
 function closeChannelMembersModal(): void {
@@ -1041,16 +1048,22 @@ async function openChannelMemberAddModal(): Promise<void> {
     return;
   }
 
-  await refreshActiveChannelMembers();
-  selectedChannelMemberAddIds.clear();
-  searchInput.value = "";
-  renderChannelMemberAddList();
+  try {
+    await refreshActiveChannelMembers();
+    selectedChannelMemberAddIds.clear();
+    searchInput.value = "";
+    renderChannelMemberAddList();
 
-  if (modal.open) {
-    modal.close();
+    if (modal.open) {
+      modal.close();
+    }
+    modal.showModal();
+    searchInput.focus();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "unknown error";
+    showWarning(`채널 멤버 추가 창 로드 실패: ${message}`);
+    setStatus(`Error: ${message}`);
   }
-  modal.showModal();
-  searchInput.focus();
 }
 
 function closeChannelMemberAddModal(): void {
@@ -1232,35 +1245,41 @@ async function refreshMessagesByAgent(agentId: string): Promise<void> {
 
 async function refreshMessages(): Promise<void> {
   updateChannelMembersButton();
+  try {
+    if (activeChannelId) {
+      const data = await fetchJson<{
+        channel: Channel;
+        members: Agent[];
+        messages: ChannelApiMessage[];
+        mentionsByMessage: Record<number, Array<{ agentId: string; mentionName: string }>>;
+      }>(`${backendBaseUrl}/api/channels/${activeChannelId}/messages`);
+      activeChannelMembers = data.members;
+      setHeader(`# ${data.channel.name}`, data.channel.description);
+      setStatus(codexReady ? "Ready" : "Codex unavailable");
+      setComposerEnabled(true);
+      renderMessages(mapChannelMessagesToChatMessages(data.messages, data.members));
+      return;
+    }
 
-  if (activeChannelId) {
-    const data = await fetchJson<{
-      channel: Channel;
-      members: Agent[];
-      messages: ChannelApiMessage[];
-      mentionsByMessage: Record<number, Array<{ agentId: string; mentionName: string }>>;
-    }>(`${backendBaseUrl}/api/channels/${activeChannelId}/messages`);
-    activeChannelMembers = data.members;
-    setHeader(`# ${data.channel.name}`, data.channel.description);
+    if (!activeAgentId) {
+      setHeader("멤버를 추가하세요", "");
+      setStatus("No member selected");
+      renderMessages([]);
+      return;
+    }
+
+    const data = await fetchJson<{ agent: Agent; messages: ChatMessage[] }>(
+      `${backendBaseUrl}/api/agents/${activeAgentId}/messages`,
+    );
+    setHeader(data.agent.name, data.agent.role);
+    renderMessages(data.messages, data.agent.name);
     setStatus(codexReady ? "Ready" : "Codex unavailable");
-    setComposerEnabled(true);
-    renderMessages(mapChannelMessagesToChatMessages(data.messages, data.members));
-    return;
-  }
-
-  if (!activeAgentId) {
-    setHeader("멤버를 추가하세요", "");
-    setStatus("No member selected");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "unknown error";
+    setStatus(`Error: ${message}`);
+    showWarning(`메시지 로딩 실패: ${message}`);
     renderMessages([]);
-    return;
   }
-
-  const data = await fetchJson<{ agent: Agent; messages: ChatMessage[] }>(
-    `${backendBaseUrl}/api/agents/${activeAgentId}/messages`,
-  );
-  setHeader(data.agent.name, data.agent.role);
-  renderMessages(data.messages, data.agent.name);
-  setStatus(codexReady ? "Ready" : "Codex unavailable");
 }
 
 async function generateMemberSystemPrompt(): Promise<void> {
@@ -1693,29 +1712,35 @@ function initMemberCrudUi(): void {
 }
 
 async function init(): Promise<void> {
-  backendBaseUrl = await window.viblackApi.getBackendBaseUrl();
-  const codexStatus = await window.viblackApi.getBootCodexStatus();
+  try {
+    backendBaseUrl = await window.viblackApi.getBackendBaseUrl();
+    const codexStatus = await window.viblackApi.getBootCodexStatus();
 
-  if (!codexStatus.ok) {
-    showWarning(
-      [
-        "Codex CLI를 찾지 못했습니다. 터미널에서 `codex --version`을 확인하세요.",
-        codexStatus.error ? `오류: ${codexStatus.error}` : "",
-      ]
-        .filter((line) => line.length > 0)
-        .join(" "),
-    );
-    codexReady = false;
-    setStatus("Codex unavailable");
-  } else {
-    showWarning(null);
-    codexReady = true;
-    setStatus(`Ready (${codexStatus.command ?? "codex"})`);
+    if (!codexStatus.ok) {
+      showWarning(
+        [
+          "Codex CLI를 찾지 못했습니다. 터미널에서 `codex --version`을 확인하세요.",
+          codexStatus.error ? `오류: ${codexStatus.error}` : "",
+        ]
+          .filter((line) => line.length > 0)
+          .join(" "),
+      );
+      codexReady = false;
+      setStatus("Codex unavailable");
+    } else {
+      showWarning(null);
+      codexReady = true;
+      setStatus(`Ready (${codexStatus.command ?? "codex"})`);
+    }
+
+    await refreshAgents();
+    await refreshChannels();
+    await refreshMessages();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "unknown error";
+    showWarning(`초기화 실패: ${message}`);
+    setStatus(`Error: ${message}`);
   }
-
-  await refreshAgents();
-  await refreshChannels();
-  await refreshMessages();
 }
 
 async function sendMessage(): Promise<void> {
@@ -1724,92 +1749,97 @@ async function sendMessage(): Promise<void> {
   if (!input || !button) {
     return;
   }
+  if (isSendingMessage) {
+    return;
+  }
 
   const content = input.value.trim();
   if (!content) {
     return;
   }
 
-  if (activeChannelId) {
-    const channelId = activeChannelId;
-    input.value = "";
-    button.disabled = true;
-    setStatus("Channel is working...");
+  isSendingMessage = true;
+  button.disabled = true;
+  try {
+    if (activeChannelId) {
+      const channelId = activeChannelId;
+      input.value = "";
+      setStatus("Channel is working...");
 
+      const optimisticUser: ChatMessage = {
+        id: Date.now(),
+        sender: "user",
+        content,
+        createdAt: new Date().toISOString(),
+      };
+      renderMessages([...renderedMessages, optimisticUser]);
+
+      try {
+        await fetchJson(`${backendBaseUrl}/api/channels/${channelId}/messages`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content, messageKind: "general" }),
+        });
+        await refreshMessages();
+        setStatus(codexReady ? "Ready" : "Codex unavailable");
+        focusInput();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "unknown error";
+        setStatus(`Error: ${message}`);
+        showWarning(`채널 메시지 전송 실패: ${message}`);
+        await refreshMessages();
+        focusInput();
+      }
+      return;
+    }
+
+    const targetAgentId = activeAgentId;
+    if (!targetAgentId) {
+      return;
+    }
+
+    input.value = "";
+    inflightAgentIds.add(targetAgentId);
+    const activeAgent = agents.find((agent) => agent.id === targetAgentId);
+    renderMemberList();
+    setStatus(`${activeAgent?.name ?? "Agent"} is working...`);
+
+    const nowIso = new Date().toISOString();
     const optimisticUser: ChatMessage = {
       id: Date.now(),
       sender: "user",
       content,
-      createdAt: new Date().toISOString(),
+      createdAt: nowIso,
     };
     renderMessages([...renderedMessages, optimisticUser]);
 
     try {
-      await fetchJson(`${backendBaseUrl}/api/channels/${channelId}/messages`, {
+      await fetchJson(`${backendBaseUrl}/api/agents/${targetAgentId}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content, messageKind: "general" }),
+        body: JSON.stringify({ content }),
       });
-      await refreshMessages();
-      setStatus(codexReady ? "Ready" : "Codex unavailable");
+      await refreshMessagesByAgent(targetAgentId);
+      if (activeAgentId === targetAgentId) {
+        setStatus(codexReady ? "Ready" : "Codex unavailable");
+      }
       focusInput();
     } catch (err) {
       const message = err instanceof Error ? err.message : "unknown error";
       setStatus(`Error: ${message}`);
-      showWarning(`채널 메시지 전송 실패: ${message}`);
-      await refreshMessages();
+      showWarning(`메시지 전송 실패: ${message}`);
+      if (activeAgentId === targetAgentId) {
+        await refreshMessages();
+      }
       focusInput();
     } finally {
-      button.disabled = false;
+      inflightAgentIds.delete(targetAgentId);
+      renderMemberList();
     }
-    return;
-  }
-
-  const targetAgentId = activeAgentId;
-  if (!targetAgentId) {
-    return;
-  }
-
-  input.value = "";
-  button.disabled = true;
-  inflightAgentIds.add(targetAgentId);
-  const activeAgent = agents.find((agent) => agent.id === targetAgentId);
-  renderMemberList();
-  setStatus(`${activeAgent?.name ?? "Agent"} is working...`);
-
-  const nowIso = new Date().toISOString();
-  const optimisticUser: ChatMessage = {
-    id: Date.now(),
-    sender: "user",
-    content,
-    createdAt: nowIso,
-  };
-  renderMessages([...renderedMessages, optimisticUser]);
-
-  try {
-    await fetchJson(`${backendBaseUrl}/api/agents/${targetAgentId}/messages`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content }),
-    });
-    await refreshMessagesByAgent(targetAgentId);
-    if (activeAgentId === targetAgentId) {
-      setStatus(codexReady ? "Ready" : "Codex unavailable");
-    }
-    focusInput();
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "unknown error";
-    setStatus(`Error: ${message}`);
-    showWarning(`메시지 전송 실패: ${message}`);
-    if (activeAgentId === targetAgentId) {
-      await refreshMessages();
-    }
-    focusInput();
   } finally {
-    inflightAgentIds.delete(targetAgentId);
-    renderMemberList();
+    isSendingMessage = false;
     button.disabled = false;
-    if (!activeAgentId) {
+    if (!activeAgentId && !activeChannelId) {
       button.disabled = true;
     }
   }

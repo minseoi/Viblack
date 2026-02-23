@@ -821,3 +821,6 @@
 - 59) Phase 3 진행: renderer 채널 상태를 API 기반으로 전환(refreshChannels/refreshMessages channel branch). 
 - 59) Phase 3 진행: 채널 멤버 관리 및 채널 메시지 전송 경로를 backend /api/channels/* 로 연결.
 - 59) Phase 3 검증: npm run check, npm run build, npm run test:e2e(권한 상승) 통과.
+- 60) Phase 4 진행: server 채널 멘션 실행을 부분 실패 허용 구조로 보강(개별 예외를 system 메시지로 기록). 
+- 60) Phase 4 진행: renderer 비동기 오류 처리 강화(refreshMessages/init/channel modal) 및 중복 전송 방지(isSendingMessage) 추가.
+- 60) Phase 4 검증: npm run check, npm run build, npm run test:e2e(권한 상승) 통과.
