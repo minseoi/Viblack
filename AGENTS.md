@@ -10,7 +10,18 @@
   - `db.ts`: SQLite schema and data access.
   - `types.ts`: shared backend types.
 - `src/types/node-sqlite.d.ts`: local typing shim for `node:sqlite`.
-- Root docs: `README.md`, `idea_plan.md`, `work_log.md`.
+- Product/planning docs live in `codexdocs/`:
+  - `codexdocs/Idea.md`
+  - `codexdocs/idea_plan.md`
+  - `codexdocs/work_log.md`
+
+## Agent Workflow Rules
+- Always check relevant context in `codexdocs/` before implementation.
+- While working, continuously append meaningful progress to `codexdocs/work_log.md` (not only at the end).
+- Before commit, run:
+  1. `npm run check`
+  2. `npm run build`
+- Keep commit scope focused and aligned with the logged work.
 
 ## Build, Test, and Development Commands
 - `npm install`: install dependencies.

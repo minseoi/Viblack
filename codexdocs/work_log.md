@@ -693,3 +693,23 @@
 - 검증:
   - `npm run check` 통과
   - `npm run build` 통과
+
+### 47) 문서 정리: 기획/로그 경로를 `codexdocs`로 통일 + AGENTS 규칙 반영
+- 사용자 요청:
+  - `AGENTS.md`에 `codexdocs` 기반 문서 위치와 작업 방식 명시
+  - `work_log.md`를 `codexdocs`로 이동
+  - `.gitignore`의 `codexdocs/` 추가는 취소
+  - 직전 커밋 내용까지 포함해 한 커밋으로 재구성
+- 조치:
+  - `AGENTS.md`
+    - 기획 문서 경로를 `codexdocs/Idea.md`, `codexdocs/idea_plan.md`, `codexdocs/work_log.md`로 명시
+    - `Agent Workflow Rules` 추가:
+      - 구현 전 `codexdocs` 확인
+      - 작업 중 `codexdocs/work_log.md` 상시 기록
+      - 커밋 전 `npm run check`, `npm run build` 수행
+  - 파일 이동:
+    - `work_log.md` -> `codexdocs/work_log.md`
+    - (기존 이동 포함) `Idea.md` -> `codexdocs/Idea.md`
+    - (기존 이동 포함) `idea_plan.md` -> `codexdocs/idea_plan.md`
+  - `.gitignore`:
+    - `codexdocs/` ignore 규칙 제거
