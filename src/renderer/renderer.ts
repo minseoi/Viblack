@@ -4,6 +4,7 @@ interface Agent {
   id: string;
   name: string;
   role: string;
+  roleProfile?: string | null;
   systemPrompt: string;
   sessionId: string | null;
 }
@@ -11,6 +12,7 @@ interface Agent {
 interface ChatMessage {
   id: number;
   sender: SenderType;
+  senderLabel?: string;
   content: string;
   createdAt: string;
 }
@@ -19,7 +21,22 @@ interface Channel {
   id: string;
   name: string;
   description: string;
-  memberIds: string[];
+  archivedAt: string | null;
+  createdAt: string;
+}
+
+interface ChannelMemberResponse {
+  channel: Channel;
+  members: Agent[];
+}
+
+interface ChannelApiMessage {
+  id: number;
+  channelId: string;
+  senderType: SenderType;
+  senderId: string | null;
+  content: string;
+  messageKind: "request" | "progress" | "result" | "remention" | "general";
   createdAt: string;
 }
 
@@ -29,6 +46,7 @@ let activeChannelId: string | null = null;
 let renderedMessages: ChatMessage[] = [];
 let agents: Agent[] = [];
 let channels: Channel[] = [];
+let activeChannelMembers: Agent[] = [];
 let codexReady = false;
 let openMemberMenuAgentId: string | null = null;
 let openChannelMenuChannelId: string | null = null;
@@ -299,20 +317,19 @@ function updateChannelMembersButton(): void {
   }
 }
 
-function generateChannelId(name: string): string {
-  const normalized = name
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  const base = normalized || "channel";
-  let id = base;
-  let index = 2;
-  while (channels.some((channel) => channel.id === id)) {
-    id = `${base}-${index}`;
-    index += 1;
+async function refreshChannels(preferredChannelId?: string | null): Promise<void> {
+  const data = await fetchJson<{ channels: Channel[] }>(`${backendBaseUrl}/api/channels`);
+  channels = data.channels;
+
+  const preferred = preferredChannelId ?? activeChannelId;
+  if (preferred && channels.some((channel) => channel.id === preferred)) {
+    activeChannelId = preferred;
+  } else if (activeChannelId && channels.length === 0) {
+    activeChannelId = null;
   }
-  return id;
+
+  renderChannelList();
+  updateChannelMembersButton();
 }
 
 function normalizeSearchKeyword(value: string): string {
@@ -325,6 +342,32 @@ function matchesAgentSearch(agent: Agent, keyword: string): boolean {
   }
   const target = `${agent.name} ${agent.role}`.toLowerCase();
   return target.includes(keyword);
+}
+
+async function refreshActiveChannelMembers(): Promise<void> {
+  if (!activeChannelId) {
+    activeChannelMembers = [];
+    return;
+  }
+
+  const data = await fetchJson<ChannelMemberResponse>(
+    `${backendBaseUrl}/api/channels/${activeChannelId}/members`,
+  );
+  activeChannelMembers = data.members;
+}
+
+function mapChannelMessagesToChatMessages(
+  messages: ChannelApiMessage[],
+  members: Agent[],
+): ChatMessage[] {
+  const memberNameById = new Map<string, string>(members.map((member) => [member.id, member.name]));
+  return messages.map((message) => ({
+    id: message.id,
+    sender: message.senderType,
+    senderLabel: message.senderId ? memberNameById.get(message.senderId) : undefined,
+    content: message.content,
+    createdAt: message.createdAt,
+  }));
 }
 
 function renderChannelList(): void {
@@ -370,14 +413,11 @@ function renderChannelList(): void {
     item.addEventListener("click", () => {
       closeChannelMenu();
       activeChannelId = channel.id;
+      activeAgentId = null;
       renderChannelList();
       renderMemberList();
       updateChannelMembersButton();
-
-      setHeader(`# ${channel.name}`, channel.description);
-      setStatus("Channel selected");
-      setComposerEnabled(false, "채널 대화 기능은 준비 중입니다.");
-      renderMessages([]);
+      void refreshMessages();
     });
     list.appendChild(item);
   }
@@ -405,7 +445,9 @@ function renderMessages(messages: ChatMessage[], agentName = "Agent"): void {
     const sender = document.createElement("div");
     sender.className = "msg-sender";
     sender.textContent =
-      message.sender === "user" ? "You" : message.sender === "agent" ? agentName : "System";
+      message.sender === "user"
+        ? "You"
+        : message.senderLabel ?? (message.sender === "agent" ? agentName : "System");
 
     const body = document.createElement("div");
     body.className = "msg-content";
@@ -669,7 +711,7 @@ function renderMemberList(): void {
   }
 
   if (activeChannelId) {
-    setComposerEnabled(false, "채널 대화 기능은 준비 중입니다.");
+    setComposerEnabled(true);
   } else {
     setComposerEnabled(activeAgentId !== null);
   }
@@ -839,10 +881,7 @@ function renderChannelMembersModalContent(): void {
   list.innerHTML = "";
   const keyword = normalizeSearchKeyword(searchInput?.value ?? "");
 
-  const members = channel.memberIds
-    .map((id) => agents.find((agent) => agent.id === id))
-    .filter((agent): agent is Agent => Boolean(agent))
-    .filter((agent) => matchesAgentSearch(agent, keyword));
+  const members = activeChannelMembers.filter((agent) => matchesAgentSearch(agent, keyword));
 
   if (members.length === 0) {
     const empty = document.createElement("div");
@@ -885,7 +924,7 @@ function renderChannelMembersModalContent(): void {
   }
 }
 
-function openChannelMembersModal(): void {
+async function openChannelMembersModal(): Promise<void> {
   const modal = document.getElementById("channel-members-modal") as HTMLDialogElement | null;
   const searchInput = document.getElementById("channel-members-search-input") as HTMLInputElement | null;
   const channel = getChannelById(activeChannelId);
@@ -893,6 +932,7 @@ function openChannelMembersModal(): void {
     return;
   }
 
+  await refreshActiveChannelMembers();
   if (searchInput) {
     searchInput.value = "";
   }
@@ -925,10 +965,11 @@ function renderChannelMemberAddList(): void {
 
   const keyword = normalizeSearchKeyword(searchInput?.value ?? "");
   const visibleAgents = agents.filter((agent) => matchesAgentSearch(agent, keyword));
+  const activeChannelMemberIds = new Set(activeChannelMembers.map((member) => member.id));
 
   for (const selectedId of Array.from(selectedChannelMemberAddIds)) {
     const stillSelectable = agents.some(
-      (agent) => agent.id === selectedId && !channel.memberIds.includes(agent.id),
+      (agent) => agent.id === selectedId && !activeChannelMemberIds.has(agent.id),
     );
     if (!stillSelectable) {
       selectedChannelMemberAddIds.delete(selectedId);
@@ -947,7 +988,7 @@ function renderChannelMemberAddList(): void {
   }
 
   for (const agent of visibleAgents) {
-    const alreadyAdded = channel.memberIds.includes(agent.id);
+    const alreadyAdded = activeChannelMemberIds.has(agent.id);
     const isSelected = selectedChannelMemberAddIds.has(agent.id);
 
     const item = document.createElement("div");
@@ -992,7 +1033,7 @@ function renderChannelMemberAddList(): void {
     selectedChannelMemberAddIds.size > 0 ? `${selectedChannelMemberAddIds.size}명 추가` : "추가";
 }
 
-function openChannelMemberAddModal(): void {
+async function openChannelMemberAddModal(): Promise<void> {
   const modal = document.getElementById("channel-member-add-modal") as HTMLDialogElement | null;
   const searchInput = document.getElementById("channel-member-add-search-input") as HTMLInputElement | null;
   const channel = getChannelById(activeChannelId);
@@ -1000,6 +1041,7 @@ function openChannelMemberAddModal(): void {
     return;
   }
 
+  await refreshActiveChannelMembers();
   selectedChannelMemberAddIds.clear();
   searchInput.value = "";
   renderChannelMemberAddList();
@@ -1021,7 +1063,7 @@ function closeChannelMemberAddModal(): void {
   restoreInputFocus();
 }
 
-function saveChannel(channelName: string, channelDescription: string): void {
+async function saveChannel(channelName: string, channelDescription: string): Promise<void> {
   const name = channelName.trim();
   const description = channelDescription.trim();
   if (!name || !description) {
@@ -1029,88 +1071,110 @@ function saveChannel(channelName: string, channelDescription: string): void {
     return;
   }
 
-  if (channelFormMode === "edit" && editingChannelId) {
-    const target = channels.find((channel) => channel.id === editingChannelId);
-    if (!target) {
-      showWarning("수정할 채널을 찾지 못했습니다.");
-      return;
+  try {
+    if (channelFormMode === "edit" && editingChannelId) {
+      await fetchJson<{ channel: Channel }>(`${backendBaseUrl}/api/channels/${editingChannelId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, description }),
+      });
+      await refreshChannels(editingChannelId);
+      if (activeChannelId === editingChannelId) {
+        const updated = getChannelById(editingChannelId);
+        setHeader(updated ? `# ${updated.name}` : "채널", updated?.description ?? "");
+      }
+    } else {
+      const created = await fetchJson<{ channel: Channel }>(`${backendBaseUrl}/api/channels`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, description }),
+      });
+      activeChannelId = created.channel.id;
+      activeAgentId = null;
+      await refreshChannels(created.channel.id);
+      await refreshMessages();
     }
-    const updated = { ...target, name, description };
-    channels = channels.map((channel) => (channel.id === updated.id ? updated : channel));
-    if (activeChannelId === updated.id) {
-      setHeader(`# ${updated.name}`, updated.description);
-    }
-    renderChannelList();
-    closeChannelModal();
-    return;
-  }
 
-  const channel: Channel = {
-    id: generateChannelId(name),
-    name,
-    description,
-    memberIds: [],
-    createdAt: new Date().toISOString(),
-  };
-  channels = [...channels, channel].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  activeChannelId = channel.id;
-  renderChannelList();
-  renderMemberList();
-  updateChannelMembersButton();
-  setHeader(`# ${channel.name}`, channel.description);
-  setStatus("Channel selected");
-  setComposerEnabled(false, "채널 대화 기능은 준비 중입니다.");
-  renderMessages([]);
-  closeChannelModal();
+    closeChannelModal();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "unknown error";
+    showWarning(`채널 저장 실패: ${message}`);
+    setStatus(`Error: ${message}`);
+  }
 }
 
-function addSelectedMembersToActiveChannel(memberIds: string[]): void {
+async function addSelectedMembersToActiveChannel(memberIds: string[]): Promise<void> {
   const channel = getChannelById(activeChannelId);
   if (!channel) {
     return;
   }
 
-  const toAdd = memberIds.filter(
-    (memberId) => memberId && !channel.memberIds.includes(memberId),
-  );
+  const activeChannelMemberIds = new Set(activeChannelMembers.map((member) => member.id));
+  const toAdd = memberIds.filter((memberId) => memberId && !activeChannelMemberIds.has(memberId));
   if (toAdd.length === 0) {
     return;
   }
 
-  channel.memberIds = [...channel.memberIds, ...toAdd];
-  channels = channels.map((item) => (item.id === channel.id ? channel : item));
-  closeChannelMemberAddModal();
-  openChannelMembersModal();
+  try {
+    await Promise.all(
+      toAdd.map((memberId) =>
+        fetchJson<{ ok: boolean }>(`${backendBaseUrl}/api/channels/${channel.id}/members`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ agentId: memberId }),
+        }),
+      ),
+    );
+    await refreshActiveChannelMembers();
+    closeChannelMemberAddModal();
+    await openChannelMembersModal();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "unknown error";
+    showWarning(`채널 멤버 추가 실패: ${message}`);
+    setStatus(`Error: ${message}`);
+  }
 }
 
-function removeMemberFromActiveChannel(memberId: string): void {
+async function removeMemberFromActiveChannel(memberId: string): Promise<void> {
   const channel = getChannelById(activeChannelId);
   if (!channel) {
     return;
   }
 
-  channel.memberIds = channel.memberIds.filter((id) => id !== memberId);
-  channels = channels.map((item) => (item.id === channel.id ? channel : item));
-  closeChannelMemberMenu();
-  renderChannelMembersModalContent();
+  try {
+    await fetchJson<{ ok: boolean }>(
+      `${backendBaseUrl}/api/channels/${channel.id}/members/${memberId}`,
+      { method: "DELETE" },
+    );
+    await refreshActiveChannelMembers();
+    closeChannelMemberMenu();
+    renderChannelMembersModalContent();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "unknown error";
+    showWarning(`채널 멤버 제거 실패: ${message}`);
+    setStatus(`Error: ${message}`);
+  }
 }
 
-function deleteChannel(channelId: string): void {
-  const target = channels.find((channel) => channel.id === channelId);
-  if (!target) {
-    return;
+async function deleteChannel(channelId: string): Promise<void> {
+  try {
+    await fetchJson<{ ok: boolean }>(`${backendBaseUrl}/api/channels/${channelId}`, {
+      method: "DELETE",
+    });
+    const nextChannelId = activeChannelId === channelId ? null : activeChannelId;
+    if (activeChannelId === channelId) {
+      activeChannelId = null;
+      activeChannelMembers = [];
+    }
+    closeChannelMenu();
+    await refreshChannels(nextChannelId);
+    renderMemberList();
+    await refreshMessages();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "unknown error";
+    showWarning(`채널 제거 실패: ${message}`);
+    setStatus(`Error: ${message}`);
   }
-
-  channels = channels.filter((channel) => channel.id !== channelId);
-  if (activeChannelId === channelId) {
-    activeChannelId = null;
-  }
-
-  closeChannelMenu();
-  renderChannelList();
-  renderMemberList();
-  updateChannelMembersButton();
-  void refreshMessages();
 }
 
 async function refreshAgents(preferredAgentId?: string | null): Promise<void> {
@@ -1128,16 +1192,15 @@ async function refreshAgents(preferredAgentId?: string | null): Promise<void> {
     }
   }
 
-  channels = channels.map((channel) => ({
-    ...channel,
-    memberIds: channel.memberIds.filter((memberId) => validIds.has(memberId)),
-  }));
-
-  const preferred = preferredAgentId ?? activeAgentId;
-  if (preferred && agents.some((agent) => agent.id === preferred)) {
-    activeAgentId = preferred;
+  if (activeChannelId) {
+    activeAgentId = null;
   } else {
-    activeAgentId = agents.length > 0 ? agents[0].id : null;
+    const preferred = preferredAgentId ?? activeAgentId;
+    if (preferred && agents.some((agent) => agent.id === preferred)) {
+      activeAgentId = preferred;
+    } else {
+      activeAgentId = agents.length > 0 ? agents[0].id : null;
+    }
   }
 
   renderChannelList();
@@ -1171,11 +1234,17 @@ async function refreshMessages(): Promise<void> {
   updateChannelMembersButton();
 
   if (activeChannelId) {
-    const channel = getChannelById(activeChannelId);
-    setHeader(channel ? `# ${channel.name}` : "채널", channel?.description ?? "");
-    setStatus("Channel selected");
-    setComposerEnabled(false, "채널 대화 기능은 준비 중입니다.");
-    renderMessages([]);
+    const data = await fetchJson<{
+      channel: Channel;
+      members: Agent[];
+      messages: ChannelApiMessage[];
+      mentionsByMessage: Record<number, Array<{ agentId: string; mentionName: string }>>;
+    }>(`${backendBaseUrl}/api/channels/${activeChannelId}/messages`);
+    activeChannelMembers = data.members;
+    setHeader(`# ${data.channel.name}`, data.channel.description);
+    setStatus(codexReady ? "Ready" : "Codex unavailable");
+    setComposerEnabled(true);
+    renderMessages(mapChannelMessagesToChatMessages(data.messages, data.members));
     return;
   }
 
@@ -1356,7 +1425,7 @@ async function runPendingAction(): Promise<void> {
     return;
   }
   if (action.target === "channel" && action.type === "delete") {
-    deleteChannel(action.channelId);
+    await deleteChannel(action.channelId);
   }
 }
 
@@ -1414,7 +1483,7 @@ function initMemberCrudUi(): void {
     if (!channelNameInput || !channelDescInput) {
       return;
     }
-    saveChannel(channelNameInput.value, channelDescInput.value);
+    void saveChannel(channelNameInput.value, channelDescInput.value);
   });
 
   channelCancelBtn?.addEventListener("click", () => {
@@ -1426,7 +1495,7 @@ function initMemberCrudUi(): void {
   });
 
   channelMembersBtn?.addEventListener("click", () => {
-    openChannelMembersModal();
+    void openChannelMembersModal();
   });
 
   channelMenuEditBtn?.addEventListener("click", () => {
@@ -1463,12 +1532,12 @@ function initMemberCrudUi(): void {
     if (!openChannelMemberMenuMemberId) {
       return;
     }
-    removeMemberFromActiveChannel(openChannelMemberMenuMemberId);
+    void removeMemberFromActiveChannel(openChannelMemberMenuMemberId);
   });
 
   channelMembersAddBtn?.addEventListener("click", () => {
     closeChannelMembersModal();
-    openChannelMemberAddModal();
+    void openChannelMemberAddModal();
   });
 
   channelMembersCloseBtn?.addEventListener("click", () => {
@@ -1485,7 +1554,7 @@ function initMemberCrudUi(): void {
     if (selectedIds.length === 0) {
       return;
     }
-    addSelectedMembersToActiveChannel(selectedIds);
+    void addSelectedMembersToActiveChannel(selectedIds);
   });
 
   channelMemberAddSearchInput?.addEventListener("input", () => {
@@ -1645,22 +1714,59 @@ async function init(): Promise<void> {
   }
 
   await refreshAgents();
+  await refreshChannels();
   await refreshMessages();
 }
 
 async function sendMessage(): Promise<void> {
   const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
   const button = document.getElementById("send-btn") as HTMLButtonElement | null;
-  if (activeChannelId) {
-    return;
-  }
-  const targetAgentId = activeAgentId;
-  if (!input || !button || !targetAgentId) {
+  if (!input || !button) {
     return;
   }
 
   const content = input.value.trim();
   if (!content) {
+    return;
+  }
+
+  if (activeChannelId) {
+    const channelId = activeChannelId;
+    input.value = "";
+    button.disabled = true;
+    setStatus("Channel is working...");
+
+    const optimisticUser: ChatMessage = {
+      id: Date.now(),
+      sender: "user",
+      content,
+      createdAt: new Date().toISOString(),
+    };
+    renderMessages([...renderedMessages, optimisticUser]);
+
+    try {
+      await fetchJson(`${backendBaseUrl}/api/channels/${channelId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, messageKind: "general" }),
+      });
+      await refreshMessages();
+      setStatus(codexReady ? "Ready" : "Codex unavailable");
+      focusInput();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "unknown error";
+      setStatus(`Error: ${message}`);
+      showWarning(`채널 메시지 전송 실패: ${message}`);
+      await refreshMessages();
+      focusInput();
+    } finally {
+      button.disabled = false;
+    }
+    return;
+  }
+
+  const targetAgentId = activeAgentId;
+  if (!targetAgentId) {
     return;
   }
 

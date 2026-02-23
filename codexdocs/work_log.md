@@ -818,3 +818,6 @@
 - 57) Phase 1 진행: src/backend/db.ts 에 channels/channel_members/channel_messages/channel_message_mentions 스키마 및 Repository 메서드 추가.
 - 58) Phase 2 진행: src/backend/server.ts 에 채널 CRUD/멤버/메시지 API 추가. 
 - 58) Phase 2 진행: @표시명 멘션 파싱, 무멘션 저장-only, 멘션 대상만 withAgentLock 실행 라우팅 추가.
+- 59) Phase 3 진행: renderer 채널 상태를 API 기반으로 전환(refreshChannels/refreshMessages channel branch). 
+- 59) Phase 3 진행: 채널 멤버 관리 및 채널 메시지 전송 경로를 backend /api/channels/* 로 연결.
+- 59) Phase 3 검증: npm run check, npm run build, npm run test:e2e(권한 상승) 통과.
