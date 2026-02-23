@@ -15,9 +15,12 @@
 ## Agent Workflow Rules
 - Always check relevant context in `codexdocs/` before implementation.
 - While working, continuously append meaningful progress to `codexdocs/work_log.md` (not only at the end).
+- For every newly added feature or behavior change, update/add Playwright E2E coverage in `tests/e2e/*.spec.ts` in the same task.
+- Do not treat a task as complete until `npm run verify` passes successfully.
 - Before commit, run:
   1. `npm run check`
   2. `npm run build`
+  3. `npm run verify`
 - Keep commit scope focused and aligned with the logged work.
 
 ## Build, Test, and Development Commands
@@ -26,10 +29,11 @@
 - `npm run build`: compile TS to `dist/`.
 - `npm run start`: build then launch Electron app.
 - `npm run test:e2e`: build then run Playwright Electron E2E tests.
+- `npm run verify`: run `check + build + test:e2e` as the post-task regression gate.
 
 Example:
 ```bash
-npm run check && npm run build
+npm run verify
 npm run start
 ```
 
@@ -47,7 +51,11 @@ npm run start
 - Minimum quality gate for changes:
   1. `npm run check`
   2. `npm run build`
-  3. Manual smoke test via `npm run start` (send a message, verify response flow).
+  3. `npm run verify`
+  4. Manual smoke test via `npm run start` (send a message, verify response flow).
+- Feature-to-test sync rule:
+  - If a feature is added/changed, the related E2E scenario must be added/updated in the same PR/commit scope.
+  - If no test update is needed, leave an explicit reason in the PR description.
 - Playwright E2E run:
   1. `npm run test:e2e`
 - Playwright files:

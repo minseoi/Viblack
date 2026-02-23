@@ -6,7 +6,8 @@
     "build": "tsc",
     "check": "tsc --noEmit",
     "start": "npm run build && electron .",
-    "test:e2e": "npm run build && playwright test"
+    "test:e2e": "npm run build && playwright test",
+    "verify": "npm run check && npm run build && npm run test:e2e"
   },
   "keywords": [],
   "author": "",

@@ -10,6 +10,17 @@ let backendBaseUrl = "";
 let bootCodexStatus: CodexStatus = { ok: false, error: "not initialized" };
 let shutdownInProgress = false;
 
+function resolveDbPath(workspaceDir: string): string {
+  const fromEnv = process.env.VIBLACK_DB_PATH?.trim();
+  if (!fromEnv) {
+    return path.join(app.getPath("userData"), "viblack.sqlite");
+  }
+  if (path.isAbsolute(fromEnv)) {
+    return fromEnv;
+  }
+  return path.join(workspaceDir, fromEnv);
+}
+
 function resolveWindowIconPath(): string | undefined {
   const iconsDir = path.join(app.getAppPath(), "src", "assets", "icons");
   const iconFile = process.platform === "darwin" ? "icon.icns" : "icon.ico";
@@ -38,7 +49,7 @@ function createWindow(): BrowserWindow {
 
 async function boot(): Promise<void> {
   const workspaceDir = app.getAppPath();
-  const dbPath = path.join(app.getPath("userData"), "viblack.sqlite");
+  const dbPath = resolveDbPath(workspaceDir);
   backendServer = await startServer({ dbPath, workspaceDir });
   backendBaseUrl = `http://127.0.0.1:${backendServer.port}`;
 
