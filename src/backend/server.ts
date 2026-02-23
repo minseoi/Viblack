@@ -1,7 +1,8 @@
 import http from "node:http";
 import express from "express";
 import { checkCodexAvailability, runCodex } from "./codex";
-import { DuplicateAgentNameError, ViblackDb } from "./db";
+import { DuplicateAgentNameError, DuplicateChannelNameError, ViblackDb } from "./db";
+import type { Agent, ChannelMessageKind } from "./types";
 
 interface StartServerOptions {
   dbPath: string;
@@ -37,6 +38,69 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
 
   const sanitizeText = (value: unknown): string =>
     typeof value === "string" ? value.trim() : "";
+
+  const allowedChannelMessageKinds: ReadonlySet<ChannelMessageKind> = new Set([
+    "request",
+    "progress",
+    "result",
+    "remention",
+    "general",
+  ]);
+
+  const sanitizeChannelMessageKind = (value: unknown): ChannelMessageKind => {
+    if (typeof value !== "string") {
+      return "general";
+    }
+    return allowedChannelMessageKinds.has(value as ChannelMessageKind)
+      ? (value as ChannelMessageKind)
+      : "general";
+  };
+
+  const isMentionBoundaryChar = (char: string | undefined): boolean =>
+    !char || /[\s.,!?;:()[\]{}<>"'`]/.test(char);
+
+  const extractMentionedAgents = (
+    content: string,
+    candidateAgents: Agent[],
+  ): Array<{ agentId: string; mentionName: string }> => {
+    const normalizedContent = content.toLowerCase();
+    const candidates = [...candidateAgents]
+      .map((agent) => ({ id: agent.id, name: agent.name.trim() }))
+      .filter((agent) => agent.name.length > 0)
+      .sort((a, b) => b.name.length - a.name.length);
+
+    const seenAgentIds = new Set<string>();
+    const mentions: Array<{ agentId: string; mentionName: string }> = [];
+
+    for (const candidate of candidates) {
+      const token = `@${candidate.name.toLowerCase()}`;
+      let index = normalizedContent.indexOf(token);
+      while (index >= 0) {
+        const before = index > 0 ? normalizedContent[index - 1] : undefined;
+        const afterIndex = index + token.length;
+        const after =
+          afterIndex < normalizedContent.length ? normalizedContent[afterIndex] : undefined;
+
+        if (isMentionBoundaryChar(before) && isMentionBoundaryChar(after)) {
+          if (!seenAgentIds.has(candidate.id)) {
+            seenAgentIds.add(candidate.id);
+            mentions.push({ agentId: candidate.id, mentionName: candidate.name });
+          }
+          break;
+        }
+        index = normalizedContent.indexOf(token, index + 1);
+      }
+    }
+    return mentions;
+  };
+
+  const buildChannelPrompt = (channelName: string, rawMessage: string): string =>
+    [
+      `채널 이름: #${channelName}`,
+      "아래 채널 메시지에 응답하세요. 필요하면 가정하지 말고 확인 질문을 포함하세요.",
+      "",
+      rawMessage,
+    ].join("\n");
 
   const unwrapCodeFence = (value: string): string => {
     const trimmed = value.trim();
@@ -115,6 +179,249 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
   app.get("/api/agents", (_req, res) => {
     const agents = db.listAgents();
     res.json({ agents });
+  });
+
+  app.get("/api/channels", (_req, res) => {
+    const channels = db.listChannels(false);
+    res.json({ channels });
+  });
+
+  app.post("/api/channels", (req, res) => {
+    const name = sanitizeText(req.body?.name);
+    const description = sanitizeText(req.body?.description);
+    if (!name || !description) {
+      res.status(400).json({ error: "name and description are required" });
+      return;
+    }
+
+    try {
+      const channel = db.createChannel(name, description);
+      res.status(201).json({ channel });
+    } catch (err) {
+      if (err instanceof DuplicateChannelNameError) {
+        res.status(409).json({ error: "channel name already exists" });
+        return;
+      }
+      const message = err instanceof Error ? err.message : "unknown error";
+      res.status(500).json({ error: message });
+    }
+  });
+
+  app.patch("/api/channels/:channelId", (req, res) => {
+    const { channelId } = req.params;
+    const name = sanitizeText(req.body?.name);
+    const description = sanitizeText(req.body?.description);
+    if (!name || !description) {
+      res.status(400).json({ error: "name and description are required" });
+      return;
+    }
+
+    try {
+      const channel = db.updateChannel(channelId, name, description);
+      if (!channel) {
+        res.status(404).json({ error: "channel not found" });
+        return;
+      }
+      res.json({ channel });
+    } catch (err) {
+      if (err instanceof DuplicateChannelNameError) {
+        res.status(409).json({ error: "channel name already exists" });
+        return;
+      }
+      const message = err instanceof Error ? err.message : "unknown error";
+      res.status(500).json({ error: message });
+    }
+  });
+
+  app.delete("/api/channels/:channelId", (req, res) => {
+    const { channelId } = req.params;
+    const archived = db.archiveChannel(channelId);
+    if (!archived) {
+      res.status(404).json({ error: "channel not found" });
+      return;
+    }
+    res.json({ ok: true });
+  });
+
+  app.get("/api/channels/:channelId/members", (req, res) => {
+    const { channelId } = req.params;
+    const channel = db.getChannel(channelId);
+    if (!channel) {
+      res.status(404).json({ error: "channel not found" });
+      return;
+    }
+    const members = db.listChannelMemberAgents(channelId);
+    res.json({ channel, members });
+  });
+
+  app.post("/api/channels/:channelId/members", (req, res) => {
+    const { channelId } = req.params;
+    const agentId = sanitizeText(req.body?.agentId);
+    if (!agentId) {
+      res.status(400).json({ error: "agentId is required" });
+      return;
+    }
+
+    const channel = db.getChannel(channelId);
+    if (!channel) {
+      res.status(404).json({ error: "channel not found" });
+      return;
+    }
+
+    const agent = db.getAgent(agentId);
+    if (!agent) {
+      res.status(404).json({ error: "agent not found" });
+      return;
+    }
+
+    const member = db.addChannelMember(channelId, agentId);
+    if (!member) {
+      res.status(500).json({ error: "failed to add channel member" });
+      return;
+    }
+    const members = db.listChannelMemberAgents(channelId);
+    res.status(201).json({ member, members });
+  });
+
+  app.delete("/api/channels/:channelId/members/:agentId", (req, res) => {
+    const { channelId, agentId } = req.params;
+    const channel = db.getChannel(channelId);
+    if (!channel) {
+      res.status(404).json({ error: "channel not found" });
+      return;
+    }
+    const removed = db.removeChannelMember(channelId, agentId);
+    if (!removed) {
+      res.status(404).json({ error: "channel member not found" });
+      return;
+    }
+    res.json({ ok: true });
+  });
+
+  app.get("/api/channels/:channelId/messages", (req, res) => {
+    const { channelId } = req.params;
+    const channel = db.getChannel(channelId);
+    if (!channel) {
+      res.status(404).json({ error: "channel not found" });
+      return;
+    }
+
+    const members = db.listChannelMemberAgents(channelId);
+    const messages = db.listChannelMessages(channelId);
+    const mentionsByMessage: Record<number, Array<{ agentId: string; mentionName: string }>> = {};
+    for (const message of messages) {
+      mentionsByMessage[message.id] = db
+        .listChannelMessageMentions(message.id)
+        .map((mention) => ({ agentId: mention.agentId, mentionName: mention.mentionName }));
+    }
+    res.json({ channel, members, messages, mentionsByMessage });
+  });
+
+  app.post("/api/channels/:channelId/messages", async (req, res) => {
+    const { channelId } = req.params;
+    const content = sanitizeText(req.body?.content);
+    const messageKind = sanitizeChannelMessageKind(req.body?.messageKind);
+    if (!content) {
+      res.status(400).json({ error: "content is required" });
+      return;
+    }
+
+    const channel = db.getChannel(channelId);
+    if (!channel) {
+      res.status(404).json({ error: "channel not found" });
+      return;
+    }
+    if (channel.archivedAt) {
+      res.status(409).json({ error: "channel is archived" });
+      return;
+    }
+
+    const members = db.listChannelMemberAgents(channelId);
+    const userMessage = db.appendChannelMessage(channelId, "user", null, content, messageKind);
+    const mentions = extractMentionedAgents(content, members);
+    const mentionRecords = db.addChannelMessageMentions(userMessage.id, mentions);
+
+    if (mentions.length === 0) {
+      res.json({
+        ok: true,
+        executionMode: "log_only",
+        message: userMessage,
+        mentions: mentionRecords,
+        results: [],
+      });
+      return;
+    }
+
+    const results = await Promise.all(
+      mentions.map(async (mention) => {
+        const targetAgent = members.find((member) => member.id === mention.agentId);
+        if (!targetAgent) {
+          const missingReply = `멘션 대상 에이전트를 찾지 못했습니다: @${mention.mentionName}`;
+          const systemMessage = db.appendChannelMessage(
+            channelId,
+            "system",
+            null,
+            missingReply,
+            "result",
+          );
+          return {
+            agentId: mention.agentId,
+            agentName: mention.mentionName,
+            ok: false,
+            reply: missingReply,
+            message: systemMessage,
+          };
+        }
+
+        return withAgentLock(targetAgent.id, async () => {
+          const codexResult = await runCodex({
+            prompt: buildChannelPrompt(channel.name, content),
+            systemPrompt: targetAgent.systemPrompt,
+            sessionId: targetAgent.sessionId,
+            cwd: options.workspaceDir,
+          });
+
+          if (codexResult.sessionId && codexResult.sessionId !== targetAgent.sessionId) {
+            db.updateAgentSession(targetAgent.id, codexResult.sessionId);
+          }
+
+          const replyText = codexResult.ok
+            ? codexResult.reply
+            : [
+                "Codex 실행 실패:",
+                codexResult.error ?? "unknown error",
+                codexResult.reply ? `partial: ${codexResult.reply}` : "",
+              ]
+                .filter((line) => line.length > 0)
+                .join("\n");
+
+          const message = db.appendChannelMessage(
+            channelId,
+            codexResult.ok ? "agent" : "system",
+            codexResult.ok ? targetAgent.id : null,
+            replyText,
+            "result",
+          );
+
+          return {
+            agentId: targetAgent.id,
+            agentName: targetAgent.name,
+            ok: codexResult.ok,
+            reply: replyText,
+            sessionId: codexResult.sessionId,
+            message,
+          };
+        });
+      }),
+    );
+
+    res.json({
+      ok: true,
+      executionMode: "mention_only",
+      message: userMessage,
+      mentions: mentionRecords,
+      results,
+    });
   });
 
   app.post("/api/agents", (req, res) => {
