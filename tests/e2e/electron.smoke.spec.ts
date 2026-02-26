@@ -221,13 +221,31 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     ).toHaveCount(1);
     await expect(page.locator("#messages .msg-agent .msg-content")).toContainText("테스트 응답");
 
-    const beforeRementionCount = await channelMessages.count();
     const alphaSenderItems = page.locator("#messages .msg-agent .msg-sender", {
       hasText: memberAlphaEdited,
     });
     const betaSenderItems = page.locator("#messages .msg-agent .msg-sender", {
       hasText: memberBeta,
     });
+
+    const beforeDelayedMentionCount = await channelMessages.count();
+    const beforeDelayedAlphaSenderCount = await alphaSenderItems.count();
+    await page.fill("#chat-input", `@{${memberAlphaEdited}} FORCE_DELAY_MS:1800 duplicate-guard`);
+    await page.click("#send-btn");
+
+    // While the mention execution is still delayed, user message should not be rendered twice.
+    await expect(alphaSenderItems).toHaveCount(beforeDelayedAlphaSenderCount, { timeout: 700 });
+    await expect(
+      page.locator("#messages .msg-user .msg-content", {
+        hasText: "FORCE_DELAY_MS:1800 duplicate-guard",
+      }),
+    ).toHaveCount(1, { timeout: 1200 });
+    await expect(channelMessages).toHaveCount(beforeDelayedMentionCount + 1, { timeout: 1200 });
+
+    await expect(alphaSenderItems).toHaveCount(beforeDelayedAlphaSenderCount + 1, { timeout: 7000 });
+    await expect(channelMessages).toHaveCount(beforeDelayedMentionCount + 2, { timeout: 7000 });
+
+    const beforeRementionCount = await channelMessages.count();
     const beforeAlphaSenderCount = await alphaSenderItems.count();
     const beforeBetaSenderCount = await betaSenderItems.count();
     await page.fill("#chat-input", `@{${memberAlphaEdited}} FORCE_MENTION_NAME:${memberBeta}`);

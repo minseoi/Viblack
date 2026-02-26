@@ -4,12 +4,19 @@ import os from "node:os";
 import path from "node:path";
 import type { CodexStatus } from "./types";
 
+export interface CodexStreamEvent {
+  type: "progress" | "question" | "message" | "error";
+  content: string;
+  raw?: unknown;
+}
+
 interface CodexRunParams {
   prompt: string;
   systemPrompt: string;
   sessionId: string | null;
   cwd: string;
   timeoutMs?: number;
+  onStream?: (event: CodexStreamEvent) => void;
 }
 
 export interface CodexRunResult {
@@ -146,6 +153,32 @@ function buildPrompt(systemPrompt: string, userPrompt: string, hasSession: boole
   ].join("\n");
 }
 
+function isTerminalStreamEventType(type: string): boolean {
+  const normalized = type.toLowerCase();
+  return (
+    normalized.includes("completed") ||
+    normalized.endsWith(".done") ||
+    normalized === "response.done"
+  );
+}
+
+function classifyStreamEventType(type: string): "progress" | "question" | "message" | null {
+  const normalized = type.toLowerCase();
+  if (isTerminalStreamEventType(normalized)) {
+    return null;
+  }
+  if (normalized.includes("question") || normalized.includes("ask")) {
+    return "question";
+  }
+  if (normalized.includes("delta") || normalized.includes("progress")) {
+    return "progress";
+  }
+  if (normalized.includes("message") || normalized.includes("output_text")) {
+    return "message";
+  }
+  return null;
+}
+
 export async function checkCodexAvailability(cwd: string): Promise<CodexStatus> {
   const errors: string[] = [];
   for (const candidate of getCandidateCommands()) {
@@ -174,6 +207,7 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
   const args = params.sessionId
     ? [
         "exec",
+        "--full-auto",
         "-o",
         outputFilePath,
         "resume",
@@ -182,7 +216,7 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
         params.sessionId,
         "-",
       ]
-    : ["exec", "--skip-git-repo-check", "--json", "--output-last-message", outputFilePath, "-"];
+    : ["exec", "--full-auto", "--skip-git-repo-check", "--json", "-o", outputFilePath, "-"];
 
   return new Promise((resolve) => {
     let child: ChildProcess;
@@ -226,6 +260,14 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
         }
 
         if (type === "error") {
+          const errorParts = extractTextParts(event);
+          if (errorParts.length > 0 && params.onStream) {
+            params.onStream({
+              type: "error",
+              content: errorParts.join(" "),
+              raw: event,
+            });
+          }
           return;
         }
 
@@ -234,6 +276,17 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
           .filter((part) => part.length > 0);
 
         if (parts.length > 0) {
+          if (params.onStream) {
+            const eventType = classifyStreamEventType(type);
+            if (eventType) {
+              params.onStream({
+                type: eventType,
+                content: parts.join(" "),
+                raw: event,
+              });
+            }
+          }
+
           if (type.includes("delta")) {
             deltaParts.push(...parts);
           } else {

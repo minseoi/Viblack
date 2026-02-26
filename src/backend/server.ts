@@ -430,6 +430,18 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
             sessionId: targetAgent.sessionId,
             cwd: options.workspaceDir,
             timeoutMs: 120_000,
+            onStream: (event) => {
+              // Stream intermediate messages (progress, questions, etc) to channel
+              if (event.type === "progress" || event.type === "message" || event.type === "question") {
+                appendChannelMessageAndNotify(
+                  channelId,
+                  "agent",
+                  targetAgent.id,
+                  event.content,
+                  "progress",
+                );
+              }
+            },
           });
 
           if (codexResult.sessionId && codexResult.sessionId !== targetAgent.sessionId) {
@@ -713,6 +725,12 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
           systemPrompt: agent.systemPrompt,
           sessionId: agent.sessionId,
           cwd: options.workspaceDir,
+          onStream: (event) => {
+            // Stream intermediate messages (progress, questions, etc) to DM
+            if (event.type === "progress" || event.type === "message" || event.type === "question") {
+              db.appendMessage(agentId, "agent", event.content);
+            }
+          },
         });
 
         if (codexResult.sessionId && codexResult.sessionId !== agent.sessionId) {

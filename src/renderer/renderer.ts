@@ -424,6 +424,10 @@ function mergeChannelMessages(current: ChatMessage[], incoming: ChatMessage[]): 
   return Array.from(mergedById.values()).sort((a, b) => a.id - b.id);
 }
 
+function getPersistedChannelMessages(messages: ChatMessage[]): ChatMessage[] {
+  return messages.filter((message) => message.id > 0);
+}
+
 function createPendingChannelUserMessage(channelId: string, content: string): ChatMessage {
   const pending: PendingChannelUserMessage = {
     localId: nextLocalChannelMessageId,
@@ -1438,7 +1442,7 @@ async function syncActiveChannelMessageDelta(): Promise<void> {
 
       const incoming = mapChannelMessagesToChatMessages(data.messages, data.members);
       reconcilePendingChannelUserMessages(channelId, incoming);
-      const mergedServer = mergeChannelMessages(renderedMessages, incoming);
+      const mergedServer = mergeChannelMessages(getPersistedChannelMessages(renderedMessages), incoming);
       const pendingForRender = getPendingChannelUserMessagesForRender(channelId);
       renderMessages(mergeChannelMessages(mergedServer, pendingForRender));
       lastSeenChannelMessageId = Math.max(lastSeenChannelMessageId, getLastChannelMessageId(data.messages));
