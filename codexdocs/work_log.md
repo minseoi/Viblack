@@ -217,3 +217,142 @@
 - 조치:
   - `tests/e2e/electron.smoke.spec.ts`의 agent 응답 검증을 일반 locator + `toContainText`에서 `hasText` 필터 + count 단정으로 변경
   - 다중 agent 메시지 존재 시 strict mode 위반으로 깨지는 케이스 제거
+
+### 70) 기능 구현 착수: 멤버 시스템 프롬프트 v2 구조화
+- 사용자 요청 반영: 멤버 공통 시스템 프롬프트를 섹션형(정체성/실행/검증/안전/출력)으로 고도화 예정.
+- 적용 범위: `src/backend/server.ts`의 멤버 실행 프롬프트 조합 로직(DM/채널 공통).
+- 테스트 계획: E2E + fake-codex에 템플릿 구조 주입 검증 케이스 추가.
+### 71) 기능 구현: 멤버 시스템 프롬프트 v2 적용
+- `buildMemberExecutionSystemPrompt`를 섹션형 템플릿으로 개편:
+  - `[IDENTITY]`, `[CONTEXT]`, `[EXECUTION_RULES]`, `[VALIDATION_RULES]`, `[SAFETY_GATES]`, `[OUTPUT_FORMAT]`
+  - 사용자 프롬프트 슬롯 `[USER_DEFINED_MEMBER_PROMPT_BEGIN/END]` 유지
+- 사용자 프롬프트가 비어 있는 예외를 대비해 `(none)` fallback 추가.
+
+### 72) E2E 보강: 템플릿 섹션 주입 검증
+- `tests/e2e/fixtures/fake-codex.js`에 `FORCE_ASSERT_MEMBER_TEMPLATE` 검증 분기 추가.
+- `tests/e2e/electron.smoke.spec.ts`에 DM 단계에서 템플릿 섹션 주입 확인 시나리오 추가.
+### 73) 검증 실행 결과
+- `npm run check`: 통과
+- `npm run build`: 통과
+- `npm run verify`: 실패
+  - 실패 지점: Playwright Electron E2E 런치 단계
+  - 에러: `Process failed to launch!` (`tests/e2e/electron.smoke.spec.ts` 실행 시작 직후)
+
+### 74) 스트리밍 계약 정렬: agent_message 이벤트 기준 전환
+- 사용자 요청 반영:
+  - Codex 실행 인자를 `codex exec --full-auto --skip-git-repo-check --json <prompt>` 형태로 사용하고,
+  - 스트리밍 중간 메시지는 `type=agent_message`일 때만 멤버 메시지로 반영하도록 정렬.
+- `src/backend/server.ts` 조치:
+  - DM/채널 `onStream` append 조건을 `event.rawType` 기반 `agent_message` 판별로 변경.
+- `src/renderer/renderer.ts` 조치:
+  - DM 전송 중 주기적 메시지 동기화(polling) 추가로, 요청 완료 전 중간 메시지 노출되도록 보강.
+- `tests/e2e/fixtures/fake-codex.js` 조치:
+  - stdin 의존 경로를 유지하되, 기본은 CLI 인자에서 프롬프트를 파싱하도록 업데이트.
+  - `agent_message` 강제 스트림 및 최종 응답 제어 토큰(`FORCE_STREAM_AGENT_MESSAGE`, `FORCE_FINAL_REPLY`) 추가.
+- `tests/e2e/electron.smoke.spec.ts` 조치:
+  - DM에서 중간 `agent_message`가 최종 응답보다 먼저 렌더링되는 회귀 검증 시나리오 추가.
+
+### 75) 회귀 보정: 최종 응답 선택 우선순위 수정
+- 검증 중 발견:
+  - `agent_message` 중간 텍스트가 `response.completed` 최종 텍스트보다 긴 경우,
+  - `runCodex`가 중간 텍스트를 최종 reply로 채택해 최종 메시지 append가 누락됨.
+- 원인:
+  - `src/backend/codex.ts`에서 non-delta 텍스트를 단일 `fullParts`로만 합쳐 가장 긴 문자열을 선택하던 로직.
+- 조치:
+  - terminal 이벤트(`completed/.done/response.done`) 텍스트를 별도 버퍼(`terminalParts`)로 분리.
+  - 최종 reply 병합 순서를 `terminal > full > delta > stdout fallback`으로 재정렬.
+
+### 76) 최종 검증 결과
+- `npm run check`: 통과
+- `npm run build`: 통과
+- `npm run verify`: 통과
+  - Playwright E2E 1건 통과 (`tests/e2e/electron.smoke.spec.ts`)
+
+### 77) 실코덱스(E2E) 검증 경로 추가
+- 사용자 요청 반영:
+  - 테스트 시 fake-codex 외에 실제 `codex` 실행 경로도 검증할 수 있도록 별도 E2E 스모크 추가.
+- 추가 파일:
+  - `tests/e2e/electron.real-codex.spec.ts`
+- 실행 조건:
+  - `VIBLACK_E2E_REAL_CODEX=1` 일 때만 실행되도록 `test.skip` 가드 적용.
+  - Electron 환경변수에 `VIBLACK_CODEX_PATH=codex`를 주입해 실제 CLI를 사용.
+
+### 78) 버그 수정: "Codex 응답이 비어 있습니다" 오탐 제거
+- 사용자 이슈:
+  - 실제 codex 실행 시 응답이 없다고 표시되며, 실패 원인이 가려짐.
+- 원인 1 (`src/backend/codex.ts`):
+  - `turn.failed`류 이벤트가 발생해도 종료코드가 0인 케이스에서 성공으로 처리될 가능성 존재.
+- 조치 1:
+  - 스트림 이벤트 중 `*.failed`/`turn.failed`를 실패 이벤트로 수집.
+  - 실패 이벤트 발생 시 종료코드 0이어도 `ok=false`로 승격하고 에러 텍스트를 반환.
+- 원인 2 (`src/backend/server.ts`):
+  - `codexResult.ok=true`이지만 실질 답변(최종/스트림)이 비어 있을 때 agent fallback 문구를 성공 응답처럼 저장.
+- 조치 2:
+  - DM/채널 공통으로 "실제 렌더 가능한 답변 존재 여부"를 `executionOk`로 재평가.
+  - 비어 있으면 `Codex 실행 실패: empty response from codex`로 시스템 메시지 처리.
+
+### 79) 검증 결과
+- 기본 회귀:
+  - `npm run verify` 통과 (fake-codex 기반 스모크 1건 통과, real-codex spec은 기본 skip)
+- 실코덱스 회귀:
+  - `VIBLACK_E2E_REAL_CODEX=1 npx playwright test tests/e2e/electron.real-codex.spec.ts` 통과
+
+### 80) 원인 진단: 실제 codex 무응답/빈 응답 이슈
+- 사용자 이슈:
+  - codex 명령 실행 시 "응답을 못 찾는" 상태가 발생.
+- 재현/근거:
+  - `codex exec --full-auto --skip-git-repo-check --json "응답 테스트"` 실행 시,
+  - `Reconnecting... 1/5` ~ `5/5` 후 `turn.failed` 이벤트로 종료.
+  - 에러 메시지: `stream disconnected before completion: error sending request for url (https://chatgpt.com/backend-api/codex/responses)`
+- 결론:
+  - 주원인은 응답 파싱 누락이 아니라 Codex 상위 API 연결 실패(네트워크/세션/환경)이며,
+  - 앱은 이 실패를 비정상적으로 성공 경로로 흘려 "빈 응답"으로 보이게 만드는 경로가 일부 존재.
+
+### 81) 원인 확정: 실코덱스 이벤트 스키마 불일치
+- 사용자 제보 로그 확인:
+  - 정상 출력이 `item.completed` 이벤트 내부 `item.type=agent_message`, `item.text=...` 형태로 도착.
+- 기존 파서 한계 (`src/backend/codex.ts`):
+  - 텍스트 추출 키에서 `item` 중첩 객체를 탐색하지 않아 `item.text`를 놓침.
+  - terminal 판별이 `*completed` 전체를 종료로 취급해 `item.completed`를 실질 응답 후보에서 배제.
+- 결과:
+  - 실제 응답이 존재해도 앱에서는 빈 응답처럼 보일 수 있음.
+
+### 82) 수정: item.completed(agent_message) 파싱 지원
+- `src/backend/codex.ts`:
+  - 텍스트 추출에 `item/items/error` 중첩 키 탐색 추가.
+  - terminal 이벤트 판별을 `turn.completed`, `response.completed`, `*.done` 중심으로 축소.
+  - `item.completed` + `item.type` 존재 시 스트림 타입을 `item.type`으로 재매핑.
+  - `message` 타입으로 분류된 텍스트만 최종 답변 후보(`fullParts`)에 반영하여 reasoning 텍스트 오염 방지.
+
+### 83) 회귀 테스트 보강
+- `tests/e2e/fixtures/fake-codex.js`:
+  - `FORCE_ITEM_COMPLETED_AGENT_MESSAGE:<token>` 입력 시 real-codex 유사 스키마(`item.completed` + `item.type=agent_message`)를 출력하도록 추가.
+- `tests/e2e/electron.smoke.spec.ts`:
+  - 위 토큰을 사용해 DM 응답이 정상 렌더링되는지 검증 케이스 추가.
+
+### 84) 검증 결과
+- `npm run check`: 통과
+- `npm run build`: 통과
+- `npm run verify`: 통과 (GUI 권한 실행)
+
+### 85) 버그 수정: 채널 작업 중 추가 전송 차단 해제
+- 사용자 이슈:
+  - 채널에서 한 멤버 응답이 진행 중이면 추가 메시지 전송이 막힘.
+- 원인:
+  - `src/renderer/renderer.ts`의 채널 전송 경로가 전역 플래그(`isSendingChannelMessage`)로 잠겨,
+  - 첫 `POST /api/channels/:id/messages` 완료 전에는 다음 전송을 즉시 차단.
+- 조치:
+  - 전역 잠금 제거, 동시 전송 허용으로 전환.
+  - `inflightChannelRequestCount` 카운터 기반으로 상태 텍스트(`Channel is working...`)만 관리.
+  - 요청별 낙관적 사용자 메시지는 기존대로 유지하고, 응답 도착 시 메시지 동기화.
+
+### 86) E2E 회귀 보강: 채널 동시 전송 시나리오
+- `tests/e2e/electron.smoke.spec.ts`에 시나리오 추가:
+  - 지연 멘션 메시지 전송 직후, 두 번째 일반 메시지를 즉시 전송.
+  - 첫 작업 완료 전 두 사용자 메시지가 모두 렌더링되는지 검증.
+  - 이후 지연된 멘션 에이전트 응답까지 정상 도착하는지 검증.
+
+### 87) 검증 결과
+- `npm run check`: 통과
+- `npm run build`: 통과
+- `npm run verify`: 통과 (GUI 권한 실행)

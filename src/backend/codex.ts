@@ -1,12 +1,12 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import type { CodexStatus } from "./types";
 
 export interface CodexStreamEvent {
   type: "progress" | "question" | "message" | "error";
   content: string;
+  rawType?: string;
   raw?: unknown;
 }
 
@@ -28,6 +28,8 @@ export interface CodexRunResult {
 
 let codexCommand = process.env.VIBLACK_CODEX_PATH || "codex";
 const activeCodexProcesses = new Set<ChildProcess>();
+const CODEX_TRANSIENT_RETRY_DELAY_MS = 900;
+const CODEX_MAX_TRANSIENT_RETRIES = 1;
 
 function trackProcess(child: ChildProcess): void {
   activeCodexProcesses.add(child);
@@ -131,7 +133,7 @@ function extractTextParts(value: unknown): string[] {
     }
   }
 
-  const nestedKeys = ["content", "message", "delta", "response", "output"];
+  const nestedKeys = ["content", "message", "delta", "response", "output", "item", "items", "error"];
   for (const key of nestedKeys) {
     if (obj[key]) {
       parts.push(...extractTextParts(obj[key]));
@@ -156,7 +158,8 @@ function buildPrompt(systemPrompt: string, userPrompt: string, hasSession: boole
 function isTerminalStreamEventType(type: string): boolean {
   const normalized = type.toLowerCase();
   return (
-    normalized.includes("completed") ||
+    normalized === "turn.completed" ||
+    normalized === "response.completed" ||
     normalized.endsWith(".done") ||
     normalized === "response.done"
   );
@@ -166,6 +169,9 @@ function classifyStreamEventType(type: string): "progress" | "question" | "messa
   const normalized = type.toLowerCase();
   if (isTerminalStreamEventType(normalized)) {
     return null;
+  }
+  if (normalized === "agent_message" || normalized.includes(".agent_message")) {
+    return "message";
   }
   if (normalized.includes("question") || normalized.includes("ask")) {
     return "question";
@@ -177,6 +183,31 @@ function classifyStreamEventType(type: string): "progress" | "question" | "messa
     return "message";
   }
   return null;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function isTransientCodexFailure(result: CodexRunResult): boolean {
+  if (result.ok) {
+    return false;
+  }
+  const text = `${result.error ?? ""}\n${result.reply}`.toLowerCase();
+  const transientNeedles = [
+    "stream disconnected before completion",
+    "error sending request for url",
+    "connection reset",
+    "connection refused",
+    "temporarily unavailable",
+    "network is unreachable",
+    "operation timed out",
+    "timed out",
+    "reconnecting...",
+  ];
+  return transientNeedles.some((needle) => text.includes(needle));
 }
 
 export async function checkCodexAvailability(cwd: string): Promise<CodexStatus> {
@@ -199,24 +230,57 @@ export async function checkCodexAvailability(cwd: string): Promise<CodexStatus> 
 export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> {
   const prompt = buildPrompt(params.systemPrompt, params.prompt, Boolean(params.sessionId));
   const timeoutMs = params.timeoutMs ?? 120_000;
-  const outputFilePath = path.join(
-    os.tmpdir(),
-    `viblack-codex-last-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`,
-  );
+  let latestResult: CodexRunResult | null = null;
 
+  for (let attempt = 0; attempt <= CODEX_MAX_TRANSIENT_RETRIES; attempt += 1) {
+    const result = await runCodexOnce({
+      prompt,
+      timeoutMs,
+      cwd: params.cwd,
+      sessionId: params.sessionId,
+      onStream: params.onStream,
+    });
+    latestResult = result;
+    if (result.ok) {
+      return result;
+    }
+    const shouldRetry = isTransientCodexFailure(result) && attempt < CODEX_MAX_TRANSIENT_RETRIES;
+    if (!shouldRetry) {
+      return result;
+    }
+    await sleep(CODEX_TRANSIENT_RETRY_DELAY_MS * (attempt + 1));
+  }
+
+  return (
+    latestResult ?? {
+      ok: false,
+      reply: "",
+      sessionId: params.sessionId,
+      error: "codex execution failed",
+    }
+  );
+}
+
+interface CodexRunOnceParams {
+  prompt: string;
+  sessionId: string | null;
+  cwd: string;
+  timeoutMs: number;
+  onStream?: (event: CodexStreamEvent) => void;
+}
+
+async function runCodexOnce(params: CodexRunOnceParams): Promise<CodexRunResult> {
   const args = params.sessionId
     ? [
         "exec",
-        "--full-auto",
-        "-o",
-        outputFilePath,
         "resume",
+        "--full-auto",
         "--skip-git-repo-check",
         "--json",
         params.sessionId,
-        "-",
+        params.prompt,
       ]
-    : ["exec", "--full-auto", "--skip-git-repo-check", "--json", "-o", outputFilePath, "-"];
+    : ["exec", "--full-auto", "--skip-git-repo-check", "--json", params.prompt];
 
   return new Promise((resolve) => {
     let child: ChildProcess;
@@ -244,6 +308,9 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
     let sessionId = params.sessionId;
     const deltaParts: string[] = [];
     const fullParts: string[] = [];
+    const terminalParts: string[] = [];
+    const failureParts: string[] = [];
+    let sawFailureEvent = false;
 
     const processLine = (rawLine: string, source: "stdout" | "stderr"): void => {
       const line = rawLine.trim();
@@ -253,20 +320,41 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
 
       try {
         const event = JSON.parse(line) as Record<string, unknown>;
-        const type = typeof event.type === "string" ? event.type : "";
+        const topLevelType = typeof event.type === "string" ? event.type : "";
+        const nestedItem = event.item;
+        const nestedItemType =
+          nestedItem && typeof nestedItem === "object" && typeof (nestedItem as Record<string, unknown>).type === "string"
+            ? String((nestedItem as Record<string, unknown>).type)
+            : "";
+        const streamType =
+          topLevelType === "item.completed" && nestedItemType ? nestedItemType : topLevelType;
 
-        if (type === "thread.started" && typeof event.thread_id === "string") {
+        if (topLevelType === "thread.started" && typeof event.thread_id === "string") {
           sessionId = event.thread_id;
         }
 
-        if (type === "error") {
+        if (topLevelType.toLowerCase().includes("failed")) {
+          sawFailureEvent = true;
+          const failureText = extractTextParts(event.error ?? event)
+            .map((part) => part.trim())
+            .filter((part) => part.length > 0)
+            .join(" ");
+          if (failureText) {
+            failureParts.push(failureText);
+          }
+        }
+
+        if (topLevelType === "error") {
           const errorParts = extractTextParts(event);
-          if (errorParts.length > 0 && params.onStream) {
-            params.onStream({
-              type: "error",
-              content: errorParts.join(" "),
-              raw: event,
-            });
+          if (errorParts.length > 0) {
+            failureParts.push(errorParts.join(" "));
+            if (params.onStream) {
+              params.onStream({
+                type: "error",
+                content: errorParts.join(" "),
+                raw: event,
+              });
+            }
           }
           return;
         }
@@ -276,20 +364,24 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
           .filter((part) => part.length > 0);
 
         if (parts.length > 0) {
+          const terminalEvent = isTerminalStreamEventType(topLevelType);
+          const streamEventType = classifyStreamEventType(streamType);
           if (params.onStream) {
-            const eventType = classifyStreamEventType(type);
-            if (eventType) {
+            if (streamEventType) {
               params.onStream({
-                type: eventType,
+                type: streamEventType,
                 content: parts.join(" "),
+                rawType: streamType,
                 raw: event,
               });
             }
           }
 
-          if (type.includes("delta")) {
+          if (streamType.toLowerCase().includes("delta")) {
             deltaParts.push(...parts);
-          } else {
+          } else if (terminalEvent) {
+            terminalParts.push(...parts);
+          } else if (streamEventType === "message") {
             fullParts.push(...parts);
           }
         }
@@ -320,7 +412,7 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
 
     const timeoutHandle = setTimeout(() => {
       child.kill();
-    }, timeoutMs);
+    }, params.timeoutMs);
 
     child.stdout?.on("data", (chunk) => {
       stdoutBuffer += String(chunk);
@@ -342,33 +434,30 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
       });
     });
 
-    if (child.stdin) {
-      child.stdin.write(prompt);
-      child.stdin.end();
-    }
-
     child.on("close", (code) => {
       clearTimeout(timeoutHandle);
       flushLines("stdout", true);
       flushLines("stderr", true);
 
-      let fileReply = "";
-      try {
-        if (fs.existsSync(outputFilePath)) {
-          fileReply = fs.readFileSync(outputFilePath, "utf8").trim();
-          fs.unlinkSync(outputFilePath);
-        }
-      } catch {
-        // Ignore output file read/cleanup failures.
-      }
-
+      const bestTerminal = [...terminalParts].sort((a, b) => b.length - a.length)[0] ?? "";
       const bestFull = [...fullParts].sort((a, b) => b.length - a.length)[0] ?? "";
+      const bestFailure = [...failureParts].sort((a, b) => b.length - a.length)[0] ?? "";
       const mergedReply = (
-        fileReply ||
+        bestTerminal ||
         bestFull ||
         deltaParts.join("") ||
         stdoutOutput.trim()
       ).trim();
+      const mergedFailure = (bestFailure || stderrOutput.trim()).trim();
+      if (code === 0 && sawFailureEvent) {
+        resolve({
+          ok: false,
+          reply: mergedReply,
+          sessionId,
+          error: mergedFailure || "codex turn failed",
+        });
+        return;
+      }
       if (code === 0) {
         resolve({
           ok: true,
@@ -382,7 +471,7 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
         ok: false,
         reply: mergedReply,
         sessionId,
-        error: stderrOutput.trim() || "codex execution failed",
+        error: mergedFailure || "codex execution failed",
       });
     });
   });

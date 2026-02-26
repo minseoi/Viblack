@@ -75,13 +75,14 @@ const selectedChannelMemberAddIds = new Set<string>();
 const unreadAgentIds = new Set<string>();
 const inflightAgentIds = new Set<string>();
 let isGeneratingMemberPrompt = false;
-let isSendingChannelMessage = false;
+let inflightChannelRequestCount = 0;
 let channelEventSource: EventSource | null = null;
 let lastSeenChannelMessageId = 0;
 let isChannelDeltaSyncing = false;
 let pendingChannelDeltaSync = false;
 let nextLocalChannelMessageId = -1;
 let pendingChannelUserMessages: PendingChannelUserMessage[] = [];
+const DM_INFLIGHT_SYNC_INTERVAL_MS = 350;
 
 function escapeHtml(value: string): string {
   return value
@@ -1344,7 +1345,10 @@ async function refreshAgents(preferredAgentId?: string | null): Promise<void> {
   renderMemberList();
 }
 
-async function refreshMessagesByAgent(agentId: string): Promise<void> {
+async function refreshMessagesByAgent(
+  agentId: string,
+  options?: { preserveWorkingStatus?: boolean },
+): Promise<void> {
   if (activeChannelId) {
     unreadAgentIds.add(agentId);
     renderMemberList();
@@ -1358,7 +1362,9 @@ async function refreshMessagesByAgent(agentId: string): Promise<void> {
     unreadAgentIds.delete(agentId);
     setHeader(data.agent.name, data.agent.role);
     renderMessages(data.messages, data.agent.name);
-    setStatus(codexReady ? "Ready" : "Codex unavailable");
+    if (!options?.preserveWorkingStatus) {
+      setStatus(codexReady ? "Ready" : "Codex unavailable");
+    }
     renderMemberList();
     return;
   }
@@ -1979,14 +1985,10 @@ async function sendMessage(): Promise<void> {
   }
 
   if (activeChannelId) {
-    if (isSendingChannelMessage) {
-      return;
-    }
-
-    isSendingChannelMessage = true;
-    button.disabled = true;
     const channelId = activeChannelId;
+    let hadError = false;
     input.value = "";
+    inflightChannelRequestCount += 1;
     setStatus("Channel is working...");
 
     const optimisticUser = createPendingChannelUserMessage(channelId, content);
@@ -1999,9 +2001,9 @@ async function sendMessage(): Promise<void> {
         body: JSON.stringify({ content, messageKind: "general" }),
       });
       await refreshMessages();
-      setStatus(codexReady ? "Ready" : "Codex unavailable");
       focusInput();
     } catch (err) {
+      hadError = true;
       removePendingChannelUserMessage(optimisticUser.id);
       const message = err instanceof Error ? err.message : "unknown error";
       setStatus(`Error: ${message}`);
@@ -2009,7 +2011,16 @@ async function sendMessage(): Promise<void> {
       await refreshMessages();
       focusInput();
     } finally {
-      isSendingChannelMessage = false;
+      inflightChannelRequestCount = Math.max(0, inflightChannelRequestCount - 1);
+      if (!hadError && activeChannelId === channelId) {
+        setStatus(
+          inflightChannelRequestCount > 0
+            ? "Channel is working..."
+            : codexReady
+              ? "Ready"
+              : "Codex unavailable",
+        );
+      }
       button.disabled = !activeAgentId && !activeChannelId;
     }
     return;
@@ -2038,6 +2049,16 @@ async function sendMessage(): Promise<void> {
   };
   renderMessages([...renderedMessages, optimisticUser]);
 
+  const dmInflightSyncTimer = window.setInterval(() => {
+    void refreshMessagesByAgent(targetAgentId, { preserveWorkingStatus: true }).catch(() => {
+      // Ignore transient fetch errors while request is still in-flight.
+    });
+  }, DM_INFLIGHT_SYNC_INTERVAL_MS);
+
+  void refreshMessagesByAgent(targetAgentId, { preserveWorkingStatus: true }).catch(() => {
+    // Ignore transient fetch errors while request is still in-flight.
+  });
+
   try {
     await fetchJson(`${backendBaseUrl}/api/agents/${targetAgentId}/messages`, {
       method: "POST",
@@ -2058,6 +2079,7 @@ async function sendMessage(): Promise<void> {
     }
     focusInput();
   } finally {
+    window.clearInterval(dmInflightSyncTimer);
     inflightAgentIds.delete(targetAgentId);
     renderMemberList();
     button.disabled = !activeAgentId && !activeChannelId;

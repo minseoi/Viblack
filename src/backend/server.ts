@@ -72,6 +72,14 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
   const sanitizeText = (value: unknown): string =>
     typeof value === "string" ? value.trim() : "";
 
+  const isAgentMessageStreamType = (rawType: string | undefined): boolean => {
+    if (!rawType) {
+      return false;
+    }
+    const normalized = rawType.toLowerCase();
+    return normalized === "agent_message" || normalized.includes(".agent_message");
+  };
+
   const allowedChannelMessageKinds: ReadonlySet<ChannelMessageKind> = new Set([
     "request",
     "progress",
@@ -144,22 +152,41 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
 
   const buildMemberExecutionSystemPrompt = (agent: Agent, context: "dm" | "channel"): string => {
     const roleProfile = sanitizeText(agent.roleProfile);
+    const userDefinedPrompt = sanitizeText(agent.systemPrompt);
     return [
-      "You are a Viblack member agent. Follow the contract below.",
+      "You are a Viblack member agent.",
       "",
-      "[MEMBER_IDENTITY]",
+      "[IDENTITY]",
       `- Name: ${agent.name}`,
       `- Role: ${agent.role}`,
       roleProfile ? `- Role profile: ${roleProfile}` : "",
-      `- Context: ${context === "dm" ? "direct_message" : "channel_collaboration"}`,
       "",
-      "[OPERATION_RULES]",
-      "1) Follow USER_DEFINED_MEMBER_PROMPT as the primary member instruction.",
-      "2) Do not invent facts; ask a clarifying question when information is missing.",
-      "3) Keep output practical and directly executable.",
+      "[CONTEXT]",
+      `- Runtime context: ${context === "dm" ? "direct_message" : "channel_collaboration"}`,
+      "- Product: Viblack (AI workspace messenger)",
+      "",
+      "[EXECUTION_RULES]",
+      "1) Prioritize the user request in the active conversation.",
+      "2) Follow USER_DEFINED_MEMBER_PROMPT as role-specific behavior.",
+      "3) When requirements are ambiguous, ask a concise clarifying question before execution.",
+      "",
+      "[VALIDATION_RULES]",
+      "1) Distinguish facts from assumptions. Mark uncertainty explicitly.",
+      "2) Do not fabricate outcomes, references, or execution results.",
+      "3) Keep outputs practical and directly actionable.",
+      "",
+      "[SAFETY_GATES]",
+      "1) Refuse harmful, illegal, or policy-violating requests.",
+      "2) Do not expose secrets, credentials, or sensitive internal data.",
+      "3) If a request exceeds granted permissions, state the required permission first.",
+      "",
+      "[OUTPUT_FORMAT]",
+      "1) Default language: Korean. If the user requests another language, follow it.",
+      "2) Lead with the conclusion, then provide concise supporting details.",
+      "3) If execution steps are needed, provide numbered next actions.",
       "",
       "[USER_DEFINED_MEMBER_PROMPT_BEGIN]",
-      agent.systemPrompt,
+      userDefinedPrompt || "(none)",
       "[USER_DEFINED_MEMBER_PROMPT_END]",
     ]
       .filter((line) => line.length > 0)
@@ -457,21 +484,21 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
             cwd: options.workspaceDir,
             timeoutMs: 120_000,
             onStream: (event) => {
-              // Stream intermediate messages (progress, questions, etc) to channel
-              if (event.type === "progress" || event.type === "message" || event.type === "question") {
-                const streamedContent = event.content.trim();
-                if (!streamedContent) {
-                  return;
-                }
-                lastStreamMessage = appendChannelMessageAndNotify(
-                  channelId,
-                  "agent",
-                  targetAgent.id,
-                  streamedContent,
-                  "progress",
-                );
-                lastStreamContent = streamedContent;
+              if (!isAgentMessageStreamType(event.rawType)) {
+                return;
               }
+              const streamedContent = event.content.trim();
+              if (!streamedContent) {
+                return;
+              }
+              lastStreamMessage = appendChannelMessageAndNotify(
+                channelId,
+                "agent",
+                targetAgent.id,
+                streamedContent,
+                "progress",
+              );
+              lastStreamContent = streamedContent;
             },
           });
 
@@ -480,18 +507,21 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
           }
 
           const normalizedReply = codexResult.reply.trim();
-          const replyText = codexResult.ok
-            ? normalizedReply || lastStreamContent || "Codex 응답이 비어 있습니다. 다시 시도해 주세요."
+          const hasRenderableReply =
+            normalizedReply.length > 0 || lastStreamContent.length > 0;
+          const executionOk = codexResult.ok && hasRenderableReply;
+          const replyText = executionOk
+            ? normalizedReply || lastStreamContent
             : [
                 "Codex 실행 실패:",
-                codexResult.error ?? "unknown error",
+                codexResult.error ?? (codexResult.ok ? "empty response from codex" : "unknown error"),
                 codexResult.reply ? `partial: ${codexResult.reply}` : "",
               ]
                 .filter((line) => line.length > 0)
                 .join("\n");
 
           const reuseStreamMessage =
-            codexResult.ok &&
+            executionOk &&
             Boolean(lastStreamMessage) &&
             lastStreamContent.length > 0 &&
             (normalizedReply.length === 0 || normalizedReply === lastStreamContent);
@@ -501,8 +531,8 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
               ? lastStreamMessage
               : appendChannelMessageAndNotify(
                   channelId,
-                  codexResult.ok ? "agent" : "system",
-                  codexResult.ok ? targetAgent.id : null,
+                  executionOk ? "agent" : "system",
+                  executionOk ? targetAgent.id : null,
                   replyText,
                   resultMessageKind,
                 );
@@ -510,7 +540,7 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
           return {
             agentId: targetAgent.id,
             agentName: targetAgent.name,
-            ok: codexResult.ok,
+            ok: executionOk,
             reply: replyText,
             sessionId: codexResult.sessionId,
             message,
@@ -768,15 +798,15 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
           sessionId: agent.sessionId,
           cwd: options.workspaceDir,
           onStream: (event) => {
-            // Stream intermediate messages (progress, questions, etc) to DM
-            if (event.type === "progress" || event.type === "message" || event.type === "question") {
-              const streamedContent = event.content.trim();
-              if (!streamedContent) {
-                return;
-              }
-              lastStreamReply = streamedContent;
-              db.appendMessage(agentId, "agent", streamedContent);
+            if (!isAgentMessageStreamType(event.rawType)) {
+              return;
             }
+            const streamedContent = event.content.trim();
+            if (!streamedContent) {
+              return;
+            }
+            lastStreamReply = streamedContent;
+            db.appendMessage(agentId, "agent", streamedContent);
           },
         });
 
@@ -785,26 +815,28 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
         }
 
         const normalizedReply = codexResult.reply.trim();
-        const replyText = codexResult.ok
-          ? normalizedReply || lastStreamReply || "Codex 응답이 비어 있습니다. 다시 시도해 주세요."
+        const hasRenderableReply = normalizedReply.length > 0 || lastStreamReply.length > 0;
+        const executionOk = codexResult.ok && hasRenderableReply;
+        const replyText = executionOk
+          ? normalizedReply || lastStreamReply
           : [
               "Codex 실행 실패:",
-              codexResult.error ?? "unknown error",
+              codexResult.error ?? (codexResult.ok ? "empty response from codex" : "unknown error"),
               codexResult.reply ? `partial: ${codexResult.reply}` : "",
             ]
               .filter((line) => line.length > 0)
               .join("\n");
 
         const reuseStreamReply =
-          codexResult.ok &&
+          executionOk &&
           lastStreamReply.length > 0 &&
           (normalizedReply.length === 0 || normalizedReply === lastStreamReply);
         if (!reuseStreamReply) {
-          db.appendMessage(agentId, codexResult.ok ? "agent" : "system", replyText);
+          db.appendMessage(agentId, executionOk ? "agent" : "system", replyText);
         }
 
         return {
-          ok: codexResult.ok,
+          ok: executionOk,
           reply: replyText,
           sessionId: codexResult.sessionId,
         };

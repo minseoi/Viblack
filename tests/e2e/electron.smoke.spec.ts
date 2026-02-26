@@ -85,6 +85,11 @@ test("electron full feature regression flow", async ({}, testInfo) => {
   const memberBeta = `BetaQA${suffix}`;
   const memberAlphaEdited = `AlphaLead${suffix}`;
   const memberPromptToken = `PROMPT_TOKEN_${suffix}`;
+  const dmRetryKey = `RETRY_${suffix}`;
+  const dmRetryFinalToken = `RETRY_OK_${suffix}`;
+  const dmItemCompletedToken = `ITEM_${suffix}`;
+  const dmStreamToken = `STREAM_${suffix}`;
+  const dmFinalToken = `FINAL_${suffix}`;
   const channelName = `qa-room-${suffix}`;
   const editedChannelName = `qa-room-updated-${suffix}`;
 
@@ -142,17 +147,75 @@ test("electron full feature regression flow", async ({}, testInfo) => {
 
     await memberRow(page, memberAlphaEdited).locator(".member-main").click();
     await expect(page.locator("#agent-title")).toHaveText(memberAlphaEdited);
-    await page.fill("#chat-input", `FORCE_ASSERT_MEMBER_PROMPT:${memberPromptToken}`);
+    await page.fill(
+      "#chat-input",
+      `FORCE_ASSERT_MEMBER_TEMPLATE FORCE_ASSERT_MEMBER_PROMPT:${memberPromptToken}`,
+    );
     await page.click("#send-btn");
     await expect(
       page.locator("#messages .msg-agent .msg-content", {
-        hasText: `멤버 프롬프트 확인:${memberPromptToken}`,
+        hasText: `멤버 템플릿/프롬프트 확인:${memberPromptToken}`,
       }),
     ).toHaveCount(1);
     await page.fill("#chat-input", "DM smoke ping");
     await page.click("#send-btn");
     await expect(page.locator("#messages .msg-user .msg-content", { hasText: "DM smoke ping" })).toHaveCount(1);
     await expect(page.locator("#messages .msg-agent .msg-content", { hasText: "테스트 응답" })).toHaveCount(1);
+    await page.fill("#chat-input", `FORCE_ITEM_COMPLETED_AGENT_MESSAGE:${dmItemCompletedToken}`);
+    await page.click("#send-btn");
+    await expect(
+      page.locator("#messages .msg-agent .msg-content", {
+        hasText: dmItemCompletedToken,
+      }),
+    ).toHaveCount(1);
+    await page.fill("#chat-input", "FORCE_TURN_FAILED");
+    await page.click("#send-btn");
+    await expect(
+      page.locator("#messages .msg-system .msg-content", {
+        hasText: "Codex 실행 실패:",
+      }),
+    ).toHaveCount(1);
+    await expect(
+      page.locator("#messages .msg-system .msg-content", {
+        hasText: "forced turn failure",
+      }),
+    ).toHaveCount(1);
+    await page.fill(
+      "#chat-input",
+      `FORCE_TRANSIENT_FAIL_ONCE:${dmRetryKey} FORCE_FINAL_REPLY:${dmRetryFinalToken}`,
+    );
+    await page.click("#send-btn");
+    await expect(
+      page.locator("#messages .msg-agent .msg-content", {
+        hasText: dmRetryFinalToken,
+      }),
+    ).toHaveCount(1, { timeout: 10000 });
+    await expect(
+      page.locator("#messages .msg-system .msg-content", {
+        hasText: "empty response from codex",
+      }),
+    ).toHaveCount(0);
+
+    await page.fill(
+      "#chat-input",
+      `DM stream check FORCE_STREAM_AGENT_MESSAGE:${dmStreamToken} FORCE_DELAY_MS:1800 FORCE_FINAL_REPLY:${dmFinalToken}`,
+    );
+    await page.click("#send-btn");
+    await expect(
+      page.locator("#messages .msg-agent .msg-content", {
+        hasText: dmStreamToken,
+      }),
+    ).toHaveCount(1, { timeout: 1200 });
+    await expect(
+      page.locator("#messages .msg-agent .msg-content", {
+        hasText: dmFinalToken,
+      }),
+    ).toHaveCount(0, { timeout: 900 });
+    await expect(
+      page.locator("#messages .msg-agent .msg-content", {
+        hasText: dmFinalToken,
+      }),
+    ).toHaveCount(1, { timeout: 7000 });
 
     // A 응답 대기 중에도 B에게 DM 전송 가능해야 한다.
     await page.fill(
@@ -273,6 +336,22 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     const betaSenderItems = page.locator("#messages .msg-agent .msg-sender", {
       hasText: memberBeta,
     });
+
+    const beforeChannelBusyConcurrentCount = await channelMessages.count();
+    const beforeChannelBusyAlphaSenderCount = await alphaSenderItems.count();
+    await page.fill("#chat-input", `@{${memberAlphaEdited}} FORCE_DELAY_MS:1800 channel-busy-first`);
+    await page.click("#send-btn");
+    await page.fill("#chat-input", "channel second while first busy");
+    await page.click("#send-btn");
+    await expect(
+      page.locator("#messages .msg-user .msg-content", { hasText: "channel-busy-first" }),
+    ).toHaveCount(1, { timeout: 1200 });
+    await expect(
+      page.locator("#messages .msg-user .msg-content", { hasText: "channel second while first busy" }),
+    ).toHaveCount(1, { timeout: 1200 });
+    await expect(channelMessages).toHaveCount(beforeChannelBusyConcurrentCount + 2, { timeout: 1200 });
+    await expect(alphaSenderItems).toHaveCount(beforeChannelBusyAlphaSenderCount + 1, { timeout: 7000 });
+    await expect(channelMessages).toHaveCount(beforeChannelBusyConcurrentCount + 3, { timeout: 7000 });
 
     const beforeDelayedMentionCount = await channelMessages.count();
     const beforeDelayedAlphaSenderCount = await alphaSenderItems.count();
