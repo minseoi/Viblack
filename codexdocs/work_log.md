@@ -141,3 +141,79 @@
   - `npm run check` 통과
   - `npm run build` 통과
   - `npm run verify` 통과 (check/build/e2e 통과)
+
+### 64) 버그 조사: Enter 전송 후 입력창 마지막 글자 잔류
+- 사용자 이슈:
+  - Enter로 전송 시 입력창에 마지막 한 글자가 남음.
+- 조사:
+  - `renderer`의 Enter keydown 전송 경로를 확인했고, IME 조합 입력 중 Enter 처리 누락 가능성이 높음.
+
+### 65) 버그 수정: Enter 전송 시 IME 조합 입력 잔류 방지
+- 조치:
+  - `src/renderer/renderer.ts` Enter keydown 처리에 IME 조합 상태 가드 추가(`isComposing` 또는 `keyCode===229` 시 전송 차단)
+  - 조합 중 Enter는 조합 확정만 수행하고, 조합 종료 후 Enter에서만 전송되도록 정리
+  - E2E 보강: `tests/e2e/electron.smoke.spec.ts`에 Enter 전송 후 입력창 값이 비워지는지 회귀 검증 추가
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npm run verify` 통과 (check/build/e2e 통과)
+
+### 66) 버그 수정: 빈 최종 응답 시 파싱 실패 문구 노출 제거
+- 사용자 이슈:
+  - 대화 응답으로 `응답 텍스트를 파싱하지 못했습니다.` 문구가 노출됨.
+- 원인:
+  - `runCodex` 최종 파싱 결과가 비어 있을 때 내부 fallback 문구를 그대로 성공 응답으로 반환.
+- 조치:
+  - `src/backend/codex.ts` 성공 응답 fallback 문구 제거(빈 문자열 반환)
+  - `src/backend/server.ts`에서 스트리밍 응답이 있으면 이를 최종 응답으로 재사용
+  - 스트리밍 마지막 텍스트와 최종 텍스트가 동일/비어 있으면 최종 메시지 중복 append를 생략
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npm run verify` 통과 (check/build/e2e 통과)
+
+### 67) 버그 조사: A DM 응답 대기 중 B DM 전송 차단
+- 사용자 이슈:
+  - A 멤버에게 DM 전송 후 응답 대기 중에는 B 멤버에게 DM 전송이 안 됨.
+- 원인:
+  - 렌더러 전송 가드가 전역 플래그(`isSendingMessage`)라 에이전트 단위 병렬 전송이 막힘.
+
+### 68) 버그 수정: DM 전송 가드를 에이전트 단위로 분리
+- 조치:
+  - `src/renderer/renderer.ts` 전역 전송 락 제거, 채널 전송은 별도 플래그(`isSendingChannelMessage`)로 유지
+  - DM 전송은 `inflightAgentIds` 기반으로 동일 에이전트만 중복 차단하고, 다른 에이전트 전송은 허용
+  - E2E 보강: `tests/e2e/electron.smoke.spec.ts`에 `A(지연 응답) 전송 중 B 즉시 DM 전송` 회귀 시나리오 추가
+- 검증:
+  - `npm run verify` 최초 재실행에서 새 시나리오 순서 이슈로 E2E 실패 재현 후, 전송 순서(동시 전송 검증 -> Enter 전송 검증) 조정
+  - `npm run verify` 재실행 통과 (check/build/e2e 통과)
+
+### 69) 기능 구현 진행: 멤버 시스템 프롬프트 템플릿 주입
+- 사용자 요청:
+  - 에이전트 실행 시 공통 "멤버 정의용 시스템 프롬프트"를 사용하고,
+  - 그 내부에 사용자가 작성한 멤버 프롬프트를 삽입하는 구조 필요.
+- 착수:
+  - `server.ts`에서 최종 실행용 시스템 프롬프트 조합 함수 추가 예정.
+  - DM/채널 실행 경로 모두 동일 템플릿 적용 예정.
+  - E2E + fake-codex로 실제 주입 여부 검증 케이스 추가 예정.
+- 진행 업데이트:
+  - `src/backend/server.ts`에 `buildMemberExecutionSystemPrompt(agent, context)` 추가.
+  - DM/채널의 `runCodex` 호출에서 원본 `agent.systemPrompt` 대신 조합된 실행용 시스템 프롬프트 주입으로 변경.
+  - 조합 프롬프트에 `[USER_DEFINED_MEMBER_PROMPT_BEGIN/END]` 블록을 두어 사용자 프롬프트를 명시적으로 삽입.
+  - `tests/e2e/fixtures/fake-codex.js`에 삽입 검증 분기(`FORCE_ASSERT_MEMBER_PROMPT`) 추가.
+  - `tests/e2e/electron.smoke.spec.ts`에 멤버 프롬프트 토큰이 실제 주입되는지 검증 단계 추가.
+- 검증 이슈:
+  - `npm run verify`에서 `check`/`build`는 통과했으나, `test:e2e`는 앱 런치 단계에서 실패.
+  - 증상: Playwright `Error: Process failed to launch!`
+  - 재현: `npm run start`, `electron --version` 모두 Electron 프로세스가 즉시 `SIGABRT` 종료.
+  - 진단: `~/Library/Logs/DiagnosticReports/Electron-2026-02-26-143352.ips`에서 `abort() called`, AppKit 초기화(`NSApplication sharedApplication`) 구간 크래시 확인.
+  - 결론: 현재 세션 환경의 GUI/Electron 런타임 제약으로 보이며, 코드 변경 자체의 타입/빌드 실패는 아님.
+
+### 69) 테스트 안정화: DM 스모크 구간 strict locator 보정
+- 조치:
+  - `tests/e2e/electron.smoke.spec.ts`의 DM 스모크 사용자 메시지 검증을 텍스트 필터(`hasText`) + count 단정으로 변경
+  - 다중 사용자 메시지 존재 시 strict mode 위반으로 인한 불안정 실패 제거
+
+### 70) 테스트 안정화: DM/채널 agent 응답 단정 strict 충돌 보정
+- 조치:
+  - `tests/e2e/electron.smoke.spec.ts`의 agent 응답 검증을 일반 locator + `toContainText`에서 `hasText` 필터 + count 단정으로 변경
+  - 다중 agent 메시지 존재 시 strict mode 위반으로 깨지는 케이스 제거

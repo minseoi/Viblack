@@ -2,7 +2,7 @@ import http from "node:http";
 import express from "express";
 import { checkCodexAvailability, runCodex } from "./codex";
 import { DuplicateAgentNameError, DuplicateChannelNameError, ViblackDb } from "./db";
-import type { Agent, ChannelMessageKind } from "./types";
+import type { Agent, ChannelMessage, ChannelMessageKind } from "./types";
 
 interface StartServerOptions {
   dbPath: string;
@@ -141,6 +141,30 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
       "",
       rawMessage,
     ].join("\n");
+
+  const buildMemberExecutionSystemPrompt = (agent: Agent, context: "dm" | "channel"): string => {
+    const roleProfile = sanitizeText(agent.roleProfile);
+    return [
+      "You are a Viblack member agent. Follow the contract below.",
+      "",
+      "[MEMBER_IDENTITY]",
+      `- Name: ${agent.name}`,
+      `- Role: ${agent.role}`,
+      roleProfile ? `- Role profile: ${roleProfile}` : "",
+      `- Context: ${context === "dm" ? "direct_message" : "channel_collaboration"}`,
+      "",
+      "[OPERATION_RULES]",
+      "1) Follow USER_DEFINED_MEMBER_PROMPT as the primary member instruction.",
+      "2) Do not invent facts; ask a clarifying question when information is missing.",
+      "3) Keep output practical and directly executable.",
+      "",
+      "[USER_DEFINED_MEMBER_PROMPT_BEGIN]",
+      agent.systemPrompt,
+      "[USER_DEFINED_MEMBER_PROMPT_END]",
+    ]
+      .filter((line) => line.length > 0)
+      .join("\n");
+  };
 
   const unwrapCodeFence = (value: string): string => {
     const trimmed = value.trim();
@@ -424,22 +448,29 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
     ) => {
       try {
         return await withAgentLock(targetAgent.id, async () => {
+          let lastStreamMessage: ChannelMessage | null = null;
+          let lastStreamContent = "";
           const codexResult = await runCodex({
             prompt: buildChannelPrompt(channel.name, triggerContent),
-            systemPrompt: targetAgent.systemPrompt,
+            systemPrompt: buildMemberExecutionSystemPrompt(targetAgent, "channel"),
             sessionId: targetAgent.sessionId,
             cwd: options.workspaceDir,
             timeoutMs: 120_000,
             onStream: (event) => {
               // Stream intermediate messages (progress, questions, etc) to channel
               if (event.type === "progress" || event.type === "message" || event.type === "question") {
-                appendChannelMessageAndNotify(
+                const streamedContent = event.content.trim();
+                if (!streamedContent) {
+                  return;
+                }
+                lastStreamMessage = appendChannelMessageAndNotify(
                   channelId,
                   "agent",
                   targetAgent.id,
-                  event.content,
+                  streamedContent,
                   "progress",
                 );
+                lastStreamContent = streamedContent;
               }
             },
           });
@@ -448,8 +479,9 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
             db.updateAgentSession(targetAgent.id, codexResult.sessionId);
           }
 
+          const normalizedReply = codexResult.reply.trim();
           const replyText = codexResult.ok
-            ? codexResult.reply
+            ? normalizedReply || lastStreamContent || "Codex 응답이 비어 있습니다. 다시 시도해 주세요."
             : [
                 "Codex 실행 실패:",
                 codexResult.error ?? "unknown error",
@@ -458,13 +490,22 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
                 .filter((line) => line.length > 0)
                 .join("\n");
 
-          const message = appendChannelMessageAndNotify(
-            channelId,
-            codexResult.ok ? "agent" : "system",
-            codexResult.ok ? targetAgent.id : null,
-            replyText,
-            resultMessageKind,
-          );
+          const reuseStreamMessage =
+            codexResult.ok &&
+            Boolean(lastStreamMessage) &&
+            lastStreamContent.length > 0 &&
+            (normalizedReply.length === 0 || normalizedReply === lastStreamContent);
+
+          const message =
+            reuseStreamMessage && lastStreamMessage
+              ? lastStreamMessage
+              : appendChannelMessageAndNotify(
+                  channelId,
+                  codexResult.ok ? "agent" : "system",
+                  codexResult.ok ? targetAgent.id : null,
+                  replyText,
+                  resultMessageKind,
+                );
 
           return {
             agentId: targetAgent.id,
@@ -720,15 +761,21 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
       const payload = await withAgentLock(agentId, async () => {
         db.appendMessage(agentId, "user", content);
 
+        let lastStreamReply = "";
         const codexResult = await runCodex({
           prompt: content,
-          systemPrompt: agent.systemPrompt,
+          systemPrompt: buildMemberExecutionSystemPrompt(agent, "dm"),
           sessionId: agent.sessionId,
           cwd: options.workspaceDir,
           onStream: (event) => {
             // Stream intermediate messages (progress, questions, etc) to DM
             if (event.type === "progress" || event.type === "message" || event.type === "question") {
-              db.appendMessage(agentId, "agent", event.content);
+              const streamedContent = event.content.trim();
+              if (!streamedContent) {
+                return;
+              }
+              lastStreamReply = streamedContent;
+              db.appendMessage(agentId, "agent", streamedContent);
             }
           },
         });
@@ -737,8 +784,9 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
           db.updateAgentSession(agentId, codexResult.sessionId);
         }
 
+        const normalizedReply = codexResult.reply.trim();
         const replyText = codexResult.ok
-          ? codexResult.reply
+          ? normalizedReply || lastStreamReply || "Codex 응답이 비어 있습니다. 다시 시도해 주세요."
           : [
               "Codex 실행 실패:",
               codexResult.error ?? "unknown error",
@@ -747,7 +795,13 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
               .filter((line) => line.length > 0)
               .join("\n");
 
-        db.appendMessage(agentId, codexResult.ok ? "agent" : "system", replyText);
+        const reuseStreamReply =
+          codexResult.ok &&
+          lastStreamReply.length > 0 &&
+          (normalizedReply.length === 0 || normalizedReply === lastStreamReply);
+        if (!reuseStreamReply) {
+          db.appendMessage(agentId, codexResult.ok ? "agent" : "system", replyText);
+        }
 
         return {
           ok: codexResult.ok,

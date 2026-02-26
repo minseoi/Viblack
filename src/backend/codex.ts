@@ -372,7 +372,7 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
       if (code === 0) {
         resolve({
           ok: true,
-          reply: mergedReply || "응답 텍스트를 파싱하지 못했습니다.",
+          reply: mergedReply,
           sessionId,
         });
         return;

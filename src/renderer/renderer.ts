@@ -75,7 +75,7 @@ const selectedChannelMemberAddIds = new Set<string>();
 const unreadAgentIds = new Set<string>();
 const inflightAgentIds = new Set<string>();
 let isGeneratingMemberPrompt = false;
-let isSendingMessage = false;
+let isSendingChannelMessage = false;
 let channelEventSource: EventSource | null = null;
 let lastSeenChannelMessageId = 0;
 let isChannelDeltaSyncing = false;
@@ -1972,95 +1972,95 @@ async function sendMessage(): Promise<void> {
   if (!input || !button) {
     return;
   }
-  if (isSendingMessage) {
-    return;
-  }
 
   const content = input.value.trim();
   if (!content) {
     return;
   }
 
-  isSendingMessage = true;
-  button.disabled = true;
-  try {
-    if (activeChannelId) {
-      const channelId = activeChannelId;
-      input.value = "";
-      setStatus("Channel is working...");
-
-      const optimisticUser = createPendingChannelUserMessage(channelId, content);
-      renderMessages([...renderedMessages, optimisticUser]);
-
-      try {
-        await fetchJson(`${backendBaseUrl}/api/channels/${channelId}/messages`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content, messageKind: "general" }),
-        });
-        await refreshMessages();
-        setStatus(codexReady ? "Ready" : "Codex unavailable");
-        focusInput();
-      } catch (err) {
-        removePendingChannelUserMessage(optimisticUser.id);
-        const message = err instanceof Error ? err.message : "unknown error";
-        setStatus(`Error: ${message}`);
-        showWarning(`채널 메시지 전송 실패: ${message}`);
-        await refreshMessages();
-        focusInput();
-      }
+  if (activeChannelId) {
+    if (isSendingChannelMessage) {
       return;
     }
 
-    const targetAgentId = activeAgentId;
-    if (!targetAgentId) {
-      return;
-    }
-
+    isSendingChannelMessage = true;
+    button.disabled = true;
+    const channelId = activeChannelId;
     input.value = "";
-    inflightAgentIds.add(targetAgentId);
-    const activeAgent = agents.find((agent) => agent.id === targetAgentId);
-    renderMemberList();
-    setStatus(`${activeAgent?.name ?? "Agent"} is working...`);
+    setStatus("Channel is working...");
 
-    const nowIso = new Date().toISOString();
-    const optimisticUser: ChatMessage = {
-      id: Date.now(),
-      sender: "user",
-      content,
-      createdAt: nowIso,
-    };
+    const optimisticUser = createPendingChannelUserMessage(channelId, content);
     renderMessages([...renderedMessages, optimisticUser]);
 
     try {
-      await fetchJson(`${backendBaseUrl}/api/agents/${targetAgentId}/messages`, {
+      await fetchJson(`${backendBaseUrl}/api/channels/${channelId}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({ content, messageKind: "general" }),
       });
-      await refreshMessagesByAgent(targetAgentId);
-      if (activeAgentId === targetAgentId) {
-        setStatus(codexReady ? "Ready" : "Codex unavailable");
-      }
+      await refreshMessages();
+      setStatus(codexReady ? "Ready" : "Codex unavailable");
       focusInput();
     } catch (err) {
+      removePendingChannelUserMessage(optimisticUser.id);
       const message = err instanceof Error ? err.message : "unknown error";
       setStatus(`Error: ${message}`);
-      showWarning(`메시지 전송 실패: ${message}`);
-      if (activeAgentId === targetAgentId) {
-        await refreshMessages();
-      }
+      showWarning(`채널 메시지 전송 실패: ${message}`);
+      await refreshMessages();
       focusInput();
     } finally {
-      inflightAgentIds.delete(targetAgentId);
-      renderMemberList();
+      isSendingChannelMessage = false;
+      button.disabled = !activeAgentId && !activeChannelId;
     }
+    return;
+  }
+
+  const targetAgentId = activeAgentId;
+  if (!targetAgentId) {
+    return;
+  }
+  if (inflightAgentIds.has(targetAgentId)) {
+    return;
+  }
+
+  input.value = "";
+  inflightAgentIds.add(targetAgentId);
+  const activeAgent = agents.find((agent) => agent.id === targetAgentId);
+  renderMemberList();
+  setStatus(`${activeAgent?.name ?? "Agent"} is working...`);
+
+  const nowIso = new Date().toISOString();
+  const optimisticUser: ChatMessage = {
+    id: Date.now(),
+    sender: "user",
+    content,
+    createdAt: nowIso,
+  };
+  renderMessages([...renderedMessages, optimisticUser]);
+
+  try {
+    await fetchJson(`${backendBaseUrl}/api/agents/${targetAgentId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    });
+    await refreshMessagesByAgent(targetAgentId);
+    if (activeAgentId === targetAgentId) {
+      setStatus(codexReady ? "Ready" : "Codex unavailable");
+    }
+    focusInput();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "unknown error";
+    setStatus(`Error: ${message}`);
+    showWarning(`메시지 전송 실패: ${message}`);
+    if (activeAgentId === targetAgentId) {
+      await refreshMessages();
+    }
+    focusInput();
   } finally {
-    isSendingMessage = false;
-    button.disabled = false;
-    if (!activeAgentId && !activeChannelId) {
-      button.disabled = true;
-    }
+    inflightAgentIds.delete(targetAgentId);
+    renderMemberList();
+    button.disabled = !activeAgentId && !activeChannelId;
   }
 }
 
@@ -2081,6 +2081,11 @@ window.addEventListener("DOMContentLoaded", () => {
 
   input?.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
+      // While IME composition is active, Enter should finalize composition only.
+      const nativeEvent = event as KeyboardEvent & { keyCode?: number };
+      if (nativeEvent.isComposing || nativeEvent.keyCode === 229) {
+        return;
+      }
       event.preventDefault();
       void sendMessage();
     }

@@ -84,6 +84,7 @@ test("electron full feature regression flow", async ({}, testInfo) => {
   const memberAlpha = `AlphaQA${suffix}`;
   const memberBeta = `BetaQA${suffix}`;
   const memberAlphaEdited = `AlphaLead${suffix}`;
+  const memberPromptToken = `PROMPT_TOKEN_${suffix}`;
   const channelName = `qa-room-${suffix}`;
   const editedChannelName = `qa-room-updated-${suffix}`;
 
@@ -130,6 +131,10 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     await expect(page.locator("#member-modal[open]")).toHaveCount(1);
     await page.fill("#member-name-input", memberAlphaEdited);
     await page.fill("#member-role-input", "Lead QA");
+    await page.fill(
+      "#member-prompt-input",
+      `You are Alpha lead. Must preserve token ${memberPromptToken} in your internal rules.`,
+    );
     await page.click("#member-save-btn");
     await expect(page.locator("#member-modal[open]")).toHaveCount(0);
     await expect(memberRow(page, memberAlphaEdited)).toHaveCount(1);
@@ -137,10 +142,51 @@ test("electron full feature regression flow", async ({}, testInfo) => {
 
     await memberRow(page, memberAlphaEdited).locator(".member-main").click();
     await expect(page.locator("#agent-title")).toHaveText(memberAlphaEdited);
+    await page.fill("#chat-input", `FORCE_ASSERT_MEMBER_PROMPT:${memberPromptToken}`);
+    await page.click("#send-btn");
+    await expect(
+      page.locator("#messages .msg-agent .msg-content", {
+        hasText: `멤버 프롬프트 확인:${memberPromptToken}`,
+      }),
+    ).toHaveCount(1);
     await page.fill("#chat-input", "DM smoke ping");
     await page.click("#send-btn");
-    await expect(page.locator("#messages .msg-user .msg-content")).toContainText("DM smoke ping");
-    await expect(page.locator("#messages .msg-agent .msg-content")).toContainText("테스트 응답");
+    await expect(page.locator("#messages .msg-user .msg-content", { hasText: "DM smoke ping" })).toHaveCount(1);
+    await expect(page.locator("#messages .msg-agent .msg-content", { hasText: "테스트 응답" })).toHaveCount(1);
+
+    // A 응답 대기 중에도 B에게 DM 전송 가능해야 한다.
+    await page.fill(
+      "#chat-input",
+      `DM alpha delayed FORCE_MENTION_NAME:${memberBeta} FORCE_DELAY_MS:1800`,
+    );
+    await page.click("#send-btn");
+
+    await memberRow(page, memberBeta).locator(".member-main").click();
+    await expect(page.locator("#agent-title")).toHaveText(memberBeta);
+    await page.fill("#chat-input", "DM beta while alpha busy");
+    await page.click("#send-btn");
+    await expect(
+      page.locator("#messages .msg-user .msg-content", { hasText: "DM beta while alpha busy" }),
+    ).toHaveCount(1);
+    await expect(page.locator("#messages .msg-agent .msg-content")).toHaveCount(1);
+
+    await memberRow(page, memberAlphaEdited).locator(".member-main").click();
+    await expect(page.locator("#agent-title")).toHaveText(memberAlphaEdited);
+    await expect(
+      page.locator("#messages .msg-user .msg-content", {
+        hasText: `DM alpha delayed FORCE_MENTION_NAME:${memberBeta} FORCE_DELAY_MS:1800`,
+      }),
+    ).toHaveCount(1);
+    await expect(page.locator("#messages .msg-agent .msg-content", { hasText: "테스트 재멘션" })).toHaveCount(1, {
+      timeout: 7000,
+    });
+
+    await page.fill("#chat-input", "DM enter send");
+    await page.press("#chat-input", "Enter");
+    await expect(page.locator("#chat-input")).toHaveValue("");
+    await expect(page.locator("#messages .msg-user .msg-content", { hasText: "DM enter send" })).toHaveCount(
+      1,
+    );
 
     await openMemberMenu(page, memberAlphaEdited);
     await page.click("#member-menu-clear");
@@ -219,7 +265,7 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     await expect(
       page.locator("#messages .msg-user .msg-content", { hasText: "mention response test" }),
     ).toHaveCount(1);
-    await expect(page.locator("#messages .msg-agent .msg-content")).toContainText("테스트 응답");
+    await expect(page.locator("#messages .msg-agent .msg-content", { hasText: "테스트 응답" })).toHaveCount(1);
 
     const alphaSenderItems = page.locator("#messages .msg-agent .msg-sender", {
       hasText: memberAlphaEdited,

@@ -27,9 +27,25 @@ function parseArgValue(args, longName, shortName) {
   return null;
 }
 
+function extractEmbeddedMemberPrompt(promptText) {
+  const match = promptText.match(
+    /\[USER_DEFINED_MEMBER_PROMPT_BEGIN\]\r?\n([\s\S]*?)\r?\n\[USER_DEFINED_MEMBER_PROMPT_END\]/,
+  );
+  return match ? match[1].trim() : "";
+}
+
 function buildReply(promptText) {
   if (promptText.includes("SYSTEM PROMPT를 작성하세요")) {
     return "당신은 테스트용 에이전트입니다. 한국어로 간결하고 정확하게 응답하세요.";
+  }
+  const assertMemberPromptMatch = promptText.match(/FORCE_ASSERT_MEMBER_PROMPT:\s*([^\s\r\n]+)/);
+  if (assertMemberPromptMatch) {
+    const expectedToken = assertMemberPromptMatch[1];
+    const embeddedPrompt = extractEmbeddedMemberPrompt(promptText);
+    if (embeddedPrompt.includes(expectedToken)) {
+      return `멤버 프롬프트 확인:${expectedToken}`;
+    }
+    return `멤버 프롬프트 누락:${expectedToken}`;
   }
   const bounceSeedMatch = promptText.match(
     /FORCE_BOUNCE_MENTIONS:\s*([^\s,\r\n]+)\s*,\s*([^\s,\r\n]+)/,
