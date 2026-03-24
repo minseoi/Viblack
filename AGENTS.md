@@ -31,6 +31,7 @@
 - `npm run start`: build then launch Electron app.
 - `npm run test:e2e`: build then run Playwright Electron E2E tests.
 - `npm run verify`: run `check + build + test:e2e` as the post-task regression gate.
+- Permission note: `verify`/`test:e2e` run Electron Playwright and may require GUI/elevated terminal permissions. If `Process failed to launch`, `spawn EPERM`, or `kill EPERM` appears, rerun with elevated/admin permissions.
 
 Example:
 ```bash
@@ -64,8 +65,8 @@ npm run start
   - config: `playwright.config.ts`
   - tests: `tests/e2e/*.spec.ts`
   - current smoke test: `tests/e2e/electron.smoke.spec.ts`
-- Windows note:
-  - If `spawn EPERM` occurs during Playwright run, rerun with elevated terminal/admin permissions.
+- Platform note:
+  - If `Process failed to launch`, `spawn EPERM`, or `kill EPERM` occurs during Playwright run, rerun with elevated terminal/admin permissions and ensure GUI session access.
 - Playwright outputs:
   - `test-results/`, `playwright-report/` (git-ignored)
 

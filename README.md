@@ -28,6 +28,11 @@ npm run start
 npm run verify
 ```
 
+권한/실행 환경 참고:
+- `npm run verify`는 내부적으로 Electron 기반 Playwright E2E를 실행하므로 GUI 접근 권한이 필요합니다.
+- 권한 부족 환경에서는 `Process failed to launch`, `spawn EPERM`, `kill EPERM`가 발생할 수 있습니다.
+- 이런 경우 관리자/권한 상승 터미널에서 동일 명령을 재실행하세요.
+
 `test:e2e`는 테스트 실행 시 `VIBLACK_DB_PATH`를 테스트 전용 경로로 주입하므로,
 테스트 중 생성한 채널/멤버/메시지가 평소 사용하는 로컬 DB에 누적되지 않습니다.
 
