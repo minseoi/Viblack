@@ -52,11 +52,20 @@ interface PendingChannelUserMessage {
   createdAt: string;
 }
 
+interface AppSettingsResponse {
+  selectedModel: string | null;
+  selectedModelAvailable: boolean;
+  availableModels: string[];
+  modelsCachePath: string;
+  cacheError: string | null;
+}
+
 let backendBaseUrl = "";
 let activeAgentId: string | null = null;
 let renderedMessages: ChatMessage[] = [];
 let agents: Agent[] = [];
 let codexReady = false;
+let appSettings: AppSettingsResponse | null = null;
 let openMemberMenuAgentId: string | null = null;
 let openChannelMenuChannelId: string | null = null;
 let memberFormMode: "create" | "edit" = "create";
@@ -72,6 +81,7 @@ const selectedChannelMemberAddIds = new Set<string>();
 const unreadAgentIds = new Set<string>();
 const inflightAgentIds = new Set<string>();
 let isGeneratingMemberPrompt = false;
+let isSavingSettings = false;
 const channelStore = new ChannelStore();
 let channelSyncController: ChannelSyncController | null = null;
 const DM_INFLIGHT_SYNC_INTERVAL_MS = 350;
@@ -307,6 +317,141 @@ function showWarning(text: string | null): void {
   }
   warningEl.textContent = text;
   warningEl.classList.add("show");
+}
+
+function getSelectedModelLabel(): string {
+  return appSettings?.selectedModel ? appSettings.selectedModel : "Codex 기본값";
+}
+
+function getReadyStatusText(command?: string): string {
+  const modelLabel = appSettings?.selectedModel;
+  if (command) {
+    return modelLabel ? `Ready (${command} / ${modelLabel})` : `Ready (${command})`;
+  }
+  return modelLabel ? `Ready (${modelLabel})` : "Ready";
+}
+
+function renderSettingsModal(): void {
+  const modelSelect = document.getElementById("settings-model-select") as HTMLSelectElement | null;
+  const currentModelEl = document.getElementById("settings-current-model");
+  const cachePathEl = document.getElementById("settings-cache-path");
+  const helpEl = document.getElementById("settings-model-help");
+  const errorEl = document.getElementById("settings-cache-error");
+  const saveBtn = document.getElementById("settings-model-save-btn") as HTMLButtonElement | null;
+  const indicatorEl = document.getElementById("workspace-model-indicator");
+  if (!modelSelect || !currentModelEl || !cachePathEl || !helpEl || !errorEl || !saveBtn) {
+    return;
+  }
+
+  const settings = appSettings;
+  const availableModels = settings?.availableModels ?? [];
+  const selectedModel = settings?.selectedModel ?? null;
+
+  currentModelEl.textContent = getSelectedModelLabel();
+  cachePathEl.textContent = settings?.modelsCachePath ?? "~/.codex/models_cache.json";
+  helpEl.textContent = selectedModel
+    ? `현재 모든 Codex 질의는 ${selectedModel}로 실행됩니다.`
+    : "현재 Codex 기본 모델을 사용합니다.";
+  if (indicatorEl) {
+    indicatorEl.textContent = selectedModel ? `모델 · ${selectedModel}` : "모델 · Codex 기본값";
+  }
+
+  modelSelect.innerHTML = "";
+  const defaultOption = document.createElement("option");
+  defaultOption.value = "";
+  defaultOption.textContent = "Codex 기본값";
+  modelSelect.appendChild(defaultOption);
+
+  const knownModels = new Set<string>();
+  for (const model of availableModels) {
+    knownModels.add(model);
+    const option = document.createElement("option");
+    option.value = model;
+    option.textContent = model;
+    modelSelect.appendChild(option);
+  }
+  if (selectedModel && !knownModels.has(selectedModel)) {
+    const unavailableOption = document.createElement("option");
+    unavailableOption.value = selectedModel;
+    unavailableOption.textContent = `${selectedModel} (캐시에서 찾을 수 없음)`;
+    modelSelect.appendChild(unavailableOption);
+  }
+
+  modelSelect.value = selectedModel ?? "";
+  modelSelect.disabled = isSavingSettings;
+  saveBtn.disabled = isSavingSettings;
+
+  const errorMessage =
+    settings?.cacheError ??
+    (settings?.selectedModel && !settings.selectedModelAvailable
+      ? `저장된 모델 "${settings.selectedModel}" 이(가) 현재 캐시에 없습니다.`
+      : null);
+  errorEl.textContent = errorMessage ?? "";
+  errorEl.classList.toggle("show", Boolean(errorMessage));
+}
+
+async function loadSettings(): Promise<void> {
+  appSettings = await fetchJson<AppSettingsResponse>(`${backendBaseUrl}/api/settings`);
+  renderSettingsModal();
+}
+
+async function openSettingsModal(): Promise<void> {
+  const modal = document.getElementById("settings-modal") as HTMLDialogElement | null;
+  const modelSelect = document.getElementById("settings-model-select") as HTMLSelectElement | null;
+  if (!modal) {
+    return;
+  }
+
+  closeMemberMenu();
+  closeChannelMenu();
+  closeChannelMemberMenu();
+  await loadSettings();
+
+  if (modal.open) {
+    modal.close();
+  }
+  modal.showModal();
+  setTimeout(() => {
+    modelSelect?.focus();
+  }, 0);
+}
+
+function closeSettingsModal(): void {
+  const modal = document.getElementById("settings-modal") as HTMLDialogElement | null;
+  if (!modal || !modal.open) {
+    return;
+  }
+  modal.close();
+}
+
+async function saveSelectedModelSetting(): Promise<void> {
+  const modelSelect = document.getElementById("settings-model-select") as HTMLSelectElement | null;
+  if (!modelSelect) {
+    return;
+  }
+  const nextSelectedModel = modelSelect.value || null;
+
+  isSavingSettings = true;
+  renderSettingsModal();
+
+  try {
+    appSettings = await fetchJson<AppSettingsResponse>(`${backendBaseUrl}/api/settings/model`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ selectedModel: nextSelectedModel }),
+    });
+    renderSettingsModal();
+    showWarning(null);
+    setStatus(codexReady ? getReadyStatusText() : "Codex unavailable");
+    closeSettingsModal();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "unknown error";
+    showWarning(`모델 설정 저장 실패: ${message}`);
+    setStatus(`Error: ${message}`);
+  } finally {
+    isSavingSettings = false;
+    renderSettingsModal();
+  }
 }
 
 function initSidebarSections(): void {
@@ -1290,7 +1435,7 @@ async function refreshMessagesByAgent(
     setHeader(data.agent.name, data.agent.role);
     renderMessages(data.messages, data.agent.name);
     if (!options?.preserveWorkingStatus) {
-      setStatus(codexReady ? "Ready" : "Codex unavailable");
+      setStatus(codexReady ? getReadyStatusText() : "Codex unavailable");
     }
     renderMemberList();
     return;
@@ -1337,7 +1482,7 @@ async function refreshMessages(): Promise<void> {
       }>(`${backendBaseUrl}/api/channels/${activeChannelId}/messages`);
       channelStore.setActiveChannelMembers(data.members);
       setHeader(`# ${data.channel.name}`, data.channel.description);
-      setStatus(codexReady ? "Ready" : "Codex unavailable");
+      setStatus(codexReady ? getReadyStatusText() : "Codex unavailable");
       setComposerEnabled(true);
       const serverMessages = mapChannelMessagesToChatMessages(data.messages, data.members);
       reconcilePendingChannelUserMessages(activeChannelId, serverMessages);
@@ -1362,7 +1507,7 @@ async function refreshMessages(): Promise<void> {
     );
     setHeader(data.agent.name, data.agent.role);
     renderMessages(data.messages, data.agent.name);
-    setStatus(codexReady ? "Ready" : "Codex unavailable");
+    setStatus(codexReady ? getReadyStatusText() : "Codex unavailable");
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown error";
     setStatus(`Error: ${message}`);
@@ -1413,7 +1558,7 @@ async function generateMemberSystemPrompt(): Promise<void> {
 
     promptInput.value = payload.systemPrompt;
     showWarning(null);
-    setStatus(codexReady ? "Ready" : "Codex unavailable");
+    setStatus(codexReady ? getReadyStatusText() : "Codex unavailable");
     promptInput.focus();
     const len = promptInput.value.length;
     promptInput.setSelectionRange(len, len);
@@ -1538,6 +1683,11 @@ async function runPendingAction(): Promise<void> {
 }
 
 function initMemberCrudUi(): void {
+  const openSettingsBtn = document.getElementById("open-settings-btn");
+  const settingsModal = document.getElementById("settings-modal") as HTMLDialogElement | null;
+  const settingsCloseBtn = document.getElementById("settings-close-btn");
+  const settingsCancelBtn = document.getElementById("settings-model-cancel-btn");
+  const settingsSaveBtn = document.getElementById("settings-model-save-btn");
   const addChannelBtn = document.getElementById("add-channel-btn");
   const channelMenu = document.getElementById("channel-menu");
   const channelMenuEditBtn = document.getElementById("channel-menu-edit");
@@ -1577,6 +1727,30 @@ function initMemberCrudUi(): void {
   const actionConfirmBtn = document.getElementById("action-confirm-btn");
   const actionModal = document.getElementById("action-modal") as HTMLDialogElement | null;
   const memberMenu = document.getElementById("member-menu");
+
+  openSettingsBtn?.addEventListener("click", () => {
+    void openSettingsModal().catch((err) => {
+      const message = err instanceof Error ? err.message : "unknown error";
+      showWarning(`설정 로딩 실패: ${message}`);
+      setStatus(`Error: ${message}`);
+    });
+  });
+
+  settingsCloseBtn?.addEventListener("click", () => {
+    closeSettingsModal();
+  });
+
+  settingsCancelBtn?.addEventListener("click", () => {
+    closeSettingsModal();
+  });
+
+  settingsSaveBtn?.addEventListener("click", () => {
+    void saveSelectedModelSetting();
+  });
+
+  settingsModal?.addEventListener("close", () => {
+    restoreInputFocus();
+  });
 
   addChannelBtn?.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -1804,6 +1978,7 @@ function initMemberCrudUi(): void {
 async function init(): Promise<void> {
   try {
     backendBaseUrl = await window.viblackApi.getBackendBaseUrl();
+    await loadSettings();
     closeChannelEventStream();
     initChannelEventStream();
     const codexStatus = await window.viblackApi.getBootCodexStatus();
@@ -1822,7 +1997,7 @@ async function init(): Promise<void> {
     } else {
       showWarning(null);
       codexReady = true;
-      setStatus(`Ready (${codexStatus.command ?? "codex"})`);
+      setStatus(getReadyStatusText(codexStatus.command ?? "codex"));
     }
 
     await refreshAgents();
@@ -1881,7 +2056,7 @@ async function sendMessage(): Promise<void> {
           channelStore.getInflightChannelRequestCount() > 0
             ? "Channel is working..."
             : codexReady
-              ? "Ready"
+              ? getReadyStatusText()
               : "Codex unavailable",
         );
       }
@@ -1931,7 +2106,7 @@ async function sendMessage(): Promise<void> {
     });
     await refreshMessagesByAgent(targetAgentId);
     if (activeAgentId === targetAgentId) {
-      setStatus(codexReady ? "Ready" : "Codex unavailable");
+      setStatus(codexReady ? getReadyStatusText() : "Codex unavailable");
     }
     focusInput();
   } catch (err) {

@@ -13,6 +13,7 @@ export interface CodexStreamEvent {
 interface CodexRunParams {
   prompt: string;
   systemPrompt: string;
+  model?: string | null;
   sessionId: string | null;
   cwd: string;
   timeoutMs?: number;
@@ -957,6 +958,18 @@ async function runCodexViaAppServerOnce(params: {
 export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> {
   const prompt = buildPrompt(params.systemPrompt, params.prompt, Boolean(params.sessionId));
   const timeoutMs = params.timeoutMs ?? 120_000;
+  const model = params.model?.trim() ? params.model.trim() : null;
+
+  if (model) {
+    return runCodexViaExec({
+      prompt,
+      model,
+      timeoutMs,
+      cwd: params.cwd,
+      sessionId: params.sessionId,
+      onStream: params.onStream,
+    });
+  }
 
   if (shouldPreferAppServer && !appServerDisabledReason) {
     const appServerResult = await runCodexViaAppServer({
@@ -978,6 +991,7 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
       prompt,
       timeoutMs,
       cwd: params.cwd,
+      model: null,
       sessionId: params.sessionId,
       onStream: params.onStream,
     });
@@ -996,6 +1010,7 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
     prompt,
     timeoutMs,
     cwd: params.cwd,
+    model: null,
     sessionId: params.sessionId,
     onStream: params.onStream,
   });
@@ -1003,6 +1018,7 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
 
 interface CodexRunOnceParams {
   prompt: string;
+  model?: string | null;
   sessionId: string | null;
   cwd: string;
   timeoutMs: number;
@@ -1042,6 +1058,7 @@ async function runCodexExecOnce(params: CodexRunOnceParams): Promise<CodexRunRes
         "resume",
         "--full-auto",
         "--skip-git-repo-check",
+        ...(params.model ? ["-m", params.model] : []),
         "--json",
         params.sessionId,
         params.prompt,
@@ -1050,6 +1067,7 @@ async function runCodexExecOnce(params: CodexRunOnceParams): Promise<CodexRunRes
         "exec",
         "--full-auto",
         "--skip-git-repo-check",
+        ...(params.model ? ["-m", params.model] : []),
         "--json",
         params.prompt,
       ];

@@ -238,6 +238,97 @@
   - 실패 지점: Playwright Electron E2E 런치 단계
   - 에러: `Process failed to launch!` (`tests/e2e/electron.smoke.spec.ts` 실행 시작 직후)
 
+### 74) 채널 리팩토링 착수
+- 사용자 요청:
+  - 채널 리팩토링을 단계별로 끝까지 진행하고, 각 단계 완료 시 테스트/확인까지 수행.
+- 착수 범위:
+  - Phase 1: 백엔드 채널/에이전트 라우트 및 실행 로직 분리
+  - Phase 2: 저장소/도메인 레이어 도입
+  - Phase 3: 실행 추적 모델 추가
+  - Phase 4: 채널 읽음 상태 모델 및 API 추가
+  - Phase 5: 렌더러 채널 상태/동기화 분리
+- 원칙:
+  - 기존 채널 동작(멘션, 재멘션, SSE 동기화, optimistic dedupe)을 유지하면서 구조만 분리
+  - 각 단계 종료 시 최소 `check/build` 및 가능한 E2E 검증 수행
+
+### 75) Phase 1 완료: 백엔드 라우트/실행 서비스 분리
+- 조치:
+  - `server.ts`를 조립 지점으로 축소
+  - 공용 유틸(`text-utils`, `member-prompt`, `mention-router`) 분리
+  - `AgentLockManager`, `ChannelEventBus` 도입
+  - 채널 메시지 실행 로직을 `ChannelMessageService`로 이동
+  - DM 실행 로직을 `AgentExecutionService`로 이동
+  - 시스템/에이전트/채널 라우트를 각각 `routes/`로 분리
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npm run test:e2e` 일반 sandbox 실패: Electron `Process failed to launch!`
+  - 권한 상승 재실행 후 `npm run test:e2e` 통과
+
+### 76) Phase 2 완료: Repository 레이어 도입
+- 조치:
+  - `AgentRepository`, `ChannelRepository`, `ChannelMemberRepository`, `ChannelMessageRepository` 추가
+  - 백엔드 서비스/라우트가 `ViblackDb` 거대 메서드 대신 repository를 사용하도록 전환
+  - `ViblackDb`는 bootstrap/connection 역할을 유지하고 repository 조합의 기반으로 축소
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - 권한 상승 `npm run test:e2e` 통과
+
+### 77) Phase 3 완료: 채널 실행 추적 모델 추가
+- 조치:
+  - `channel_execution_jobs` 테이블/타입/repository 추가
+  - 채널 멘션/재멘션 enqueue 시 execution job 생성
+  - 실행 전 `running`, 종료 후 `succeeded/failed/skipped` 상태와 에러 텍스트 기록
+  - `GET /api/channels/:channelId/executions` API 추가
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - 신규 Playwright 시나리오에서 멘션 depth 0, 재멘션 depth 1, 성공 상태 검증 통과
+
+### 78) Phase 4 완료: 채널 멤버 읽음 상태/조율자 상태 모델 추가
+- 조치:
+  - `channel_member_states` 테이블/타입/repository 추가
+  - 채널 멤버 추가 시 상태 초기화 및 첫 멤버 coordinator 지정
+  - 멘션 대상 enqueue 및 에이전트 응답 완료 시 읽음 위치/seen 시각 업데이트
+  - `GET/POST /api/channels/:channelId/read-state` API 추가
+  - 멤버 제거 시 읽음 상태 정리
+- 검증:
+  - 신규 Playwright 시나리오에서 coordinator 초기값, 읽음 위치 갱신, 상태 수정 API, 멤버 제거 시 상태 제거 검증 통과
+
+### 79) Phase 5 완료: 렌더러 채널 상태/동기화 분리
+- 조치:
+  - `src/renderer/channel-state.ts` 추가로 채널 목록, 활성 채널, pending message, delta cursor, inflight 상태를 store로 분리
+  - `src/renderer/channel-sync.ts` 추가로 SSE/delta 동기화 controller 분리
+  - `renderer.ts`는 channel store/controller를 조합하는 형태로 전환
+  - `index.html`에서 채널 스크립트를 분리 로드하도록 수정
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - 권한 상승 `npm run test:e2e` 통과
+
+### 80) 채널 리팩토링 완료 검증
+- 최종 게이트:
+  - 권한 상승 `npm run verify` 통과
+  - 결과: `check/build/test:e2e` 모두 성공
+
+### 81) 버그 수정: 응답 중복 출력 회귀
+- 사용자 이슈:
+  - 한 번의 응답이 여러 메시지로 반복 출력됨.
+- 원인:
+  - Codex 스트림 이벤트가 누적 스냅샷 형태로 올 때, DM/채널 실행 서비스가 매 이벤트마다 새 메시지를 append하고 있었음.
+  - 채널은 같은 메시지 ID 업데이트를 고려하지 않아 스트림 업데이트를 새 출력처럼 보이게 만들 수 있었음.
+- 조치:
+  - DM 메시지는 첫 스트림 메시지만 생성하고 이후 스트림은 같은 row를 update하도록 수정
+  - 채널 메시지도 첫 progress 메시지만 생성하고 이후 스트림/최종 응답은 같은 row를 update하도록 수정
+  - 채널 SSE 처리에서 이미 본 message id에 대한 이벤트는 전체 refresh로 반영하도록 보강
+  - fake-codex에 다중 스트림 시퀀스 강제 분기 추가
+  - E2E 회귀 추가: DM/채널 모두 다중 스트림 업데이트 중 메시지 수가 1개만 유지되는지 검증
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - 권한 상승 Playwright 회귀(`electron.smoke.spec.ts`, `electron.channel-metadata.spec.ts`) 통과
+
 ### 74) 스트리밍 계약 정렬: agent_message 이벤트 기준 전환
 - 사용자 요청 반영:
   - Codex 실행 인자를 `codex exec --full-auto --skip-git-repo-check --json <prompt>` 형태로 사용하고,
@@ -426,3 +517,51 @@
   4. 회귀 테스트 추가
      - 실코덱스/fake 공통: "2줄 응답"에서 agent 버블 개수가 1개인지 검증.
      - 스트리밍 존재 케이스에서도 최종 버블 1개 유지 + 내용은 최종 텍스트와 일치 검증.
+
+### 82) 기능 구현 시작: Codex 모델 설정/실행 연동
+- 사용자 요청:
+  - `~/.codex/models_cache.json`에서 사용 가능한 모델 목록을 읽고,
+  - 설정 UI에서 모델을 선택/저장하며,
+  - 선택된 모델로 `codex exec -m <model>` 실행되도록 연결.
+- 구현 계획:
+  - `app_settings` 저장소 + settings API 추가
+  - 선택 모델이 있을 때 exec 경로로 모델 인자 주입
+  - Slack 참고 설정 모달 UI + E2E 회귀 추가
+- 진행 업데이트:
+  - `app_settings` 테이블과 `AppSettingsRepository/AppSettingsService` 추가
+  - `GET /api/settings`, `PATCH /api/settings/model` API 추가
+  - DM/채널/시스템 프롬프트 생성 경로에 선택 모델 주입
+  - 선택 모델이 있으면 `runCodex`가 app-server 대신 `exec -m` 경로를 사용하도록 변경
+- 중간 검증:
+  - `npm run check` 통과
+- 진행 업데이트:
+  - 렌더러 상단에 현재 모델 배지와 `환경 설정` 진입 버튼 추가
+  - Slack 스타일 2단 설정 모달 추가, 모델 목록/캐시 경로/오류 상태 표시 연결
+  - 설정 저장 후 상태 텍스트와 모델 배지가 즉시 갱신되도록 정리
+- 중간 검증:
+  - `npm run build` 통과
+- 진행 업데이트:
+  - fake codex가 `-m/--model` 인자를 읽어 선택 모델 검증 응답을 반환하도록 확장
+  - `tests/e2e/electron.settings.spec.ts` 추가: 설정 모달 모델 저장, 표시 상태, DM 실행 모델 적용 검증
+- 중간 검증:
+  - `npm run test:e2e -- tests/e2e/electron.settings.spec.ts` 통과
+- 최종 검증:
+  - `npm run verify` 통과
+  - 결과: Playwright 3 passed, `electron.real-codex.spec.ts`는 환경 미설정으로 1 skipped
+
+### 83) UI 조정: 환경 설정 버튼을 사이드바 하단으로 이동
+- 사용자 요청:
+  - 환경 설정 버튼을 슬랙처럼 왼쪽 패널 하단에 배치.
+- 조치 계획:
+  - 상단 헤더에서 설정 진입 요소 제거
+  - 사이드바 하단 footer 영역 추가
+  - 설정 E2E에 위치 회귀 검증 추가
+- 추가 UI 조정 요청:
+  - 설정 모달 좌측 패널 문구 `Slack 스타일 설정 화면에서 Codex 실행 모델을 관리합니다.` 제거
+  - 설정 E2E에 문구 부재 반영 예정
+- 진행 업데이트:
+  - 환경 설정 버튼을 상단 헤더에서 제거하고 사이드바 하단 footer로 이동
+  - 설정 모달 좌측 패널의 보조 문구 제거
+  - 설정 E2E에 버튼 위치/문구 부재 검증 추가
+- 최종 검증:
+  - `npm run verify` 통과

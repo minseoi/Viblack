@@ -78,6 +78,20 @@ export interface ChannelExecutionJob {
   finishedAt: string | null;
 }
 
+export interface AppSetting {
+  key: string;
+  value: string;
+  updatedAt: string;
+}
+
+export interface AppSettingsSnapshot {
+  selectedModel: string | null;
+  selectedModelAvailable: boolean;
+  availableModels: string[];
+  modelsCachePath: string;
+  cacheError: string | null;
+}
+
 export interface CodexStatus {
   ok: boolean;
   version?: string;

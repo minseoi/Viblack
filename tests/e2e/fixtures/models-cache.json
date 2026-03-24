@@ -1,0 +1,7 @@
+{
+  "models": [
+    { "slug": "gpt-5.4" },
+    { "slug": "gpt-5.4-mini" },
+    { "slug": "gpt-5-codex-mini" }
+  ]
+}

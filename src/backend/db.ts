@@ -482,6 +482,12 @@ export class ViblackDb {
         FOREIGN KEY(source_agent_id) REFERENCES agents(id) ON DELETE SET NULL,
         FOREIGN KEY(target_agent_id) REFERENCES agents(id) ON DELETE CASCADE
       );
+
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
 
     this.ensureAgentRoleProfileColumn();

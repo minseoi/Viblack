@@ -1,9 +1,11 @@
 import type { Express } from "express";
 import { checkCodexAvailability, runCodex } from "../codex";
+import { AppSettingsService } from "../services/app-settings-service";
 import { sanitizeText, unwrapCodeFence } from "../services/text-utils";
 
 interface RegisterSystemRoutesOptions {
   workspaceDir: string;
+  appSettingsService: AppSettingsService;
 }
 
 export function registerSystemRoutes(app: Express, options: RegisterSystemRoutesOptions): void {
@@ -49,6 +51,7 @@ export function registerSystemRoutes(app: Express, options: RegisterSystemRoutes
         prompt: generationPrompt,
         systemPrompt:
           "You are an expert prompt engineer. Produce only the final system prompt text that the user can paste directly.",
+        model: options.appSettingsService.getSelectedModel(),
         sessionId: null,
         cwd: options.workspaceDir,
         timeoutMs: 90_000,

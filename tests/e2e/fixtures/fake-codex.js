@@ -29,6 +29,10 @@ function parseArgValue(args, longName, shortName) {
   return null;
 }
 
+function parseRequestedModel(args) {
+  return parseArgValue(args, "--model", "-m");
+}
+
 function parseExecContext(args) {
   const resumeIndex = args.indexOf("resume");
   const jsonIndex = args.indexOf("--json");
@@ -123,9 +127,22 @@ function shouldTransientFailOnce(promptText) {
   return true;
 }
 
-function buildReply(promptText, runtimeMode = "exec") {
+function buildReply(promptText, runtimeMode = "exec", requestedModel = null) {
   if (promptText.includes("SYSTEM PROMPT를 작성하세요")) {
     return "당신은 테스트용 에이전트입니다. 한국어로 간결하고 정확하게 응답하세요.";
+  }
+  const assertModelMatch = promptText.match(/FORCE_ASSERT_MODEL:\s*([^\s\r\n]+)/);
+  if (assertModelMatch) {
+    const expectedModel = assertModelMatch[1].trim();
+    const normalizedExpected = expectedModel.toLowerCase();
+    const normalizedActual = typeof requestedModel === "string" ? requestedModel.trim().toLowerCase() : "";
+    if (
+      (normalizedExpected === "none" && !normalizedActual) ||
+      normalizedExpected === normalizedActual
+    ) {
+      return `모델 확인:${expectedModel}`;
+    }
+    return `모델 불일치:${requestedModel || "none"}`;
   }
   if (promptText.includes("FORCE_REQUIRE_APP_SERVER")) {
     return runtimeMode === "app-server" ? "APP_SERVER_RUNTIME_OK" : "EXEC_RUNTIME_ONLY";
@@ -445,6 +462,7 @@ async function runExec(args) {
   const outputPath =
     parseArgValue(args, "--output-last-message", null) ?? parseArgValue(args, "-o", null);
 
+  const requestedModel = parseRequestedModel(args);
   const { sessionId, promptText: promptFromArgs } = parseExecContext(args);
   const promptText = promptFromArgs || (await readStdin());
   const forceTurnFailed = shouldForceTurnFailed(promptText);
@@ -453,7 +471,7 @@ async function runExec(args) {
   const streamMessage = parseForcedStreamMessage(promptText);
   const streamSequence = parseForcedStreamSequence(promptText);
   const forcedDelayMs = parseForcedDelayMs(promptText);
-  const reply = buildReply(promptText, "exec");
+  const reply = buildReply(promptText, "exec", requestedModel);
   const effectiveSessionId = sessionId || `fake-session-${Date.now()}`;
 
   if (outputPath) {

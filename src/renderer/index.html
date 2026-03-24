@@ -40,7 +40,7 @@
         background: #f8fafc;
         overflow-y: auto;
         display: grid;
-        grid-template-rows: auto auto 1fr;
+        grid-template-rows: auto auto 1fr auto;
         gap: 14px;
       }
       .brand {
@@ -56,6 +56,35 @@
         display: grid;
         gap: 12px;
         align-content: start;
+      }
+      .sidebar-footer {
+        margin-top: auto;
+        padding-top: 6px;
+      }
+      .sidebar-settings-btn {
+        width: 100%;
+        border: 1px solid #cfd8e6;
+        border-radius: 14px;
+        background: linear-gradient(180deg, #ffffff 0%, #f2f6fb 100%);
+        padding: 12px 14px;
+        display: grid;
+        gap: 6px;
+        text-align: left;
+        cursor: pointer;
+        box-shadow: 0 12px 30px rgba(38, 58, 90, 0.08);
+      }
+      .sidebar-settings-btn:hover {
+        background: linear-gradient(180deg, #ffffff 0%, #eaf1fb 100%);
+      }
+      .sidebar-settings-label {
+        font-size: 13px;
+        font-weight: 700;
+        color: #20324b;
+      }
+      .sidebar-settings-sub {
+        font-size: 12px;
+        color: #5d718a;
+        line-height: 1.4;
       }
       .sidebar-section {
         border: 1px solid var(--line);
@@ -620,6 +649,18 @@
       #channel-member-add-modal::backdrop {
         background: rgba(9, 17, 28, 0.5);
       }
+      #settings-modal {
+        border: none;
+        border-radius: 18px;
+        padding: 0;
+        width: min(920px, calc(100vw - 32px));
+        max-height: calc(100vh - 32px);
+        overflow: hidden;
+        background: transparent;
+      }
+      #settings-modal::backdrop {
+        background: rgba(9, 17, 28, 0.55);
+      }
       .modal-inner {
         padding: 16px;
         display: grid;
@@ -809,12 +850,179 @@
       .channel-member-menu-btn:hover {
         background: #c6dcfb;
       }
+      .settings-shell {
+        display: grid;
+        grid-template-columns: 220px minmax(0, 1fr);
+        min-height: min(620px, calc(100vh - 60px));
+        background: #fff;
+      }
+      .settings-sidebar {
+        padding: 22px 18px;
+        background: linear-gradient(180deg, #28364e 0%, #1d2639 100%);
+        color: #eef4ff;
+        display: grid;
+        align-content: start;
+        gap: 16px;
+      }
+      .settings-sidebar-label {
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #9fb4d8;
+      }
+      .settings-workspace {
+        display: grid;
+        gap: 6px;
+      }
+      .settings-workspace strong {
+        font-size: 20px;
+        line-height: 1.15;
+      }
+      .settings-workspace span {
+        font-size: 13px;
+        color: #c7d6ef;
+        line-height: 1.5;
+      }
+      .settings-nav {
+        display: grid;
+        gap: 6px;
+      }
+      .settings-nav-item {
+        border: none;
+        border-radius: 10px;
+        padding: 11px 12px;
+        background: rgba(255, 255, 255, 0.06);
+        color: #d7e5fb;
+        font-size: 13px;
+        font-weight: 600;
+        text-align: left;
+      }
+      .settings-nav-item.active {
+        background: rgba(255, 255, 255, 0.16);
+        color: #fff;
+      }
+      .settings-content {
+        padding: 26px 28px 24px;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        gap: 20px;
+        min-width: 0;
+        background:
+          radial-gradient(circle at top right, rgba(214, 230, 251, 0.8) 0%, rgba(255, 255, 255, 0) 38%),
+          linear-gradient(180deg, #fbfdff 0%, #f4f7fb 100%);
+      }
+      .settings-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .settings-title {
+        margin: 0;
+        font-size: 24px;
+        line-height: 1.1;
+      }
+      .settings-subtitle {
+        margin: 8px 0 0;
+        color: #5d6d82;
+        font-size: 13px;
+        line-height: 1.5;
+      }
+      .settings-close-btn {
+        border: none;
+        width: 32px;
+        height: 32px;
+        border-radius: 10px;
+        background: #e8eef7;
+        color: #31445e;
+        font-size: 16px;
+        cursor: pointer;
+      }
+      .settings-close-btn:hover {
+        background: #dce6f5;
+      }
+      .settings-scroll {
+        display: grid;
+        gap: 18px;
+        align-content: start;
+        overflow-y: auto;
+        min-height: 0;
+      }
+      .settings-card-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+      .settings-card {
+        border: 1px solid #d9e3f1;
+        border-radius: 14px;
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.94);
+        box-shadow: 0 12px 32px rgba(35, 55, 87, 0.08);
+        display: grid;
+        gap: 8px;
+      }
+      .settings-card-label {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #70839d;
+      }
+      .settings-card-value {
+        font-size: 18px;
+        font-weight: 700;
+        color: #17283f;
+      }
+      .settings-card-sub {
+        font-size: 12px;
+        color: #607289;
+        line-height: 1.5;
+        word-break: break-all;
+      }
+      .settings-inline-help {
+        margin: 0;
+        font-size: 12px;
+        color: #5d6e84;
+        line-height: 1.5;
+      }
+      .settings-inline-error {
+        display: none;
+        border: 1px solid #efc0c0;
+        border-radius: 10px;
+        padding: 10px 12px;
+        background: #fff5f5;
+        color: #9f2d2d;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .settings-inline-error.show {
+        display: block;
+      }
+      .settings-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+      }
       @media (max-width: 720px) {
         .app {
           grid-template-columns: 1fr;
         }
         .sidebar {
           display: none;
+        }
+        #settings-modal {
+          width: calc(100vw - 12px);
+          max-height: calc(100vh - 12px);
+        }
+        .settings-shell {
+          grid-template-columns: 1fr;
+        }
+        .settings-sidebar {
+          gap: 12px;
+        }
+        .settings-card-grid {
+          grid-template-columns: 1fr;
         }
         .top {
           padding: 12px 14px;
@@ -874,6 +1082,14 @@
           </section>
         </div>
 
+        <div class="sidebar-footer">
+          <button id="open-settings-btn" class="sidebar-settings-btn" type="button">
+            <span class="sidebar-settings-label">환경 설정</span>
+            <span id="workspace-model-indicator" class="sidebar-settings-sub">
+              모델 · Codex 기본값
+            </span>
+          </button>
+        </div>
       </aside>
 
       <main class="main">
@@ -1004,6 +1220,65 @@
           <button id="channel-member-add-submit-btn" class="btn primary" type="submit">추가</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog id="settings-modal">
+      <div class="settings-shell">
+        <aside class="settings-sidebar">
+          <div>
+            <div class="settings-sidebar-label">Preferences</div>
+            <div class="settings-workspace">
+              <strong>Viblack</strong>
+            </div>
+          </div>
+          <div class="settings-nav">
+            <button class="settings-nav-item active" type="button">AI 모델</button>
+          </div>
+        </aside>
+        <section class="settings-content">
+          <div class="settings-head">
+            <div>
+              <h3 class="settings-title">AI 모델 설정</h3>
+              <p class="settings-subtitle">
+                멤버 DM, 채널 멘션 실행, 시스템 프롬프트 생성에 사용할 Codex 모델을 선택합니다.
+              </p>
+            </div>
+            <button
+              id="settings-close-btn"
+              class="settings-close-btn"
+              type="button"
+              aria-label="설정 닫기"
+            >
+              ✕
+            </button>
+          </div>
+          <div class="settings-scroll">
+            <div class="settings-card-grid">
+              <div class="settings-card">
+                <div class="settings-card-label">현재 실행</div>
+                <div id="settings-current-model" class="settings-card-value">Codex 기본값</div>
+                <div id="settings-model-help" class="settings-inline-help">
+                  현재 Codex 기본 모델을 사용합니다.
+                </div>
+              </div>
+              <div class="settings-card">
+                <div class="settings-card-label">모델 캐시</div>
+                <div class="settings-card-value">로컬 캐시</div>
+                <div id="settings-cache-path" class="settings-card-sub">~/.codex/models_cache.json</div>
+              </div>
+            </div>
+            <div class="modal-field">
+              <label for="settings-model-select">실행 모델</label>
+              <select id="settings-model-select"></select>
+            </div>
+            <div id="settings-cache-error" class="settings-inline-error" aria-live="polite"></div>
+          </div>
+          <div class="settings-actions">
+            <button id="settings-model-cancel-btn" class="btn" type="button">취소</button>
+            <button id="settings-model-save-btn" class="btn primary" type="button">저장</button>
+          </div>
+        </section>
+      </div>
     </dialog>
 
     <script src="../../dist/renderer/channel-state.js"></script>

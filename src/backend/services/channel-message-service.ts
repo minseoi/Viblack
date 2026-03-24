@@ -8,6 +8,7 @@ import { ChannelMessageRepository } from "../repositories/channel-message-reposi
 import { ChannelRepository } from "../repositories/channel-repository";
 import type { Agent, ChannelExecutionKind, ChannelMessage, ChannelMessageKind } from "../types";
 import { AgentLockManager } from "./agent-lock-manager";
+import { AppSettingsService } from "./app-settings-service";
 import { buildChannelPrompt, buildMemberExecutionSystemPrompt, isAgentMessageStreamType } from "./member-prompt";
 import { extractMentionedAgents, type MentionedAgent } from "./mention-router";
 
@@ -38,6 +39,7 @@ export class ChannelMessageService {
     private readonly channelMemberStateRepository: ChannelMemberStateRepository,
     private readonly channelMessageRepository: ChannelMessageRepository,
     private readonly channelExecutionRepository: ChannelExecutionRepository,
+    private readonly appSettingsService: AppSettingsService,
     private readonly workspaceDir: string,
     private readonly lockManager: AgentLockManager,
     private readonly eventBus: ChannelEventBus,
@@ -355,11 +357,13 @@ export class ChannelMessageService {
   ): Promise<ChannelExecutionResult> {
     try {
       return await this.lockManager.withAgentLock(targetAgent.id, async () => {
+        const selectedModel = this.appSettingsService.getSelectedModel();
         let lastStreamMessageId: number | null = null;
         let lastStreamContent = "";
         const codexResult = await runCodex({
           prompt: buildChannelPrompt(channelName, triggerContent),
           systemPrompt: buildMemberExecutionSystemPrompt(targetAgent, "channel"),
+          model: selectedModel,
           sessionId: targetAgent.sessionId,
           cwd: this.workspaceDir,
           timeoutMs: 120_000,

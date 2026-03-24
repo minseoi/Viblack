@@ -2,10 +2,12 @@ import { runCodex } from "../codex";
 import { AgentRepository } from "../repositories/agent-repository";
 import { buildMemberExecutionSystemPrompt, isAgentMessageStreamType } from "./member-prompt";
 import { AgentLockManager } from "./agent-lock-manager";
+import { AppSettingsService } from "./app-settings-service";
 
 export class AgentExecutionService {
   constructor(
     private readonly agentRepository: AgentRepository,
+    private readonly appSettingsService: AppSettingsService,
     private readonly workspaceDir: string,
     private readonly lockManager: AgentLockManager,
   ) {}
@@ -25,9 +27,11 @@ export class AgentExecutionService {
 
       let lastStreamReply = "";
       let lastStreamMessageId: number | null = null;
+      const selectedModel = this.appSettingsService.getSelectedModel();
       const codexResult = await runCodex({
         prompt: content,
         systemPrompt: buildMemberExecutionSystemPrompt(agent, "dm"),
+        model: selectedModel,
         sessionId: agent.sessionId,
         cwd: this.workspaceDir,
         onStream: (event) => {

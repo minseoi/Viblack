@@ -1,0 +1,108 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { AppSettingsRepository } from "../repositories/app-settings-repository";
+import type { AppSettingsSnapshot } from "../types";
+
+const SELECTED_MODEL_KEY = "selected_model";
+
+interface ModelsCacheSnapshot {
+  availableModels: string[];
+  modelsCachePath: string;
+  cacheError: string | null;
+}
+
+export class AppSettingsService {
+  constructor(private readonly appSettingsRepository: AppSettingsRepository) {}
+
+  getSettings(): AppSettingsSnapshot {
+    const selectedModel = this.getSelectedModel();
+    const modelsSnapshot = this.readModelsCache();
+    return {
+      selectedModel,
+      selectedModelAvailable:
+        !selectedModel || modelsSnapshot.availableModels.includes(selectedModel),
+      availableModels: modelsSnapshot.availableModels,
+      modelsCachePath: modelsSnapshot.modelsCachePath,
+      cacheError: modelsSnapshot.cacheError,
+    };
+  }
+
+  getSelectedModel(): string | null {
+    const selectedModel = this.appSettingsRepository.getSetting(SELECTED_MODEL_KEY)?.value.trim() ?? "";
+    return selectedModel.length > 0 ? selectedModel : null;
+  }
+
+  updateSelectedModel(selectedModel: string | null): AppSettingsSnapshot {
+    if (!selectedModel) {
+      this.appSettingsRepository.deleteSetting(SELECTED_MODEL_KEY);
+      return this.getSettings();
+    }
+
+    const modelsSnapshot = this.readModelsCache();
+    if (modelsSnapshot.cacheError) {
+      throw new Error(modelsSnapshot.cacheError);
+    }
+    if (!modelsSnapshot.availableModels.includes(selectedModel)) {
+      throw new Error(`selected model is not available: ${selectedModel}`);
+    }
+
+    this.appSettingsRepository.setSetting(SELECTED_MODEL_KEY, selectedModel);
+    return this.getSettings();
+  }
+
+  private readModelsCache(): ModelsCacheSnapshot {
+    const modelsCachePath = this.resolveModelsCachePath();
+    if (!fs.existsSync(modelsCachePath)) {
+      return {
+        availableModels: [],
+        modelsCachePath,
+        cacheError: `models cache not found: ${modelsCachePath}`,
+      };
+    }
+
+    try {
+      const raw = fs.readFileSync(modelsCachePath, "utf8");
+      const parsed = JSON.parse(raw) as { models?: Array<{ slug?: unknown; display_name?: unknown }> };
+      const seen = new Set<string>();
+      const availableModels: string[] = [];
+
+      for (const entry of parsed.models ?? []) {
+        const candidate =
+          typeof entry?.slug === "string"
+            ? entry.slug.trim()
+            : typeof entry?.display_name === "string"
+              ? entry.display_name.trim()
+              : "";
+        if (!candidate || seen.has(candidate)) {
+          continue;
+        }
+        seen.add(candidate);
+        availableModels.push(candidate);
+      }
+
+      return {
+        availableModels,
+        modelsCachePath,
+        cacheError: null,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        availableModels: [],
+        modelsCachePath,
+        cacheError: `failed to read models cache: ${message}`,
+      };
+    }
+  }
+
+  private resolveModelsCachePath(): string {
+    const overridePath = process.env.VIBLACK_MODELS_CACHE_PATH?.trim();
+    if (overridePath) {
+      return path.isAbsolute(overridePath)
+        ? overridePath
+        : path.resolve(process.cwd(), overridePath);
+    }
+    return path.join(os.homedir(), ".codex", "models_cache.json");
+  }
+}

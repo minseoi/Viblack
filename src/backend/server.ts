@@ -3,6 +3,7 @@ import express from "express";
 import { ViblackDb } from "./db";
 import { ChannelEventBus } from "./events/channel-event-bus";
 import { AgentRepository } from "./repositories/agent-repository";
+import { AppSettingsRepository } from "./repositories/app-settings-repository";
 import { ChannelExecutionRepository } from "./repositories/channel-execution-repository";
 import { ChannelMemberRepository } from "./repositories/channel-member-repository";
 import { ChannelMemberStateRepository } from "./repositories/channel-member-state-repository";
@@ -10,9 +11,11 @@ import { ChannelMessageRepository } from "./repositories/channel-message-reposit
 import { ChannelRepository } from "./repositories/channel-repository";
 import { registerAgentRoutes } from "./routes/agent-routes";
 import { registerChannelRoutes } from "./routes/channel-routes";
+import { registerSettingsRoutes } from "./routes/settings-routes";
 import { registerSystemRoutes } from "./routes/system-routes";
 import { AgentExecutionService } from "./services/agent-execution-service";
 import { AgentLockManager } from "./services/agent-lock-manager";
+import { AppSettingsService } from "./services/app-settings-service";
 import { ChannelMessageService } from "./services/channel-message-service";
 
 interface StartServerOptions {
@@ -30,15 +33,18 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
   const app = express();
   const db = new ViblackDb(options.dbPath);
   const agentRepository = new AgentRepository(db.connection);
+  const appSettingsRepository = new AppSettingsRepository(db.connection);
   const channelRepository = new ChannelRepository(db.connection);
   const channelMemberRepository = new ChannelMemberRepository(db.connection);
   const channelMemberStateRepository = new ChannelMemberStateRepository(db.connection);
   const channelMessageRepository = new ChannelMessageRepository(db.connection);
   const channelExecutionRepository = new ChannelExecutionRepository(db.connection);
+  const appSettingsService = new AppSettingsService(appSettingsRepository);
   const lockManager = new AgentLockManager();
   const channelEventBus = new ChannelEventBus();
   const agentExecutionService = new AgentExecutionService(
     agentRepository,
+    appSettingsService,
     options.workspaceDir,
     lockManager,
   );
@@ -49,6 +55,7 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
     channelMemberStateRepository,
     channelMessageRepository,
     channelExecutionRepository,
+    appSettingsService,
     options.workspaceDir,
     lockManager,
     channelEventBus,
@@ -56,7 +63,11 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
 
   app.use(express.json({ limit: "1mb" }));
 
-  registerSystemRoutes(app, { workspaceDir: options.workspaceDir });
+  registerSystemRoutes(app, {
+    workspaceDir: options.workspaceDir,
+    appSettingsService,
+  });
+  registerSettingsRoutes(app, { appSettingsService });
   registerAgentRoutes(app, { agentRepository, agentExecutionService });
   registerChannelRoutes(app, {
     agentRepository,
