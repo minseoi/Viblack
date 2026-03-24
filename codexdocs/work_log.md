@@ -356,3 +356,73 @@
 - `npm run check`: 통과
 - `npm run build`: 통과
 - `npm run verify`: 통과 (GUI 권한 실행)
+
+### 88) Codex app-server 전환 착수
+- 사용자 요청 반영: Codex 실행 경로를 `exec --json` 파싱 중심에서 `app-server` 중심으로 점진 전환 시작.
+- 범위:
+  - `src/backend/codex.ts`에 app-server 세션 런타임 추가(우선 사용, 실패 시 exec fallback).
+  - 기존 DM/채널 로직(`server.ts`)은 인터페이스 유지로 회귀 최소화.
+  - E2E 픽스처/시나리오를 app-server 경로까지 확장.
+
+### 89) 구현 진행: app-server 런타임 + 테스트 픽스처 확장
+- `src/backend/codex.ts`:
+  - app-server(JSON-RPC over stdio) 클라이언트 추가.
+  - `thread/start|resume` + `turn/start` 기반 실행 경로 구현.
+  - `item/completed`의 `agentMessage`를 스트리밍 메시지로 반영.
+  - app-server 런타임 오류(프로세스/프로토콜) 시 기존 `exec` 경로로 fallback.
+- `tests/e2e/fixtures/fake-codex.js`:
+  - `app-server` 서브커맨드 모드 구현.
+  - 기존 `FORCE_*` 테스트 토큰 동작을 app-server 경로에도 반영.
+- `tests/e2e/electron.smoke.spec.ts`:
+  - `FORCE_REQUIRE_APP_SERVER` 메시지로 app-server 경로 사용 회귀 검증 추가.
+
+### 90) 회귀 수정: app-server delta 스트리밍 중간 메시지 복구
+- 검증 중 이슈:
+  - app-server 경로에서 `item/agentMessage/delta`를 UI 스트림으로 전달하지 않아,
+  - DM 중간 응답 노출(`STREAM_*`) 시나리오가 회귀 실패.
+- 조치(`src/backend/codex.ts`):
+  - delta 누적 버퍼(`deltaAggregate`) 도입.
+  - 조건부 emit(초기 길이/증분/문장 경계)로 토큰 스팸을 억제하면서 중간 메시지 반영.
+  - `item/completed(agentMessage)`와 중복 emit 방지(`lastStreamEmit`) 처리.
+
+### 91) 검증 완료: app-server 점진 도입 안정화
+- 자동 회귀:
+  - `npm run verify` 통과 (check/build/e2e 통과, real-codex spec 기본 skip)
+- 실코덱스 검증:
+  - `VIBLACK_E2E_REAL_CODEX=1 npx playwright test tests/e2e/electron.real-codex.spec.ts` 통과
+- 결과:
+  - 기본 실행 경로를 app-server 우선으로 전환하되,
+  - app-server 런타임 장애 시 기존 exec 경로 fallback으로 서비스 연속성 확보.
+
+### 92) 원인 분석: 두 줄 응답이 여러 메시지로 분할 표시되는 현상
+- 실측(실코덱스 direct):
+  - `codex exec --full-auto --skip-git-repo-check --json` 동일 프롬프트 응답은 `item.completed(item.type=agent_message)` 1건으로 도착.
+  - 예: `text="ALPHA\nBETA"` (단일 최종 메시지)
+- 실측(실코덱스 app-server + 앱 UI):
+  - 동일 계열 프롬프트에서 UI `msg-agent`가 누적 중간 텍스트로 여러 개 렌더링됨.
+  - 예: 짧은 접두 텍스트 -> 더 긴 중간 텍스트 -> 최종 텍스트 (3개)
+- 실측(app-server raw 이벤트 probe):
+  - `item/agentMessage/delta`가 토큰 단위로 다수 발생하고,
+  - 마지막에 `item/completed(agentMessage)` 1건이 도착.
+- 코드 원인:
+  - `src/backend/codex.ts`에서 delta 누적본을 `onStream(message)`로 emit (`item/agentMessage/delta` 처리).
+  - `src/backend/server.ts` DM/채널 경로가 `onStream` 수신마다 DB에 신규 메시지를 `append`.
+  - 따라서 "중간 상태"가 매번 별도 버블로 저장/렌더되고, 최종 completed 텍스트까지 별도 버블로 추가될 수 있음.
+
+### 93) 수정 계획 수립: 스트림은 "업데이트", 최종만 "확정"으로 분리
+- 목표:
+  - 사용자 기준 1회 응답은 기본적으로 1개 버블(최종 메시지)로 보이게 함.
+  - 중간 메시지를 보여주더라도 같은 버블 내용 업데이트 방식으로 동작하게 함.
+- 계획안:
+  1. DB 레이어에 메시지 업데이트 메서드 추가
+     - DM: `messages`의 마지막 스트림 메시지 `content`를 update 가능하도록 `updateMessageContent(id, content)` 추가.
+     - Channel: `channel_messages`도 동일 update 메서드 추가.
+  2. 서버 스트림 처리 정책 변경
+     - DM/채널 모두 `onStream` 최초 1회만 progress 메시지 append 후, 이후 delta/completed는 동일 메시지 update.
+     - turn 완료 시 최종 텍스트가 존재하면 progress 메시지를 final(result)로 승격(내용 교체 + kind 조정)하고 신규 append 지양.
+  3. SSE/폴링 동기화 보강
+     - Channel은 현재 append 이벤트 기반이므로, 업데이트 이벤트(`channel_message_updated`)를 추가하거나 기존 폴링 주기에서 변경 감지 보강.
+     - DM은 폴링 기반이라 update 반영은 즉시 가능.
+  4. 회귀 테스트 추가
+     - 실코덱스/fake 공통: "2줄 응답"에서 agent 버블 개수가 1개인지 검증.
+     - 스트리밍 존재 케이스에서도 최종 버블 1개 유지 + 내용은 최종 텍스트와 일치 검증.

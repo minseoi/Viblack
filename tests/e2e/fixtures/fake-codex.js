@@ -112,9 +112,12 @@ function shouldTransientFailOnce(promptText) {
   return true;
 }
 
-function buildReply(promptText) {
+function buildReply(promptText, runtimeMode = "exec") {
   if (promptText.includes("SYSTEM PROMPT를 작성하세요")) {
     return "당신은 테스트용 에이전트입니다. 한국어로 간결하고 정확하게 응답하세요.";
+  }
+  if (promptText.includes("FORCE_REQUIRE_APP_SERVER")) {
+    return runtimeMode === "app-server" ? "APP_SERVER_RUNTIME_OK" : "EXEC_RUNTIME_ONLY";
   }
   const assertMemberPromptMatch = promptText.match(/FORCE_ASSERT_MEMBER_PROMPT:\s*([^\s\r\n]+)/);
   if (promptText.includes("FORCE_ASSERT_MEMBER_TEMPLATE") && assertMemberPromptMatch) {
@@ -205,19 +208,220 @@ function sleep(ms) {
   });
 }
 
-async function main() {
-  const args = process.argv.slice(2);
+function extractTurnInputText(input) {
+  if (!Array.isArray(input)) {
+    return "";
+  }
+  return input
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return "";
+      }
+      const value = item;
+      if (value.type === "text" && typeof value.text === "string") {
+        return value.text;
+      }
+      return "";
+    })
+    .filter((text) => text.length > 0)
+    .join("\n");
+}
 
-  if (args.includes("--version")) {
-    process.stdout.write("fake-codex 1.0.0\n");
+function createThreadPayload(threadId, cwd) {
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    approvalPolicy: "never",
+    cwd,
+    model: "fake-model",
+    modelProvider: "fake",
+    sandbox: {
+      mode: "workspace-write",
+      writableRoots: [cwd],
+    },
+    thread: {
+      id: threadId,
+      cliVersion: "fake-codex-1.0.0",
+      createdAt: now,
+      cwd,
+      modelProvider: "fake",
+      preview: "fake thread",
+      source: "codex_app_server",
+      turns: [],
+      updatedAt: now,
+    },
+  };
+}
+
+async function runAppServer() {
+  process.stdin.setEncoding("utf8");
+  process.stdin.resume();
+
+  let buffer = "";
+
+  const writeJson = (payload) => {
+    process.stdout.write(`${JSON.stringify(payload)}\n`);
+  };
+
+  const respond = (id, result) => {
+    writeJson({ jsonrpc: "2.0", id, result });
+  };
+
+  const respondError = (id, code, message) => {
+    writeJson({
+      jsonrpc: "2.0",
+      id,
+      error: {
+        code,
+        message,
+      },
+    });
+  };
+
+  const notify = (method, params) => {
+    writeJson({
+      jsonrpc: "2.0",
+      method,
+      params,
+    });
+  };
+
+  const flush = async (flushAll) => {
+    const lines = buffer.split(/\r?\n/);
+    buffer = flushAll ? "" : (lines.pop() ?? "");
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) {
+        continue;
+      }
+
+      let message;
+      try {
+        message = JSON.parse(line);
+      } catch {
+        continue;
+      }
+
+      if (!message || typeof message !== "object") {
+        continue;
+      }
+
+      const id = message.id;
+      const method = typeof message.method === "string" ? message.method : "";
+      const params = message.params && typeof message.params === "object" ? message.params : {};
+
+      if (!method) {
+        continue;
+      }
+
+      if (method === "initialize") {
+        respond(id, { userAgent: "fake-codex-app-server/1.0.0" });
+        continue;
+      }
+
+      if (method === "thread/start") {
+        const cwd = typeof params.cwd === "string" && params.cwd ? params.cwd : process.cwd();
+        const threadId = `fake-thread-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        respond(id, createThreadPayload(threadId, cwd));
+        continue;
+      }
+
+      if (method === "thread/resume") {
+        const cwd = typeof params.cwd === "string" && params.cwd ? params.cwd : process.cwd();
+        const threadId =
+          typeof params.threadId === "string" && params.threadId
+            ? params.threadId
+            : `fake-thread-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        respond(id, createThreadPayload(threadId, cwd));
+        continue;
+      }
+
+      if (method === "turn/interrupt") {
+        const turnId = typeof params.turnId === "string" ? params.turnId : `fake-turn-${Date.now()}`;
+        respond(id, { turn: { id: turnId, status: "failed", items: [] } });
+        continue;
+      }
+
+      if (method === "turn/start") {
+        const threadId =
+          typeof params.threadId === "string" && params.threadId
+            ? params.threadId
+            : `fake-thread-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        const turnId = `fake-turn-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        const promptText = extractTurnInputText(params.input);
+        const forceTurnFailed = shouldForceTurnFailed(promptText);
+        const forceItemCompletedMessage = parseForcedItemCompletedMessage(promptText);
+        const streamMessage = parseForcedStreamMessage(promptText);
+        const forcedDelayMs = parseForcedDelayMs(promptText);
+
+        respond(id, { turn: { id: turnId, status: "started", items: [] } });
+        notify("turn/started", { threadId, turn: { id: turnId, status: "started", items: [] } });
+
+        if (forceTurnFailed) {
+          notify("turn/completed", {
+            threadId,
+            turn: {
+              id: turnId,
+              status: "failed",
+              items: [],
+              error: { message: "forced turn failure" },
+            },
+          });
+          continue;
+        }
+
+        if (streamMessage) {
+          notify("item/agentMessage/delta", {
+            threadId,
+            turnId,
+            itemId: `item-delta-${turnId}`,
+            delta: streamMessage,
+          });
+        }
+
+        if (forcedDelayMs > 0) {
+          await sleep(forcedDelayMs);
+        }
+
+        const reply = forceItemCompletedMessage || buildReply(promptText, "app-server");
+
+        notify("item/completed", {
+          threadId,
+          turnId,
+          item: {
+            id: `item-message-${turnId}`,
+            type: "agentMessage",
+            text: reply,
+          },
+        });
+
+        notify("turn/completed", {
+          threadId,
+          turn: {
+            id: turnId,
+            status: "completed",
+            items: [],
+          },
+        });
+        continue;
+      }
+
+      respondError(id, -32601, `Method not found: ${method}`);
+    }
+  };
+
+  process.stdin.on("data", async (chunk) => {
+    buffer += String(chunk);
+    await flush(false);
+  });
+
+  process.stdin.on("end", async () => {
+    await flush(true);
     process.exit(0);
-  }
+  });
+}
 
-  if (args[0] !== "exec") {
-    process.stderr.write("unsupported command\n");
-    process.exit(1);
-  }
-
+async function runExec(args) {
   const outputPath =
     parseArgValue(args, "--output-last-message", null) ?? parseArgValue(args, "-o", null);
 
@@ -228,7 +432,7 @@ async function main() {
   const forceItemCompletedMessage = parseForcedItemCompletedMessage(promptText);
   const streamMessage = parseForcedStreamMessage(promptText);
   const forcedDelayMs = parseForcedDelayMs(promptText);
-  const reply = buildReply(promptText);
+  const reply = buildReply(promptText, "exec");
   const effectiveSessionId = sessionId || `fake-session-${Date.now()}`;
 
   if (outputPath) {
@@ -267,7 +471,9 @@ async function main() {
         },
       })}\n`,
     );
-    process.stdout.write(`${JSON.stringify({ type: "turn.completed", usage: { output_tokens: 1 } })}\n`);
+    process.stdout.write(
+      `${JSON.stringify({ type: "turn.completed", usage: { output_tokens: 1 } })}\n`,
+    );
     process.exit(0);
   }
 
@@ -281,6 +487,27 @@ async function main() {
 
   process.stdout.write(`${JSON.stringify({ type: "response.completed", output_text: reply })}\n`);
   process.exit(0);
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+
+  if (args.includes("--version")) {
+    process.stdout.write("fake-codex 1.0.0\n");
+    process.exit(0);
+  }
+
+  if (args[0] === "app-server") {
+    await runAppServer();
+    return;
+  }
+
+  if (args[0] !== "exec") {
+    process.stderr.write("unsupported command\n");
+    process.exit(1);
+  }
+
+  await runExec(args);
 }
 
 void main().catch((err) => {

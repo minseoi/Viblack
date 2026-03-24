@@ -90,6 +90,7 @@ test("electron full feature regression flow", async ({}, testInfo) => {
   const dmItemCompletedToken = `ITEM_${suffix}`;
   const dmStreamToken = `STREAM_${suffix}`;
   const dmFinalToken = `FINAL_${suffix}`;
+  const dmAppServerRuntimeToken = "APP_SERVER_RUNTIME_OK";
   const channelName = `qa-room-${suffix}`;
   const editedChannelName = `qa-room-updated-${suffix}`;
 
@@ -161,6 +162,13 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     await page.click("#send-btn");
     await expect(page.locator("#messages .msg-user .msg-content", { hasText: "DM smoke ping" })).toHaveCount(1);
     await expect(page.locator("#messages .msg-agent .msg-content", { hasText: "테스트 응답" })).toHaveCount(1);
+    await page.fill("#chat-input", "FORCE_REQUIRE_APP_SERVER");
+    await page.click("#send-btn");
+    await expect(
+      page.locator("#messages .msg-agent .msg-content", {
+        hasText: dmAppServerRuntimeToken,
+      }),
+    ).toHaveCount(1);
     await page.fill("#chat-input", `FORCE_ITEM_COMPLETED_AGENT_MESSAGE:${dmItemCompletedToken}`);
     await page.click("#send-btn");
     await expect(
