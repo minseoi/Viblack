@@ -62,6 +62,17 @@ function parseForcedStreamMessage(promptText) {
   return match[1].trim();
 }
 
+function parseForcedStreamSequence(promptText) {
+  const match = promptText.match(/FORCE_STREAM_AGENT_MESSAGE_SEQ:\s*([^\s\r\n]+)/);
+  if (!match) {
+    return [];
+  }
+  return match[1]
+    .split("|")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+}
+
 function parseForcedFinalReply(promptText) {
   const match = promptText.match(/FORCE_FINAL_REPLY:\s*([^\s\r\n]+)/);
   if (!match) {
@@ -352,6 +363,7 @@ async function runAppServer() {
         const forceTurnFailed = shouldForceTurnFailed(promptText);
         const forceItemCompletedMessage = parseForcedItemCompletedMessage(promptText);
         const streamMessage = parseForcedStreamMessage(promptText);
+        const streamSequence = parseForcedStreamSequence(promptText);
         const forcedDelayMs = parseForcedDelayMs(promptText);
 
         respond(id, { turn: { id: turnId, status: "started", items: [] } });
@@ -376,6 +388,14 @@ async function runAppServer() {
             turnId,
             itemId: `item-delta-${turnId}`,
             delta: streamMessage,
+          });
+        }
+        for (const streamChunk of streamSequence) {
+          notify("item/agentMessage/delta", {
+            threadId,
+            turnId,
+            itemId: `item-delta-${turnId}`,
+            delta: streamChunk,
           });
         }
 
@@ -431,6 +451,7 @@ async function runExec(args) {
   const forceTransientFailOnce = shouldTransientFailOnce(promptText);
   const forceItemCompletedMessage = parseForcedItemCompletedMessage(promptText);
   const streamMessage = parseForcedStreamMessage(promptText);
+  const streamSequence = parseForcedStreamSequence(promptText);
   const forcedDelayMs = parseForcedDelayMs(promptText);
   const reply = buildReply(promptText, "exec");
   const effectiveSessionId = sessionId || `fake-session-${Date.now()}`;
@@ -479,6 +500,13 @@ async function runExec(args) {
 
   if (streamMessage) {
     process.stdout.write(`${JSON.stringify({ type: "agent_message", message: streamMessage })}\n`);
+  }
+  let aggregatedStream = "";
+  for (const streamChunk of streamSequence) {
+    aggregatedStream += streamChunk;
+    process.stdout.write(
+      `${JSON.stringify({ type: "agent_message", message: aggregatedStream })}\n`,
+    );
   }
 
   if (forcedDelayMs > 0) {

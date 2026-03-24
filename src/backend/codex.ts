@@ -1046,7 +1046,13 @@ async function runCodexExecOnce(params: CodexRunOnceParams): Promise<CodexRunRes
         params.sessionId,
         params.prompt,
       ]
-    : ["exec", "--full-auto", "--skip-git-repo-check", "--json", params.prompt];
+    : [
+        "exec",
+        "--full-auto",
+        "--skip-git-repo-check",
+        "--json",
+        params.prompt,
+      ];
 
   return new Promise((resolve) => {
     let child: ChildProcess;

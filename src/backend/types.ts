@@ -33,6 +33,15 @@ export interface ChannelMember {
   joinedAt: string;
 }
 
+export interface ChannelMemberState {
+  channelId: string;
+  agentId: string;
+  lastReadMessageId: number;
+  lastSeenAt: string | null;
+  isCoordinator: boolean;
+  updatedAt: string;
+}
+
 export interface ChannelMessage {
   id: number;
   channelId: string;
@@ -48,6 +57,25 @@ export interface ChannelMessageMention {
   agentId: string;
   mentionName: string;
   createdAt: string;
+}
+
+export type ChannelExecutionKind = "mention" | "remention";
+export type ChannelExecutionStatus = "queued" | "running" | "succeeded" | "failed" | "skipped";
+
+export interface ChannelExecutionJob {
+  id: number;
+  channelId: string;
+  triggerMessageId: number;
+  sourceMessageId: number;
+  sourceAgentId: string | null;
+  targetAgentId: string;
+  executionKind: ChannelExecutionKind;
+  status: ChannelExecutionStatus;
+  depth: number;
+  errorText: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
 }
 
 export interface CodexStatus {

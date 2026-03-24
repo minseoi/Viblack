@@ -46,6 +46,10 @@ export class ViblackDb {
     this.db.close();
   }
 
+  get connection(): DatabaseSync {
+    return this.db;
+  }
+
   listAgents(): Agent[] {
     const stmt = this.db.prepare(
       `SELECT id, name, role, role_profile, system_prompt, session_id, created_at
@@ -445,6 +449,39 @@ export class ViblackDb {
         FOREIGN KEY(message_id) REFERENCES channel_messages(id) ON DELETE CASCADE,
         FOREIGN KEY(agent_id) REFERENCES agents(id) ON DELETE CASCADE
       );
+
+      CREATE TABLE IF NOT EXISTS channel_member_states (
+        channel_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        last_read_message_id INTEGER NOT NULL DEFAULT 0,
+        last_seen_at TEXT,
+        is_coordinator INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (channel_id, agent_id),
+        FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+        FOREIGN KEY(agent_id) REFERENCES agents(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS channel_execution_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        channel_id TEXT NOT NULL,
+        trigger_message_id INTEGER NOT NULL,
+        source_message_id INTEGER NOT NULL,
+        source_agent_id TEXT,
+        target_agent_id TEXT NOT NULL,
+        execution_kind TEXT NOT NULL,
+        status TEXT NOT NULL,
+        depth INTEGER NOT NULL DEFAULT 0,
+        error_text TEXT,
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        FOREIGN KEY(channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+        FOREIGN KEY(trigger_message_id) REFERENCES channel_messages(id) ON DELETE CASCADE,
+        FOREIGN KEY(source_message_id) REFERENCES channel_messages(id) ON DELETE CASCADE,
+        FOREIGN KEY(source_agent_id) REFERENCES agents(id) ON DELETE SET NULL,
+        FOREIGN KEY(target_agent_id) REFERENCES agents(id) ON DELETE CASCADE
+      );
     `);
 
     this.ensureAgentRoleProfileColumn();
@@ -577,6 +614,11 @@ export class ViblackDb {
       CREATE INDEX IF NOT EXISTS idx_channel_messages_channel_id_id ON channel_messages(channel_id, id);
       CREATE INDEX IF NOT EXISTS idx_channel_message_mentions_message_id ON channel_message_mentions(message_id);
       CREATE INDEX IF NOT EXISTS idx_channel_message_mentions_agent_id ON channel_message_mentions(agent_id);
+      CREATE INDEX IF NOT EXISTS idx_channel_member_states_channel_id ON channel_member_states(channel_id);
+      CREATE INDEX IF NOT EXISTS idx_channel_member_states_agent_id ON channel_member_states(agent_id);
+      CREATE INDEX IF NOT EXISTS idx_channel_execution_jobs_channel_id_id ON channel_execution_jobs(channel_id, id);
+      CREATE INDEX IF NOT EXISTS idx_channel_execution_jobs_trigger_message_id ON channel_execution_jobs(trigger_message_id);
+      CREATE INDEX IF NOT EXISTS idx_channel_execution_jobs_target_agent_id ON channel_execution_jobs(target_agent_id);
     `);
   }
 }

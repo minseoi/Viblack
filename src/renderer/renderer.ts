@@ -54,11 +54,8 @@ interface PendingChannelUserMessage {
 
 let backendBaseUrl = "";
 let activeAgentId: string | null = null;
-let activeChannelId: string | null = null;
 let renderedMessages: ChatMessage[] = [];
 let agents: Agent[] = [];
-let channels: Channel[] = [];
-let activeChannelMembers: Agent[] = [];
 let codexReady = false;
 let openMemberMenuAgentId: string | null = null;
 let openChannelMenuChannelId: string | null = null;
@@ -75,13 +72,8 @@ const selectedChannelMemberAddIds = new Set<string>();
 const unreadAgentIds = new Set<string>();
 const inflightAgentIds = new Set<string>();
 let isGeneratingMemberPrompt = false;
-let inflightChannelRequestCount = 0;
-let channelEventSource: EventSource | null = null;
-let lastSeenChannelMessageId = 0;
-let isChannelDeltaSyncing = false;
-let pendingChannelDeltaSync = false;
-let nextLocalChannelMessageId = -1;
-let pendingChannelUserMessages: PendingChannelUserMessage[] = [];
+const channelStore = new ChannelStore();
+let channelSyncController: ChannelSyncController | null = null;
 const DM_INFLIGHT_SYNC_INTERVAL_MS = 350;
 
 function escapeHtml(value: string): string {
@@ -332,10 +324,7 @@ function initSidebarSections(): void {
 }
 
 function getChannelById(channelId: string | null): Channel | null {
-  if (!channelId) {
-    return null;
-  }
-  return channels.find((channel) => channel.id === channelId) ?? null;
+  return channelStore.getChannelById(channelId);
 }
 
 function updateChannelMembersButton(): void {
@@ -343,7 +332,7 @@ function updateChannelMembersButton(): void {
   if (!button) {
     return;
   }
-  if (activeChannelId) {
+  if (channelStore.getActiveChannelId()) {
     button.classList.remove("hidden");
   } else {
     button.classList.add("hidden");
@@ -352,15 +341,7 @@ function updateChannelMembersButton(): void {
 
 async function refreshChannels(preferredChannelId?: string | null): Promise<void> {
   const data = await fetchJson<{ channels: Channel[] }>(`${backendBaseUrl}/api/channels`);
-  channels = data.channels;
-
-  const preferred = preferredChannelId ?? activeChannelId;
-  if (preferred && channels.some((channel) => channel.id === preferred)) {
-    activeChannelId = preferred;
-  } else if (activeChannelId && channels.length === 0) {
-    activeChannelId = null;
-  }
-
+  channelStore.setChannels(data.channels, preferredChannelId ?? channelStore.getActiveChannelId());
   renderChannelList();
   updateChannelMembersButton();
 }
@@ -378,15 +359,16 @@ function matchesAgentSearch(agent: Agent, keyword: string): boolean {
 }
 
 async function refreshActiveChannelMembers(): Promise<void> {
+  const activeChannelId = channelStore.getActiveChannelId();
   if (!activeChannelId) {
-    activeChannelMembers = [];
+    channelStore.clearActiveChannelMembers();
     return;
   }
 
   const data = await fetchJson<ChannelMemberResponse>(
     `${backendBaseUrl}/api/channels/${activeChannelId}/members`,
   );
-  activeChannelMembers = data.members;
+  channelStore.setActiveChannelMembers(data.members);
 }
 
 function mapChannelMessagesToChatMessages(
@@ -404,93 +386,31 @@ function mapChannelMessagesToChatMessages(
 }
 
 function getLastChannelMessageId(messages: ChannelApiMessage[]): number {
-  if (messages.length === 0) {
-    return 0;
-  }
-  return messages[messages.length - 1].id;
+  return channelStore.getLastChannelMessageId(messages);
 }
 
 function mergeChannelMessages(current: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
-  if (incoming.length === 0) {
-    return current;
-  }
-
-  const mergedById = new Map<number, ChatMessage>();
-  for (const message of current) {
-    mergedById.set(message.id, message);
-  }
-  for (const message of incoming) {
-    mergedById.set(message.id, message);
-  }
-  return Array.from(mergedById.values()).sort((a, b) => a.id - b.id);
+  return channelStore.mergeChannelMessages(current, incoming);
 }
 
 function getPersistedChannelMessages(messages: ChatMessage[]): ChatMessage[] {
-  return messages.filter((message) => message.id > 0);
+  return channelStore.getPersistedChannelMessages(messages);
 }
 
 function createPendingChannelUserMessage(channelId: string, content: string): ChatMessage {
-  const pending: PendingChannelUserMessage = {
-    localId: nextLocalChannelMessageId,
-    channelId,
-    content,
-    createdAt: new Date().toISOString(),
-  };
-  nextLocalChannelMessageId -= 1;
-  pendingChannelUserMessages.push(pending);
-
-  return {
-    id: pending.localId,
-    sender: "user",
-    content: pending.content,
-    createdAt: pending.createdAt,
-  };
+  return channelStore.createPendingChannelUserMessage(channelId, content);
 }
 
 function removePendingChannelUserMessage(localId: number): void {
-  pendingChannelUserMessages = pendingChannelUserMessages.filter((pending) => pending.localId !== localId);
+  channelStore.removePendingChannelUserMessage(localId);
 }
 
 function getPendingChannelUserMessagesForRender(channelId: string): ChatMessage[] {
-  return pendingChannelUserMessages
-    .filter((pending) => pending.channelId === channelId)
-    .map((pending) => ({
-      id: pending.localId,
-      sender: "user",
-      content: pending.content,
-      createdAt: pending.createdAt,
-    }));
+  return channelStore.getPendingChannelUserMessagesForRender(channelId);
 }
 
 function reconcilePendingChannelUserMessages(channelId: string, serverMessages: ChatMessage[]): void {
-  const pendingForChannel = pendingChannelUserMessages.filter((pending) => pending.channelId === channelId);
-  if (pendingForChannel.length === 0) {
-    return;
-  }
-
-  const unmatchedServerUserContents = serverMessages
-    .filter((message) => message.sender === "user")
-    .map((message) => message.content);
-  if (unmatchedServerUserContents.length === 0) {
-    return;
-  }
-
-  const keepLocalIds = new Set<number>();
-  for (const pending of pendingForChannel) {
-    const matchIndex = unmatchedServerUserContents.indexOf(pending.content);
-    if (matchIndex >= 0) {
-      unmatchedServerUserContents.splice(matchIndex, 1);
-    } else {
-      keepLocalIds.add(pending.localId);
-    }
-  }
-
-  pendingChannelUserMessages = pendingChannelUserMessages.filter((pending) => {
-    if (pending.channelId !== channelId) {
-      return true;
-    }
-    return keepLocalIds.has(pending.localId);
-  });
+  channelStore.reconcilePendingChannelUserMessages(channelId, serverMessages);
 }
 
 function renderChannelList(): void {
@@ -500,6 +420,8 @@ function renderChannelList(): void {
   }
 
   list.innerHTML = "";
+  const channels = channelStore.getChannels();
+  const activeChannelId = channelStore.getActiveChannelId();
   if (channels.length === 0) {
     const empty = document.createElement("li");
     empty.className = "section-item empty";
@@ -535,7 +457,7 @@ function renderChannelList(): void {
 
     item.addEventListener("click", () => {
       closeChannelMenu();
-      activeChannelId = channel.id;
+      channelStore.setActiveChannelId(channel.id);
       activeAgentId = null;
       renderChannelList();
       renderMemberList();
@@ -775,15 +697,15 @@ function renderMemberList(): void {
     mainBtn.type = "button";
     mainBtn.addEventListener("click", () => {
       if (activeAgentId === agent.id) {
-        if (activeChannelId) {
-          activeChannelId = null;
+        if (channelStore.getActiveChannelId()) {
+          channelStore.setActiveChannelId(null);
           renderChannelList();
           updateChannelMembersButton();
           void refreshMessages();
         }
         return;
       }
-      activeChannelId = null;
+      channelStore.setActiveChannelId(null);
       activeAgentId = agent.id;
       unreadAgentIds.delete(agent.id);
       renderChannelList();
@@ -833,7 +755,7 @@ function renderMemberList(): void {
     list.appendChild(item);
   }
 
-  if (activeChannelId) {
+  if (channelStore.getActiveChannelId()) {
     setComposerEnabled(true);
   } else {
     setComposerEnabled(activeAgentId !== null);
@@ -994,7 +916,7 @@ function renderChannelMembersModalContent(): void {
   const list = document.getElementById("channel-members-list");
   const title = document.getElementById("channel-members-title");
   const searchInput = document.getElementById("channel-members-search-input") as HTMLInputElement | null;
-  const channel = getChannelById(activeChannelId);
+  const channel = getChannelById(channelStore.getActiveChannelId());
   if (!list || !title || !channel) {
     return;
   }
@@ -1004,7 +926,9 @@ function renderChannelMembersModalContent(): void {
   list.innerHTML = "";
   const keyword = normalizeSearchKeyword(searchInput?.value ?? "");
 
-  const members = activeChannelMembers.filter((agent) => matchesAgentSearch(agent, keyword));
+  const members = channelStore
+    .getActiveChannelMembers()
+    .filter((agent) => matchesAgentSearch(agent, keyword));
 
   if (members.length === 0) {
     const empty = document.createElement("div");
@@ -1050,7 +974,7 @@ function renderChannelMembersModalContent(): void {
 async function openChannelMembersModal(): Promise<void> {
   const modal = document.getElementById("channel-members-modal") as HTMLDialogElement | null;
   const searchInput = document.getElementById("channel-members-search-input") as HTMLInputElement | null;
-  const channel = getChannelById(activeChannelId);
+  const channel = getChannelById(channelStore.getActiveChannelId());
   if (!modal || !channel) {
     return;
   }
@@ -1087,14 +1011,16 @@ function renderChannelMemberAddList(): void {
   const list = document.getElementById("channel-member-add-list");
   const searchInput = document.getElementById("channel-member-add-search-input") as HTMLInputElement | null;
   const submitBtn = document.getElementById("channel-member-add-submit-btn") as HTMLButtonElement | null;
-  const channel = getChannelById(activeChannelId);
+  const channel = getChannelById(channelStore.getActiveChannelId());
   if (!list || !submitBtn || !channel) {
     return;
   }
 
   const keyword = normalizeSearchKeyword(searchInput?.value ?? "");
   const visibleAgents = agents.filter((agent) => matchesAgentSearch(agent, keyword));
-  const activeChannelMemberIds = new Set(activeChannelMembers.map((member) => member.id));
+  const activeChannelMemberIds = new Set(
+    channelStore.getActiveChannelMembers().map((member) => member.id),
+  );
 
   for (const selectedId of Array.from(selectedChannelMemberAddIds)) {
     const stillSelectable = agents.some(
@@ -1165,7 +1091,7 @@ function renderChannelMemberAddList(): void {
 async function openChannelMemberAddModal(): Promise<void> {
   const modal = document.getElementById("channel-member-add-modal") as HTMLDialogElement | null;
   const searchInput = document.getElementById("channel-member-add-search-input") as HTMLInputElement | null;
-  const channel = getChannelById(activeChannelId);
+  const channel = getChannelById(channelStore.getActiveChannelId());
   if (!modal || !searchInput || !channel) {
     return;
   }
@@ -1214,7 +1140,7 @@ async function saveChannel(channelName: string, channelDescription: string): Pro
         body: JSON.stringify({ name, description }),
       });
       await refreshChannels(editingChannelId);
-      if (activeChannelId === editingChannelId) {
+      if (channelStore.getActiveChannelId() === editingChannelId) {
         const updated = getChannelById(editingChannelId);
         setHeader(updated ? `# ${updated.name}` : "채널", updated?.description ?? "");
       }
@@ -1224,7 +1150,7 @@ async function saveChannel(channelName: string, channelDescription: string): Pro
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, description }),
       });
-      activeChannelId = created.channel.id;
+      channelStore.setActiveChannelId(created.channel.id);
       activeAgentId = null;
       await refreshChannels(created.channel.id);
       await refreshMessages();
@@ -1239,12 +1165,14 @@ async function saveChannel(channelName: string, channelDescription: string): Pro
 }
 
 async function addSelectedMembersToActiveChannel(memberIds: string[]): Promise<void> {
-  const channel = getChannelById(activeChannelId);
+  const channel = getChannelById(channelStore.getActiveChannelId());
   if (!channel) {
     return;
   }
 
-  const activeChannelMemberIds = new Set(activeChannelMembers.map((member) => member.id));
+  const activeChannelMemberIds = new Set(
+    channelStore.getActiveChannelMembers().map((member) => member.id),
+  );
   const toAdd = memberIds.filter((memberId) => memberId && !activeChannelMemberIds.has(memberId));
   if (toAdd.length === 0) {
     return;
@@ -1271,7 +1199,7 @@ async function addSelectedMembersToActiveChannel(memberIds: string[]): Promise<v
 }
 
 async function removeMemberFromActiveChannel(memberId: string): Promise<void> {
-  const channel = getChannelById(activeChannelId);
+  const channel = getChannelById(channelStore.getActiveChannelId());
   if (!channel) {
     return;
   }
@@ -1296,13 +1224,12 @@ async function deleteChannel(channelId: string): Promise<void> {
     await fetchJson<{ ok: boolean }>(`${backendBaseUrl}/api/channels/${channelId}`, {
       method: "DELETE",
     });
-    pendingChannelUserMessages = pendingChannelUserMessages.filter(
-      (pending) => pending.channelId !== channelId,
-    );
-    const nextChannelId = activeChannelId === channelId ? null : activeChannelId;
-    if (activeChannelId === channelId) {
-      activeChannelId = null;
-      activeChannelMembers = [];
+    channelStore.clearPendingChannelUserMessagesForChannel(channelId);
+    const currentChannelId = channelStore.getActiveChannelId();
+    const nextChannelId = currentChannelId === channelId ? null : currentChannelId;
+    if (currentChannelId === channelId) {
+      channelStore.setActiveChannelId(null);
+      channelStore.clearActiveChannelMembers();
     }
     closeChannelMenu();
     await refreshChannels(nextChannelId);
@@ -1330,7 +1257,7 @@ async function refreshAgents(preferredAgentId?: string | null): Promise<void> {
     }
   }
 
-  if (activeChannelId) {
+  if (channelStore.getActiveChannelId()) {
     activeAgentId = null;
   } else {
     const preferred = preferredAgentId ?? activeAgentId;
@@ -1349,7 +1276,7 @@ async function refreshMessagesByAgent(
   agentId: string,
   options?: { preserveWorkingStatus?: boolean },
 ): Promise<void> {
-  if (activeChannelId) {
+  if (channelStore.getActiveChannelId()) {
     unreadAgentIds.add(agentId);
     renderMemberList();
     return;
@@ -1374,98 +1301,33 @@ async function refreshMessagesByAgent(
 }
 
 function closeChannelEventStream(): void {
-  if (!channelEventSource) {
-    return;
-  }
-  channelEventSource.close();
-  channelEventSource = null;
+  channelSyncController?.disconnect();
 }
 
 function initChannelEventStream(): void {
-  if (!backendBaseUrl || channelEventSource) {
-    return;
+  if (!channelSyncController) {
+    channelSyncController = new ChannelSyncController({
+      getBackendBaseUrl: () => backendBaseUrl,
+      store: channelStore,
+      fetchJson,
+      mapChannelMessagesToChatMessages,
+      getRenderedMessages: () => renderedMessages,
+      setHeader,
+      renderMessages,
+      refreshActiveChannelMessages: refreshMessages,
+    });
   }
-
-  const stream = new EventSource(`${backendBaseUrl}/api/channels/events`);
-  channelEventSource = stream;
-
-  stream.addEventListener("channel_message", (event) => {
-    if (!activeChannelId) {
-      return;
-    }
-
-    let payload: ChannelMessageEventPayload | null = null;
-    try {
-      payload = JSON.parse((event as MessageEvent<string>).data) as ChannelMessageEventPayload;
-    } catch {
-      payload = null;
-    }
-    if (!payload || payload.channelId !== activeChannelId) {
-      return;
-    }
-    if (payload.messageId <= lastSeenChannelMessageId) {
-      return;
-    }
-    pendingChannelDeltaSync = true;
-    void syncActiveChannelMessageDelta();
-  });
+  channelSyncController.init();
 }
 
 async function syncActiveChannelMessageDelta(): Promise<void> {
-  if (!activeChannelId) {
-    return;
-  }
-  if (isChannelDeltaSyncing) {
-    return;
-  }
-
-  isChannelDeltaSyncing = true;
-  try {
-    while (activeChannelId) {
-      const channelId: string = activeChannelId;
-      const shouldSync = pendingChannelDeltaSync;
-      pendingChannelDeltaSync = false;
-      if (!shouldSync) {
-        break;
-      }
-
-      const data = await fetchJson<{
-        channel: Channel;
-        members: Agent[];
-        messages: ChannelApiMessage[];
-        mentionsByMessage: Record<number, Array<{ agentId: string; mentionName: string }>>;
-      }>(`${backendBaseUrl}/api/channels/${channelId}/messages?after=${lastSeenChannelMessageId}`);
-
-      if (activeChannelId !== channelId) {
-        continue;
-      }
-
-      activeChannelMembers = data.members;
-      setHeader(`# ${data.channel.name}`, data.channel.description);
-      if (data.messages.length === 0) {
-        continue;
-      }
-
-      const incoming = mapChannelMessagesToChatMessages(data.messages, data.members);
-      reconcilePendingChannelUserMessages(channelId, incoming);
-      const mergedServer = mergeChannelMessages(getPersistedChannelMessages(renderedMessages), incoming);
-      const pendingForRender = getPendingChannelUserMessagesForRender(channelId);
-      renderMessages(mergeChannelMessages(mergedServer, pendingForRender));
-      lastSeenChannelMessageId = Math.max(lastSeenChannelMessageId, getLastChannelMessageId(data.messages));
-    }
-  } catch {
-    // Ignore transient sync failures; next SSE event will retry.
-  } finally {
-    isChannelDeltaSyncing = false;
-    if (pendingChannelDeltaSync && activeChannelId) {
-      void syncActiveChannelMessageDelta();
-    }
-  }
+  await channelSyncController?.syncActiveChannelMessageDelta();
 }
 
 async function refreshMessages(): Promise<void> {
   updateChannelMembersButton();
   try {
+    const activeChannelId = channelStore.getActiveChannelId();
     if (activeChannelId) {
       const data = await fetchJson<{
         channel: Channel;
@@ -1473,7 +1335,7 @@ async function refreshMessages(): Promise<void> {
         messages: ChannelApiMessage[];
         mentionsByMessage: Record<number, Array<{ agentId: string; mentionName: string }>>;
       }>(`${backendBaseUrl}/api/channels/${activeChannelId}/messages`);
-      activeChannelMembers = data.members;
+      channelStore.setActiveChannelMembers(data.members);
       setHeader(`# ${data.channel.name}`, data.channel.description);
       setStatus(codexReady ? "Ready" : "Codex unavailable");
       setComposerEnabled(true);
@@ -1481,13 +1343,13 @@ async function refreshMessages(): Promise<void> {
       reconcilePendingChannelUserMessages(activeChannelId, serverMessages);
       const pendingForRender = getPendingChannelUserMessagesForRender(activeChannelId);
       renderMessages(mergeChannelMessages(serverMessages, pendingForRender));
-      lastSeenChannelMessageId = getLastChannelMessageId(data.messages);
-      pendingChannelDeltaSync = false;
+      channelStore.setLastSeenChannelMessageId(getLastChannelMessageId(data.messages));
+      channelStore.clearPendingChannelDeltaSync();
       return;
     }
 
-    lastSeenChannelMessageId = 0;
-    pendingChannelDeltaSync = false;
+    channelStore.resetLastSeenChannelMessageId();
+    channelStore.clearPendingChannelDeltaSync();
     if (!activeAgentId) {
       setHeader("멤버를 추가하세요", "");
       setStatus("No member selected");
@@ -1748,7 +1610,8 @@ function initMemberCrudUi(): void {
     if (!openChannelMenuChannelId) {
       return;
     }
-    const target = channels.find((channel) => channel.id === openChannelMenuChannelId) ?? null;
+    const target =
+      channelStore.getChannels().find((channel) => channel.id === openChannelMenuChannelId) ?? null;
     closeChannelMenu();
     openChannelModal("edit", target);
   });
@@ -1757,7 +1620,7 @@ function initMemberCrudUi(): void {
     if (!openChannelMenuChannelId) {
       return;
     }
-    const target = channels.find((channel) => channel.id === openChannelMenuChannelId);
+    const target = channelStore.getChannels().find((channel) => channel.id === openChannelMenuChannelId);
     if (!target) {
       return;
     }
@@ -1984,11 +1847,12 @@ async function sendMessage(): Promise<void> {
     return;
   }
 
+  const activeChannelId = channelStore.getActiveChannelId();
   if (activeChannelId) {
     const channelId = activeChannelId;
     let hadError = false;
     input.value = "";
-    inflightChannelRequestCount += 1;
+    channelStore.incrementInflightChannelRequestCount();
     setStatus("Channel is working...");
 
     const optimisticUser = createPendingChannelUserMessage(channelId, content);
@@ -2011,17 +1875,17 @@ async function sendMessage(): Promise<void> {
       await refreshMessages();
       focusInput();
     } finally {
-      inflightChannelRequestCount = Math.max(0, inflightChannelRequestCount - 1);
-      if (!hadError && activeChannelId === channelId) {
+      channelStore.decrementInflightChannelRequestCount();
+      if (!hadError && channelStore.getActiveChannelId() === channelId) {
         setStatus(
-          inflightChannelRequestCount > 0
+          channelStore.getInflightChannelRequestCount() > 0
             ? "Channel is working..."
             : codexReady
               ? "Ready"
               : "Codex unavailable",
         );
       }
-      button.disabled = !activeAgentId && !activeChannelId;
+      button.disabled = !activeAgentId && !channelStore.getActiveChannelId();
     }
     return;
   }
@@ -2082,7 +1946,7 @@ async function sendMessage(): Promise<void> {
     window.clearInterval(dmInflightSyncTimer);
     inflightAgentIds.delete(targetAgentId);
     renderMemberList();
-    button.disabled = !activeAgentId && !activeChannelId;
+    button.disabled = !activeAgentId && !channelStore.getActiveChannelId();
   }
 }
 

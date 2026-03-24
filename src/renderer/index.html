@@ -638,6 +638,7 @@
         color: #415268;
       }
       .modal-field input,
+      .modal-field select,
       .modal-field textarea {
         border: 1px solid var(--line);
         border-radius: 8px;
@@ -808,6 +809,23 @@
       .channel-member-menu-btn:hover {
         background: #c6dcfb;
       }
+      @media (max-width: 720px) {
+        .app {
+          grid-template-columns: 1fr;
+        }
+        .sidebar {
+          display: none;
+        }
+        .top {
+          padding: 12px 14px;
+        }
+        .messages-wrap {
+          padding: 12px 14px;
+        }
+        .composer {
+          padding: 10px 14px;
+        }
+      }
     </style>
   </head>
   <body>
@@ -855,6 +873,7 @@
             <ul id="member-list" class="member-list"></ul>
           </section>
         </div>
+
       </aside>
 
       <main class="main">
@@ -987,6 +1006,8 @@
       </form>
     </dialog>
 
+    <script src="../../dist/renderer/channel-state.js"></script>
+    <script src="../../dist/renderer/channel-sync.js"></script>
     <script src="../../dist/renderer/renderer.js"></script>
   </body>
 </html>

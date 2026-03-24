@@ -90,9 +90,11 @@ test("electron full feature regression flow", async ({}, testInfo) => {
   const dmItemCompletedToken = `ITEM_${suffix}`;
   const dmStreamToken = `STREAM_${suffix}`;
   const dmFinalToken = `FINAL_${suffix}`;
+  const dmStreamDedupFinalToken = `STREAM_DEDUP_${suffix}`;
   const dmAppServerRuntimeToken = "APP_SERVER_RUNTIME_OK";
   const channelName = `qa-room-${suffix}`;
   const editedChannelName = `qa-room-updated-${suffix}`;
+  const channelStreamDedupFinalToken = `CHANNEL_STREAM_DEDUP_${suffix}`;
 
   const { electronApp, page } = await launchIsolatedApp(testInfo);
 
@@ -225,6 +227,22 @@ test("electron full feature regression flow", async ({}, testInfo) => {
       }),
     ).toHaveCount(1, { timeout: 7000 });
 
+    const dmAgentMessages = page.locator("#messages .msg-agent .msg-content");
+    const beforeDmStreamDedupCount = await dmAgentMessages.count();
+    await page.fill(
+      "#chat-input",
+      `DM stream dedupe FORCE_STREAM_AGENT_MESSAGE_SEQ:abcdefghijklmnopqr|stuv|. FORCE_DELAY_MS:1800 FORCE_FINAL_REPLY:${dmStreamDedupFinalToken}`,
+    );
+    await page.click("#send-btn");
+    await expect(dmAgentMessages).toHaveCount(beforeDmStreamDedupCount + 1, { timeout: 1200 });
+    await expect(dmAgentMessages).toHaveCount(beforeDmStreamDedupCount + 1, { timeout: 1200 });
+    await expect(
+      page.locator("#messages .msg-agent .msg-content", {
+        hasText: dmStreamDedupFinalToken,
+      }),
+    ).toHaveCount(1, { timeout: 7000 });
+    await expect(dmAgentMessages).toHaveCount(beforeDmStreamDedupCount + 1, { timeout: 7000 });
+
     // A 응답 대기 중에도 B에게 DM 전송 가능해야 한다.
     await page.fill(
       "#chat-input",
@@ -337,6 +355,21 @@ test("electron full feature regression flow", async ({}, testInfo) => {
       page.locator("#messages .msg-user .msg-content", { hasText: "mention response test" }),
     ).toHaveCount(1);
     await expect(page.locator("#messages .msg-agent .msg-content", { hasText: "테스트 응답" })).toHaveCount(1);
+
+    const beforeChannelStreamDedupCount = await channelMessages.count();
+    await page.fill(
+      "#chat-input",
+      `@{${memberAlphaEdited}} FORCE_STREAM_AGENT_MESSAGE_SEQ:abcdefghijklmnopqr|stuv|. FORCE_DELAY_MS:1800 FORCE_FINAL_REPLY:${channelStreamDedupFinalToken}`,
+    );
+    await page.click("#send-btn");
+    await expect(channelMessages).toHaveCount(beforeChannelStreamDedupCount + 2, { timeout: 1200 });
+    await expect(channelMessages).toHaveCount(beforeChannelStreamDedupCount + 2, { timeout: 1200 });
+    await expect(
+      page.locator("#messages .msg-agent .msg-content", {
+        hasText: channelStreamDedupFinalToken,
+      }),
+    ).toHaveCount(1, { timeout: 7000 });
+    await expect(channelMessages).toHaveCount(beforeChannelStreamDedupCount + 2, { timeout: 7000 });
 
     const alphaSenderItems = page.locator("#messages .msg-agent .msg-sender", {
       hasText: memberAlphaEdited,
