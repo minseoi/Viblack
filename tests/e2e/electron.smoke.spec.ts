@@ -390,7 +390,7 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     await expect(
       page.locator("#messages .msg-user .msg-content", { hasText: "channel second while first busy" }),
     ).toHaveCount(1, { timeout: 1200 });
-    await expect(channelMessages).toHaveCount(beforeChannelBusyConcurrentCount + 2, { timeout: 1200 });
+    await expect(alphaSenderItems).toHaveCount(beforeChannelBusyAlphaSenderCount, { timeout: 1200 });
     await expect(alphaSenderItems).toHaveCount(beforeChannelBusyAlphaSenderCount + 1, { timeout: 7000 });
     await expect(channelMessages).toHaveCount(beforeChannelBusyConcurrentCount + 3, { timeout: 7000 });
 

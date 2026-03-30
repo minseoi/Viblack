@@ -565,3 +565,55 @@
   - 설정 E2E에 버튼 위치/문구 부재 검증 추가
 - 최종 검증:
   - `npm run verify` 통과
+
+### 84) 버그 수정 착수: 채널 실행 컨텍스트 누락
+- 사용자 이슈:
+  - 채널 리팩토링 후 A 멤버가 B 멤버의 이전 발언을 모르고,
+  - 현재 채널에 어떤 멤버가 있는지 모르는 상태로 응답함.
+- 원인 가설:
+  - 채널 실행 프롬프트가 `채널 이름 + 현재 트리거 문장` 정도만 포함하고 있어,
+  - 멤버 roster와 최근 공개 타임라인이 Codex 실행 입력으로 전달되지 않음.
+- 조치 계획:
+  - 채널 멤버 목록 + 최근 메시지 맥락을 프롬프트에 구조화해 포함
+  - fake codex와 E2E로 실제 전달 여부 검증
+- 진행 업데이트:
+  - 채널 실행 프롬프트에 `CHANNEL_MEMBERS`, `CHANNEL_RECENT_MESSAGES`, `ACTIVE_TRIGGER_MESSAGE` 섹션 추가
+  - 채널 멤버 roster와 최근 공개 메시지 12개를 실행 입력으로 전달하도록 수정
+  - fake codex에 채널 컨텍스트 검증 로직 추가
+  - `electron.channel-metadata.spec.ts`에 roster/history 전달 회귀 테스트 추가
+- 중간 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npx playwright test tests/e2e/electron.channel-metadata.spec.ts` 통과
+- 테스트 안정화:
+  - `electron.smoke.spec.ts`의 채널 병렬 지연 구간에서 전체 메시지 개수 단정을 제거
+  - 대신 두 사용자 메시지가 먼저 보이고, 지연된 Alpha 응답은 나중에 도착하는 의미 단정으로 조정
+
+85) 실제 로컬 채널 대화 디버깅 착수
+- 사용자 제보: 영희가 존에게 조사 요청을 시킨 뒤 결과를 정리해달라고 했는데, 존 조사 결과 메시지가 보이지 않음.
+- 확인 방향: 실제 로컬 SQLite에서 channel_messages, channel_message_mentions, channel_execution_jobs를 조회해 존 호출 여부와 메시지 저장 여부를 분리 진단.
+- 실제 로컬 DB 확인 결과: 문제 시점 사용자 메시지(id=91) 이후 존 대상 execution job 없음, 영희 응답(id=92)에 재멘션 레코드도 없음.
+### 86) 기능 추가 착수: 자연어 위임 요청을 채널 @멘션 실행으로 강제
+- 목표: 에이전트가 "존한테 시켜" 같은 지시를 받으면 채널 멘션 기능을 이해하고 실제 `@존` 텍스트로 위임하게 함.
+- 구현 방향: channel system prompt에 위임/보고 규칙 명시, fake-codex 자연어 위임 시뮬레이션 추가, E2E로 위임→보고→요약 체인 검증.
+- 구현 완료: channel prompt/system prompt에 정확한 @멘션 위임 규칙, 보고-재멘션 규칙, 허위 위임 결과 금지 규칙 추가.
+- 테스트 추가: 자연어 위임 요청이 실제 멘션 체인(영희→존→영희)으로 이어지는 E2E 시나리오 작성.
+### 87) 기능 추가 착수: 모호한 재질문도 반드시 요청자 멘션으로 환류
+- 목표: 채널 멤버가 다른 멤버에게 확인 질문을 할 때 plain text가 아니라 반드시 요청자 @멘션을 써서 작업이 끊기지 않게 함.
+- 구현 방향: channel prompt에 ACTIVE_TASK_REQUESTER 추가, system prompt에 재질문/보고 시 요청자 명시 멘션 규칙 추가, E2E로 모호한 위임 재질문 회귀 검증.
+- 구현 완료: ACTIVE_TASK_REQUESTER prompt 섹션 추가, 재질문/결과 보고 시 요청자 명시 멘션 규칙 추가.
+- 테스트 추가: 모호한 위임에서 하위 멤버가 `@요청자 확인 질문`으로 되돌리는 E2E 시나리오 작성.
+- 최종 검증: `npm run check`, `npm run build`, `npx playwright test tests/e2e/electron.channel-metadata.spec.ts`, `npm run verify` 통과.
+### 88) 버그 조사 착수: 처리 중인데 상단바 상태가 ready로 보이는 문제
+- 확인 방향: 렌더러 status 표시 로직, DM/채널 inflight 상태, SSE 기반 후속 실행 처리 타이밍을 코드 기준으로 분석.
+### 89) 실제 로컬 채널 대화 디버깅: `test` 채널 재멘션 체인 정지
+- 사용자 제보: `test` 채널 최신 대화에서 존이 `@영희`를 멘션했는데 영희가 응답하지 않음.
+- 실제 로컬 DB 확인:
+  - 메시지 흐름: `103(user @영희) -> 104(영희 @존) -> 105(존 @영희) -> 106(영희 @존) -> 107(존 @영희)`.
+  - `channel_message_mentions`에는 메시지 `107`의 `@영희` 레코드가 저장됨.
+  - `channel_execution_jobs`에는 job `28`이 `trigger_message_id=103`, `source_message_id=107`, `target_agent_id=member-2(영희)`, `execution_kind=remention`, `depth=4`, `status=queued`로 남아 있고 `started_at`/`finished_at`이 비어 있음.
+- 코드 기준 판단:
+  - `ChannelMessageService.MAX_MENTION_CHAIN_DEPTH = 4`.
+  - while 조건이 `chainDepth < MAX_MENTION_CHAIN_DEPTH`라서 깊이 4 작업은 enqueue만 되고 실행 루프에 들어가지 않음.
+  - 별도 background worker가 없어 이 queued job은 나중에 자동 소비되지 않음.
+- 결론: 요청이 누락된 것은 아니고, 실제 멘션/실행 잡 생성까지는 됐지만 멘션 체인 최대 깊이 도달로 영희 응답이 영구 대기 상태처럼 멈춘 사례임.

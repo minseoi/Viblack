@@ -218,3 +218,318 @@ test("channel execution jobs and member state metadata", async ({}, testInfo) =>
     await electronApp.close();
   }
 });
+
+test("channel execution prompt includes member roster and recent public history", async ({}, testInfo) => {
+  const suffix = Date.now();
+  const alphaName = `CtxAlpha${suffix}`;
+  const betaName = `CtxBeta${suffix}`;
+  const channelName = `ctx-room-${suffix}`;
+  const historyToken = `BETA_SHARED_${suffix}`;
+
+  const { electronApp, page } = await launchIsolatedApp(testInfo);
+
+  try {
+    const alphaCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+      method: "POST",
+      body: {
+        name: alphaName,
+        role: "Planner",
+        systemPrompt: "You are Alpha planner. Reply in concise Korean.",
+      },
+    });
+    expect(alphaCreate.status).toBe(201);
+
+    const betaCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+      method: "POST",
+      body: {
+        name: betaName,
+        role: "Reviewer",
+        systemPrompt: "You are Beta reviewer. Reply in concise Korean.",
+      },
+    });
+    expect(betaCreate.status).toBe(201);
+
+    const channelCreate = await apiRequest<{ channel: { id: string } }>(page, "/api/channels", {
+      method: "POST",
+      body: {
+        name: channelName,
+        description: "channel prompt context verification",
+      },
+    });
+    expect(channelCreate.status).toBe(201);
+
+    const channelId = channelCreate.data.channel.id;
+    const alphaId = alphaCreate.data.agent.id;
+    const betaId = betaCreate.data.agent.id;
+
+    expect(
+      (
+        await apiRequest(page, `/api/channels/${channelId}/members`, {
+          method: "POST",
+          body: { agentId: alphaId },
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await apiRequest(page, `/api/channels/${channelId}/members`, {
+          method: "POST",
+          body: { agentId: betaId },
+        })
+      ).status,
+    ).toBe(201);
+
+    const betaShare = await apiRequest<{
+      results: Array<{ reply: string }>;
+    }>(page, `/api/channels/${channelId}/messages`, {
+      method: "POST",
+      body: {
+        content: `@{${betaName}} FORCE_FINAL_REPLY:${historyToken}`,
+        messageKind: "general",
+      },
+    });
+    expect(betaShare.status).toBe(200);
+    expect(betaShare.data.results[0]?.reply).toContain(historyToken);
+
+    const alphaContextCheck = await apiRequest<{
+      results: Array<{ reply: string }>;
+    }>(page, `/api/channels/${channelId}/messages`, {
+      method: "POST",
+      body: {
+        content: `@{${alphaName}} FORCE_ASSERT_CHANNEL_MEMBERS:${alphaName}|${betaName} FORCE_ASSERT_CHANNEL_HISTORY:${historyToken}`,
+        messageKind: "general",
+      },
+    });
+    expect(alphaContextCheck.status).toBe(200);
+    expect(alphaContextCheck.data.results[0]?.reply).toContain("채널 컨텍스트 확인:ok");
+  } finally {
+    await electronApp.close();
+  }
+});
+
+test("natural language delegation request becomes channel mention chain", async ({}, testInfo) => {
+  const suffix = Date.now();
+  const leaderName = `영희${suffix}`;
+  const delegateName = `존${suffix}`;
+  const channelName = `delegate-room-${suffix}`;
+
+  const { electronApp, page } = await launchIsolatedApp(testInfo);
+
+  try {
+    const leaderCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+      method: "POST",
+      body: {
+        name: leaderName,
+        role: "Planner",
+        systemPrompt: "You are Younghee planner. Reply in concise Korean.",
+      },
+    });
+    expect(leaderCreate.status).toBe(201);
+
+    const delegateCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+      method: "POST",
+      body: {
+        name: delegateName,
+        role: "Researcher",
+        systemPrompt: "You are John researcher. Reply in concise Korean.",
+      },
+    });
+    expect(delegateCreate.status).toBe(201);
+
+    const channelCreate = await apiRequest<{ channel: { id: string } }>(page, "/api/channels", {
+      method: "POST",
+      body: {
+        name: channelName,
+        description: "delegation mention chain verification",
+      },
+    });
+    expect(channelCreate.status).toBe(201);
+
+    const channelId = channelCreate.data.channel.id;
+    const leaderId = leaderCreate.data.agent.id;
+    const delegateId = delegateCreate.data.agent.id;
+
+    expect(
+      (
+        await apiRequest(page, `/api/channels/${channelId}/members`, {
+          method: "POST",
+          body: { agentId: leaderId },
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await apiRequest(page, `/api/channels/${channelId}/members`, {
+          method: "POST",
+          body: { agentId: delegateId },
+        })
+      ).status,
+    ).toBe(201);
+
+    const sendMessage = await apiRequest<{
+      message: { id: number };
+      results: Array<{ agentId: string; reply: string }>;
+    }>(page, `/api/channels/${channelId}/messages`, {
+      method: "POST",
+      body: {
+        content: `@{${leaderName}} ${delegateName}한테 조사 시키고 그 결과를 정리해서 나한테 줘`,
+        messageKind: "general",
+      },
+    });
+    expect(sendMessage.status).toBe(200);
+
+    await expect
+      .poll(async () => {
+        const response = await apiRequest<{
+          jobs: Array<{
+            targetAgentId: string;
+            executionKind: string;
+            status: string;
+            depth: number;
+          }>;
+        }>(page, `/api/channels/${channelId}/executions`);
+        return response.data.jobs.map((job) => `${job.targetAgentId}:${job.executionKind}:${job.status}:${job.depth}`);
+      })
+      .toEqual([
+        `${leaderId}:mention:succeeded:0`,
+        `${delegateId}:remention:succeeded:1`,
+        `${leaderId}:remention:succeeded:2`,
+      ]);
+
+    const messagesResponse = await apiRequest<{
+      messages: Array<{
+        senderId: string | null;
+        content: string;
+        messageKind: string;
+      }>;
+    }>(page, `/api/channels/${channelId}/messages`);
+    expect(messagesResponse.status).toBe(200);
+    expect(messagesResponse.data.messages).toHaveLength(4);
+    expect(messagesResponse.data.messages[1]).toMatchObject({
+      senderId: leaderId,
+      messageKind: "result",
+    });
+    expect(messagesResponse.data.messages[1]?.content).toContain(`@{${delegateName}}`);
+    expect(messagesResponse.data.messages[2]).toMatchObject({
+      senderId: delegateId,
+      messageKind: "remention",
+    });
+    expect(messagesResponse.data.messages[2]?.content).toContain(`@{${leaderName}}`);
+    expect(messagesResponse.data.messages[2]?.content).toContain("조사 결과 보고:");
+    expect(messagesResponse.data.messages[3]).toMatchObject({
+      senderId: leaderId,
+      messageKind: "remention",
+    });
+    expect(messagesResponse.data.messages[3]?.content).toContain("최종 정리:");
+  } finally {
+    await electronApp.close();
+  }
+});
+
+test("ambiguous delegated task triggers clarification mention back to requester", async ({}, testInfo) => {
+  const suffix = Date.now();
+  const leaderName = `영희${suffix}`;
+  const workerName = `철수${suffix}`;
+  const channelName = `clarify-room-${suffix}`;
+
+  const { electronApp, page } = await launchIsolatedApp(testInfo);
+
+  try {
+    const leaderCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+      method: "POST",
+      body: {
+        name: leaderName,
+        role: "Planner",
+        systemPrompt: "You are Younghee planner. Reply in concise Korean.",
+      },
+    });
+    expect(leaderCreate.status).toBe(201);
+
+    const workerCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+      method: "POST",
+      body: {
+        name: workerName,
+        role: "Researcher",
+        systemPrompt: "You are Chulsoo researcher. Reply in concise Korean.",
+      },
+    });
+    expect(workerCreate.status).toBe(201);
+
+    const channelCreate = await apiRequest<{ channel: { id: string } }>(page, "/api/channels", {
+      method: "POST",
+      body: {
+        name: channelName,
+        description: "clarification mention verification",
+      },
+    });
+    expect(channelCreate.status).toBe(201);
+
+    const channelId = channelCreate.data.channel.id;
+    const leaderId = leaderCreate.data.agent.id;
+    const workerId = workerCreate.data.agent.id;
+
+    expect(
+      (
+        await apiRequest(page, `/api/channels/${channelId}/members`, {
+          method: "POST",
+          body: { agentId: leaderId },
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await apiRequest(page, `/api/channels/${channelId}/members`, {
+          method: "POST",
+          body: { agentId: workerId },
+        })
+      ).status,
+    ).toBe(201);
+
+    const sendMessage = await apiRequest<{
+      message: { id: number };
+    }>(page, `/api/channels/${channelId}/messages`, {
+      method: "POST",
+      body: {
+        content: `@{${leaderName}} ${workerName}한테 그거 조사 시키고 정리해서 줘`,
+        messageKind: "general",
+      },
+    });
+    expect(sendMessage.status).toBe(200);
+
+    await expect
+      .poll(async () => {
+        const response = await apiRequest<{
+          jobs: Array<{
+            targetAgentId: string;
+            executionKind: string;
+            status: string;
+            depth: number;
+          }>;
+        }>(page, `/api/channels/${channelId}/executions`);
+        return response.data.jobs.map((job) => `${job.targetAgentId}:${job.executionKind}:${job.status}:${job.depth}`);
+      })
+      .toEqual([
+        `${leaderId}:mention:succeeded:0`,
+        `${workerId}:remention:succeeded:1`,
+        `${leaderId}:remention:succeeded:2`,
+      ]);
+
+    const messagesResponse = await apiRequest<{
+      messages: Array<{
+        senderId: string | null;
+        content: string;
+        messageKind: string;
+      }>;
+    }>(page, `/api/channels/${channelId}/messages`);
+    expect(messagesResponse.status).toBe(200);
+    expect(messagesResponse.data.messages[1]?.content).toContain(`@{${workerName}}`);
+    expect(messagesResponse.data.messages[2]).toMatchObject({
+      senderId: workerId,
+      messageKind: "remention",
+    });
+    expect(messagesResponse.data.messages[2]?.content).toContain(`@{${leaderName}}`);
+    expect(messagesResponse.data.messages[2]?.content).toContain("확인 질문:");
+  } finally {
+    await electronApp.close();
+  }
+});

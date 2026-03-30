@@ -9,7 +9,12 @@ import { ChannelRepository } from "../repositories/channel-repository";
 import type { Agent, ChannelExecutionKind, ChannelMessage, ChannelMessageKind } from "../types";
 import { AgentLockManager } from "./agent-lock-manager";
 import { AppSettingsService } from "./app-settings-service";
-import { buildChannelPrompt, buildMemberExecutionSystemPrompt, isAgentMessageStreamType } from "./member-prompt";
+import {
+  buildChannelPrompt,
+  buildMemberExecutionSystemPrompt,
+  isAgentMessageStreamType,
+  type ChannelPromptTimelineEntry,
+} from "./member-prompt";
 import { extractMentionedAgents, type MentionedAgent } from "./mention-router";
 
 interface ChannelExecutionResult {
@@ -31,6 +36,7 @@ interface ChannelMessageListResult {
 export class ChannelMessageService {
   private static readonly MAX_MENTION_CHAIN_DEPTH = 4;
   private static readonly MAX_MENTION_EXECUTIONS = 12;
+  private static readonly CHANNEL_PROMPT_RECENT_MESSAGE_LIMIT = 12;
 
   constructor(
     private readonly agentRepository: AgentRepository,
@@ -261,7 +267,11 @@ export class ChannelMessageService {
           return this.executeMentionedAgent(
             channelId,
             channel.name,
+            channel.description,
             targetAgent,
+            members,
+            task.sourceAgentId,
+            task.sourceMessageId,
             task.sourceContent,
             task.resultMessageKind,
             task.jobId,
@@ -350,7 +360,11 @@ export class ChannelMessageService {
   private async executeMentionedAgent(
     channelId: string,
     channelName: string,
+    channelDescription: string,
     targetAgent: Agent,
+    members: Agent[],
+    sourceAgentId: string | null,
+    sourceMessageId: number,
     triggerContent: string,
     resultMessageKind: ChannelMessageKind,
     jobId: number,
@@ -358,10 +372,20 @@ export class ChannelMessageService {
     try {
       return await this.lockManager.withAgentLock(targetAgent.id, async () => {
         const selectedModel = this.appSettingsService.getSelectedModel();
+        const prompt = this.buildChannelExecutionPrompt({
+          channelId,
+          channelName,
+          channelDescription,
+          targetAgent,
+          members,
+          sourceAgentId,
+          sourceMessageId,
+          fallbackTriggerContent: triggerContent,
+        });
         let lastStreamMessageId: number | null = null;
         let lastStreamContent = "";
         const codexResult = await runCodex({
-          prompt: buildChannelPrompt(channelName, triggerContent),
+          prompt,
           systemPrompt: buildMemberExecutionSystemPrompt(targetAgent, "channel"),
           model: selectedModel,
           sessionId: targetAgent.sessionId,
@@ -475,5 +499,69 @@ export class ChannelMessageService {
         message: systemMessage,
       };
     }
+  }
+
+  private buildChannelExecutionPrompt(input: {
+    channelId: string;
+    channelName: string;
+    channelDescription: string;
+    targetAgent: Agent;
+    members: Agent[];
+    sourceAgentId: string | null;
+    sourceMessageId: number;
+    fallbackTriggerContent: string;
+  }): string {
+    const memberNameById = new Map(input.members.map((member) => [member.id, member.name]));
+    const recentMessages = this.channelMessageRepository
+      .listRecentChannelMessages(
+        input.channelId,
+        input.sourceMessageId,
+        ChannelMessageService.CHANNEL_PROMPT_RECENT_MESSAGE_LIMIT,
+      )
+      .filter((message) => message.messageKind !== "progress");
+
+    const timeline = recentMessages.map<ChannelPromptTimelineEntry>((message) => ({
+      senderLabel: this.resolveChannelSenderLabel(message.senderType, message.senderId, memberNameById),
+      senderType: message.senderType,
+      messageKind: message.messageKind,
+      content: message.content,
+    }));
+
+    const triggerMessage =
+      timeline[timeline.length - 1] ??
+      ({
+        senderLabel: "Unknown",
+        senderType: "user",
+        messageKind: "general",
+        content: input.fallbackTriggerContent,
+      } satisfies ChannelPromptTimelineEntry);
+
+    return buildChannelPrompt({
+      channelName: input.channelName,
+      channelDescription: input.channelDescription,
+      targetAgentName: input.targetAgent.name,
+      taskRequesterName: input.sourceAgentId ? memberNameById.get(input.sourceAgentId) ?? input.sourceAgentId : null,
+      members: input.members.map((member) => ({
+        name: member.name,
+        role: member.role,
+        roleProfile: member.roleProfile,
+      })),
+      recentMessages: timeline,
+      triggerMessage,
+    });
+  }
+
+  private resolveChannelSenderLabel(
+    senderType: "user" | "agent" | "system",
+    senderId: string | null,
+    memberNameById: Map<string, string>,
+  ): string {
+    if (senderType === "user") {
+      return "User";
+    }
+    if (senderType === "system") {
+      return "System";
+    }
+    return senderId ? memberNameById.get(senderId) ?? senderId : "Unknown agent";
   }
 }

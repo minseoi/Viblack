@@ -104,6 +104,36 @@ export class ChannelMessageRepository {
     }));
   }
 
+  listRecentChannelMessages(
+    channelId: string,
+    beforeOrAtMessageId: number,
+    limit: number,
+  ): ChannelMessage[] {
+    const effectiveBeforeMessageId = Math.max(0, Math.trunc(beforeOrAtMessageId));
+    const effectiveLimit = Math.max(1, Math.trunc(limit));
+    const rows = this.db
+      .prepare(
+        `SELECT id, channel_id, sender_type, sender_id, content, message_kind, created_at
+         FROM channel_messages
+         WHERE channel_id = ? AND id <= ?
+         ORDER BY id DESC
+         LIMIT ?`,
+      )
+      .all(channelId, effectiveBeforeMessageId, effectiveLimit) as Array<Record<string, unknown>>;
+
+    return rows
+      .reverse()
+      .map((row) => ({
+        id: Number(row.id),
+        channelId: String(row.channel_id),
+        senderType: row.sender_type as SenderType,
+        senderId: row.sender_id ? String(row.sender_id) : null,
+        content: String(row.content),
+        messageKind: row.message_kind as ChannelMessageKind,
+        createdAt: String(row.created_at),
+      }));
+  }
+
   addChannelMessageMentions(
     messageId: number,
     mentions: Array<{ agentId: string; mentionName: string }>,

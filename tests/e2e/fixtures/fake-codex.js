@@ -58,6 +58,135 @@ function extractEmbeddedMemberPrompt(promptText) {
   return match ? match[1].trim() : "";
 }
 
+function extractPromptSection(promptText, sectionName) {
+  const pattern = new RegExp(`\\[${sectionName}_BEGIN\\]\\r?\\n([\\s\\S]*?)\\r?\\n\\[${sectionName}_END\\]`);
+  const match = promptText.match(pattern);
+  return match ? match[1].trim() : "";
+}
+
+function getControlPromptText(promptText) {
+  return extractPromptSection(promptText, "ACTIVE_TRIGGER_MESSAGE") || promptText;
+}
+
+function extractAgentName(promptText) {
+  const match = promptText.match(/^- Name:\s*(.+)$/m);
+  return match ? match[1].trim() : "";
+}
+
+function extractChannelMemberNames(promptText) {
+  const membersSection = extractPromptSection(promptText, "CHANNEL_MEMBERS");
+  if (!membersSection) {
+    return [];
+  }
+  return membersSection
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .map((line) => line.match(/^\d+\.\s+(.+?)(?:\s+\|.*)?$/))
+    .map((match) => (match ? match[1].trim() : ""))
+    .filter((name) => name.length > 0);
+}
+
+function extractActiveTaskRequester(promptText) {
+  const requester = extractPromptSection(promptText, "ACTIVE_TASK_REQUESTER");
+  if (!requester || requester === "(none)") {
+    return "";
+  }
+  return requester;
+}
+
+function extractMentionedMemberNames(text, memberNames) {
+  return memberNames.filter(
+    (memberName) =>
+      text.includes(`@{${memberName}}`) ||
+      text.includes(`@${memberName}`),
+  );
+}
+
+function hasExactMentionDelegationRules(promptText) {
+  return (
+    promptText.includes("your reply must include an exact channel mention to that member") &&
+    promptText.includes("otherwise no execution occurs") &&
+    promptText.includes("mention the delegating member back using their exact name")
+  );
+}
+
+function findDelegationTarget(triggerText, currentAgentName, memberNames) {
+  const delegationKeywords = ["시키", "조사", "부탁", "요청", "넘겨", "맡겨", "물어", "해봐"];
+  const normalizedTrigger = triggerText.replace(/\s+/g, " ");
+  if (!delegationKeywords.some((keyword) => normalizedTrigger.includes(keyword))) {
+    return "";
+  }
+
+  for (const memberName of memberNames) {
+    if (!memberName || memberName === currentAgentName) {
+      continue;
+    }
+    if (
+      normalizedTrigger.includes(`${memberName}한테`) ||
+      normalizedTrigger.includes(`${memberName}에게`) ||
+      normalizedTrigger.includes(`@{${memberName}}`) ||
+      normalizedTrigger.includes(`@${memberName}`)
+    ) {
+      return memberName;
+    }
+  }
+
+  return "";
+}
+
+function isAmbiguousDelegationPrompt(text) {
+  return ["그거", "저거", "2번", "모호", "불명확", "방금 말한"].some((token) => text.includes(token));
+}
+
+function maybeBuildDelegationReply(promptText, controlPromptText) {
+  if (!hasExactMentionDelegationRules(promptText)) {
+    return "";
+  }
+
+  const currentAgentName = extractAgentName(promptText);
+  const memberNames = extractChannelMemberNames(promptText);
+  const activeTaskRequester = extractActiveTaskRequester(promptText);
+  if (!currentAgentName || memberNames.length === 0) {
+    return "";
+  }
+
+  const mentionedMembers = extractMentionedMemberNames(controlPromptText, memberNames);
+  if (
+    activeTaskRequester &&
+    isAmbiguousDelegationPrompt(controlPromptText) &&
+    !controlPromptText.includes("확인 질문:")
+  ) {
+    return `@{${activeTaskRequester}} 확인 질문: 방금 말한 "그거"가 정확히 어떤 범위인지 먼저 알려줘.`;
+  }
+
+  if (
+    mentionedMembers.includes(currentAgentName) &&
+    controlPromptText.includes("보고해줘")
+  ) {
+    const returnTarget = mentionedMembers.find((memberName) => memberName !== currentAgentName);
+    if (returnTarget) {
+      return `조사 결과 보고: 핵심 사실 3개를 정리했습니다. @{${returnTarget}} 이어서 사용자용으로 요약해줘.`;
+    }
+  }
+
+  if (
+    mentionedMembers.includes(currentAgentName) &&
+    controlPromptText.includes("조사 결과 보고:")
+  ) {
+    return "최종 정리: 하위 리서치 결과를 바탕으로 사용자용 초안을 정리했습니다.";
+  }
+
+  const delegationTarget = findDelegationTarget(controlPromptText, currentAgentName, memberNames);
+  if (delegationTarget) {
+    if (isAmbiguousDelegationPrompt(controlPromptText)) {
+      return `@{${delegationTarget}} 방금 말한 그거를 조사해줘. 범위가 불명확하면 @{${currentAgentName}} 에게 먼저 확인 질문해줘.`;
+    }
+    return `@{${delegationTarget}} 조사 부탁합니다. 공개 자료 기준 핵심 사실만 정리하고 결과는 @{${currentAgentName}} 에게 채널에서 보고해줘.`;
+  }
+
+  return "";
+}
+
 function parseForcedStreamMessage(promptText) {
   const match = promptText.match(/FORCE_STREAM_AGENT_MESSAGE:\s*([^\s\r\n]+)/);
   if (!match) {
@@ -127,11 +256,52 @@ function shouldTransientFailOnce(promptText) {
   return true;
 }
 
-function buildReply(promptText, runtimeMode = "exec", requestedModel = null) {
+function buildReply(promptText, runtimeMode = "exec", requestedModel = null, controlPromptText = promptText) {
   if (promptText.includes("SYSTEM PROMPT를 작성하세요")) {
     return "당신은 테스트용 에이전트입니다. 한국어로 간결하고 정확하게 응답하세요.";
   }
-  const assertModelMatch = promptText.match(/FORCE_ASSERT_MODEL:\s*([^\s\r\n]+)/);
+  const delegatedReply = maybeBuildDelegationReply(promptText, controlPromptText);
+  if (delegatedReply) {
+    return delegatedReply;
+  }
+  const assertChannelMembersMatch = controlPromptText.match(
+    /FORCE_ASSERT_CHANNEL_MEMBERS:\s*([^\s\r\n]+)/,
+  );
+  const assertChannelHistoryMatch = controlPromptText.match(
+    /FORCE_ASSERT_CHANNEL_HISTORY:\s*([^\s\r\n]+)/,
+  );
+  if (assertChannelMembersMatch || assertChannelHistoryMatch) {
+    const membersSection = extractPromptSection(promptText, "CHANNEL_MEMBERS");
+    const historySection = extractPromptSection(promptText, "CHANNEL_RECENT_MESSAGES");
+
+    if (!membersSection) {
+      return "채널 멤버 섹션 누락";
+    }
+    if (!historySection) {
+      return "채널 히스토리 섹션 누락";
+    }
+
+    if (assertChannelMembersMatch) {
+      const expectedMembers = assertChannelMembersMatch[1]
+        .split("|")
+        .map((member) => member.trim())
+        .filter((member) => member.length > 0);
+      const missingMember = expectedMembers.find((member) => !membersSection.includes(member));
+      if (missingMember) {
+        return `채널 멤버 누락:${missingMember}`;
+      }
+    }
+
+    if (assertChannelHistoryMatch) {
+      const expectedHistoryToken = assertChannelHistoryMatch[1].trim();
+      if (!historySection.includes(expectedHistoryToken)) {
+        return `채널 히스토리 누락:${expectedHistoryToken}`;
+      }
+    }
+
+    return "채널 컨텍스트 확인:ok";
+  }
+  const assertModelMatch = controlPromptText.match(/FORCE_ASSERT_MODEL:\s*([^\s\r\n]+)/);
   if (assertModelMatch) {
     const expectedModel = assertModelMatch[1].trim();
     const normalizedExpected = expectedModel.toLowerCase();
@@ -147,8 +317,8 @@ function buildReply(promptText, runtimeMode = "exec", requestedModel = null) {
   if (promptText.includes("FORCE_REQUIRE_APP_SERVER")) {
     return runtimeMode === "app-server" ? "APP_SERVER_RUNTIME_OK" : "EXEC_RUNTIME_ONLY";
   }
-  const assertMemberPromptMatch = promptText.match(/FORCE_ASSERT_MEMBER_PROMPT:\s*([^\s\r\n]+)/);
-  if (promptText.includes("FORCE_ASSERT_MEMBER_TEMPLATE") && assertMemberPromptMatch) {
+  const assertMemberPromptMatch = controlPromptText.match(/FORCE_ASSERT_MEMBER_PROMPT:\s*([^\s\r\n]+)/);
+  if (controlPromptText.includes("FORCE_ASSERT_MEMBER_TEMPLATE") && assertMemberPromptMatch) {
     const requiredSections = [
       "[IDENTITY]",
       "[CONTEXT]",
@@ -170,7 +340,7 @@ function buildReply(promptText, runtimeMode = "exec", requestedModel = null) {
     }
     return `멤버 템플릿/프롬프트 확인:${expectedToken}`;
   }
-  if (promptText.includes("FORCE_ASSERT_MEMBER_TEMPLATE")) {
+  if (controlPromptText.includes("FORCE_ASSERT_MEMBER_TEMPLATE")) {
     const requiredSections = [
       "[IDENTITY]",
       "[CONTEXT]",
@@ -195,7 +365,7 @@ function buildReply(promptText, runtimeMode = "exec", requestedModel = null) {
     }
     return `멤버 프롬프트 누락:${expectedToken}`;
   }
-  const bounceSeedMatch = promptText.match(
+  const bounceSeedMatch = controlPromptText.match(
     /FORCE_BOUNCE_MENTIONS:\s*([^\s,\r\n]+)\s*,\s*([^\s,\r\n]+)/,
   );
   if (bounceSeedMatch) {
@@ -203,15 +373,15 @@ function buildReply(promptText, runtimeMode = "exec", requestedModel = null) {
     const nextTarget = bounceSeedMatch[2];
     return `테스트 바운스 1단계: @{${nextTarget}} FORCE_BOUNCE_RETURN:${returnTarget}`;
   }
-  const bounceReturnMatch = promptText.match(/FORCE_BOUNCE_RETURN:\s*([^\s\r\n]+)/);
+  const bounceReturnMatch = controlPromptText.match(/FORCE_BOUNCE_RETURN:\s*([^\s\r\n]+)/);
   if (bounceReturnMatch) {
     return `테스트 바운스 2단계: @{${bounceReturnMatch[1]}} FORCE_BOUNCE_DONE`;
   }
-  const forcedMentionMatch = promptText.match(/FORCE_MENTION_NAME:\s*([^\s\r\n]+)/);
+  const forcedMentionMatch = controlPromptText.match(/FORCE_MENTION_NAME:\s*([^\s\r\n]+)/);
   if (forcedMentionMatch) {
     return `테스트 재멘션: @{${forcedMentionMatch[1]}} FORCE_DELAY_MS:1800 확인 부탁합니다.`;
   }
-  const forcedFinalReply = parseForcedFinalReply(promptText);
+  const forcedFinalReply = parseForcedFinalReply(controlPromptText);
   if (forcedFinalReply) {
     return forcedFinalReply;
   }
@@ -377,11 +547,12 @@ async function runAppServer() {
             : `fake-thread-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
         const turnId = `fake-turn-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
         const promptText = extractTurnInputText(params.input);
-        const forceTurnFailed = shouldForceTurnFailed(promptText);
-        const forceItemCompletedMessage = parseForcedItemCompletedMessage(promptText);
-        const streamMessage = parseForcedStreamMessage(promptText);
-        const streamSequence = parseForcedStreamSequence(promptText);
-        const forcedDelayMs = parseForcedDelayMs(promptText);
+        const controlPromptText = getControlPromptText(promptText);
+        const forceTurnFailed = shouldForceTurnFailed(controlPromptText);
+        const forceItemCompletedMessage = parseForcedItemCompletedMessage(controlPromptText);
+        const streamMessage = parseForcedStreamMessage(controlPromptText);
+        const streamSequence = parseForcedStreamSequence(controlPromptText);
+        const forcedDelayMs = parseForcedDelayMs(controlPromptText);
 
         respond(id, { turn: { id: turnId, status: "started", items: [] } });
         notify("turn/started", { threadId, turn: { id: turnId, status: "started", items: [] } });
@@ -420,7 +591,9 @@ async function runAppServer() {
           await sleep(forcedDelayMs);
         }
 
-        const reply = forceItemCompletedMessage || buildReply(promptText, "app-server");
+        const reply =
+          forceItemCompletedMessage ||
+          buildReply(promptText, "app-server", null, controlPromptText);
 
         notify("item/completed", {
           threadId,
@@ -465,13 +638,14 @@ async function runExec(args) {
   const requestedModel = parseRequestedModel(args);
   const { sessionId, promptText: promptFromArgs } = parseExecContext(args);
   const promptText = promptFromArgs || (await readStdin());
-  const forceTurnFailed = shouldForceTurnFailed(promptText);
-  const forceTransientFailOnce = shouldTransientFailOnce(promptText);
-  const forceItemCompletedMessage = parseForcedItemCompletedMessage(promptText);
-  const streamMessage = parseForcedStreamMessage(promptText);
-  const streamSequence = parseForcedStreamSequence(promptText);
-  const forcedDelayMs = parseForcedDelayMs(promptText);
-  const reply = buildReply(promptText, "exec", requestedModel);
+  const controlPromptText = getControlPromptText(promptText);
+  const forceTurnFailed = shouldForceTurnFailed(controlPromptText);
+  const forceTransientFailOnce = shouldTransientFailOnce(controlPromptText);
+  const forceItemCompletedMessage = parseForcedItemCompletedMessage(controlPromptText);
+  const streamMessage = parseForcedStreamMessage(controlPromptText);
+  const streamSequence = parseForcedStreamSequence(controlPromptText);
+  const forcedDelayMs = parseForcedDelayMs(controlPromptText);
+  const reply = buildReply(promptText, "exec", requestedModel, controlPromptText);
   const effectiveSessionId = sessionId || `fake-session-${Date.now()}`;
 
   if (outputPath) {
