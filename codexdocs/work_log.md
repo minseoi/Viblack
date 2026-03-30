@@ -617,3 +617,9 @@
   - while 조건이 `chainDepth < MAX_MENTION_CHAIN_DEPTH`라서 깊이 4 작업은 enqueue만 되고 실행 루프에 들어가지 않음.
   - 별도 background worker가 없어 이 queued job은 나중에 자동 소비되지 않음.
 - 결론: 요청이 누락된 것은 아니고, 실제 멘션/실행 잡 생성까지는 됐지만 멘션 체인 최대 깊이 도달로 영희 응답이 영구 대기 상태처럼 멈춘 사례임.
+- 커밋 완료: fix_channel_collaboration_context_and_mention_delegation (검증 완료 후 커밋).
+- 원인 분석: channel progress update가 같은 messageId로 SSE에 들어올 때 refreshMessages()가 상태바를 무조건 Ready로 덮어써 실제 실행 중에도 ready로 보였음.
+- 수정 방향: active channel running execution job 수를 추적하고, channel refresh/delta sync가 status를 inflight+running job 기준으로 계산하게 변경.
+- 구현 완료: channel 상태바가 inflight request 뿐 아니라 active channel running execution job 수를 함께 보고 `working/ready`를 계산하도록 수정.
+- 회귀 테스트 추가: streaming channel mention 진행 중 상단바가 Ready로 떨어지지 않고 `Channel is working...`을 유지하는 smoke 검증 추가.
+- 최종 검증: `npm run check`, `npm run build`, `npm run test:e2e -- tests/e2e/electron.smoke.spec.ts`, `npm run verify` 통과.

@@ -3,6 +3,7 @@ class ChannelStore {
   private activeChannelId: string | null = null;
   private activeChannelMembers: Agent[] = [];
   private inflightChannelRequestCount = 0;
+  private activeChannelRunningJobCount = 0;
   private lastSeenChannelMessageId = 0;
   private isChannelDeltaSyncing = false;
   private pendingChannelDeltaSync = false;
@@ -62,6 +63,18 @@ class ChannelStore {
 
   decrementInflightChannelRequestCount(): void {
     this.inflightChannelRequestCount = Math.max(0, this.inflightChannelRequestCount - 1);
+  }
+
+  getActiveChannelRunningJobCount(): number {
+    return this.activeChannelRunningJobCount;
+  }
+
+  setActiveChannelRunningJobCount(count: number): void {
+    this.activeChannelRunningJobCount = Math.max(0, count);
+  }
+
+  clearActiveChannelRunningJobCount(): void {
+    this.activeChannelRunningJobCount = 0;
   }
 
   getLastSeenChannelMessageId(): number {
@@ -202,4 +215,3 @@ class ChannelStore {
     return messages[messages.length - 1].id;
   }
 }
-

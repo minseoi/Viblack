@@ -45,6 +45,11 @@ interface ChannelMessageEventPayload {
   messageId: number;
 }
 
+interface ChannelExecutionJob {
+  id: number;
+  status: "queued" | "running" | "succeeded" | "failed" | "skipped";
+}
+
 interface PendingChannelUserMessage {
   localId: number;
   channelId: string;
@@ -329,6 +334,29 @@ function getReadyStatusText(command?: string): string {
     return modelLabel ? `Ready (${command} / ${modelLabel})` : `Ready (${command})`;
   }
   return modelLabel ? `Ready (${modelLabel})` : "Ready";
+}
+
+function getActiveChannelStatusText(): string {
+  if (
+    channelStore.getInflightChannelRequestCount() > 0 ||
+    channelStore.getActiveChannelRunningJobCount() > 0
+  ) {
+    return "Channel is working...";
+  }
+  return codexReady ? getReadyStatusText() : "Codex unavailable";
+}
+
+function syncStatusForCurrentContext(): void {
+  if (channelStore.getActiveChannelId()) {
+    setStatus(getActiveChannelStatusText());
+    return;
+  }
+  if (activeAgentId && inflightAgentIds.has(activeAgentId)) {
+    const activeAgent = agents.find((agent) => agent.id === activeAgentId);
+    setStatus(`${activeAgent?.name ?? "Agent"} is working...`);
+    return;
+  }
+  setStatus(codexReady ? getReadyStatusText() : "Codex unavailable");
 }
 
 function renderSettingsModal(): void {
@@ -1460,6 +1488,8 @@ function initChannelEventStream(): void {
       setHeader,
       renderMessages,
       refreshActiveChannelMessages: refreshMessages,
+      refreshActiveChannelExecutionState,
+      syncStatusForCurrentContext,
     });
   }
   channelSyncController.init();
@@ -1469,20 +1499,46 @@ async function syncActiveChannelMessageDelta(): Promise<void> {
   await channelSyncController?.syncActiveChannelMessageDelta();
 }
 
+async function refreshActiveChannelExecutionState(channelId: string): Promise<void> {
+  const data = await fetchJson<{
+    channel: Channel;
+    jobs: ChannelExecutionJob[];
+  }>(`${backendBaseUrl}/api/channels/${channelId}/executions`);
+
+  if (channelStore.getActiveChannelId() !== channelId) {
+    return;
+  }
+
+  const runningJobCount = data.jobs.filter(
+    (job) => job.status === "queued" || job.status === "running",
+  ).length;
+  channelStore.setActiveChannelRunningJobCount(runningJobCount);
+}
+
 async function refreshMessages(): Promise<void> {
   updateChannelMembersButton();
   try {
     const activeChannelId = channelStore.getActiveChannelId();
     if (activeChannelId) {
-      const data = await fetchJson<{
-        channel: Channel;
-        members: Agent[];
-        messages: ChannelApiMessage[];
-        mentionsByMessage: Record<number, Array<{ agentId: string; mentionName: string }>>;
-      }>(`${backendBaseUrl}/api/channels/${activeChannelId}/messages`);
+      const [data, executionData] = await Promise.all([
+        fetchJson<{
+          channel: Channel;
+          members: Agent[];
+          messages: ChannelApiMessage[];
+          mentionsByMessage: Record<number, Array<{ agentId: string; mentionName: string }>>;
+        }>(`${backendBaseUrl}/api/channels/${activeChannelId}/messages`),
+        fetchJson<{
+          channel: Channel;
+          jobs: ChannelExecutionJob[];
+        }>(`${backendBaseUrl}/api/channels/${activeChannelId}/executions`),
+      ]);
+      const runningJobCount = executionData.jobs.filter(
+        (job) => job.status === "queued" || job.status === "running",
+      ).length;
+      channelStore.setActiveChannelRunningJobCount(runningJobCount);
       channelStore.setActiveChannelMembers(data.members);
       setHeader(`# ${data.channel.name}`, data.channel.description);
-      setStatus(codexReady ? getReadyStatusText() : "Codex unavailable");
+      syncStatusForCurrentContext();
       setComposerEnabled(true);
       const serverMessages = mapChannelMessagesToChatMessages(data.messages, data.members);
       reconcilePendingChannelUserMessages(activeChannelId, serverMessages);
@@ -1495,6 +1551,7 @@ async function refreshMessages(): Promise<void> {
 
     channelStore.resetLastSeenChannelMessageId();
     channelStore.clearPendingChannelDeltaSync();
+    channelStore.clearActiveChannelRunningJobCount();
     if (!activeAgentId) {
       setHeader("멤버를 추가하세요", "");
       setStatus("No member selected");
@@ -1507,7 +1564,7 @@ async function refreshMessages(): Promise<void> {
     );
     setHeader(data.agent.name, data.agent.role);
     renderMessages(data.messages, data.agent.name);
-    setStatus(codexReady ? getReadyStatusText() : "Codex unavailable");
+    syncStatusForCurrentContext();
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown error";
     setStatus(`Error: ${message}`);
@@ -2052,13 +2109,7 @@ async function sendMessage(): Promise<void> {
     } finally {
       channelStore.decrementInflightChannelRequestCount();
       if (!hadError && channelStore.getActiveChannelId() === channelId) {
-        setStatus(
-          channelStore.getInflightChannelRequestCount() > 0
-            ? "Channel is working..."
-            : codexReady
-              ? getReadyStatusText()
-              : "Codex unavailable",
-        );
+        syncStatusForCurrentContext();
       }
       button.disabled = !activeAgentId && !channelStore.getActiveChannelId();
     }

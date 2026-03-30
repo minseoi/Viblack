@@ -14,6 +14,8 @@ interface ChannelSyncControllerOptions {
   setHeader: (title: string, subtitle: string) => void;
   renderMessages: (messages: ChatMessage[], agentName?: string) => void;
   refreshActiveChannelMessages: () => Promise<void>;
+  refreshActiveChannelExecutionState: (channelId: string) => Promise<void>;
+  syncStatusForCurrentContext: () => void;
 }
 
 class ChannelSyncController {
@@ -108,6 +110,8 @@ class ChannelSyncController {
             this.options.store.getLastChannelMessageId(data.messages),
           ),
         );
+        await this.options.refreshActiveChannelExecutionState(channelId);
+        this.options.syncStatusForCurrentContext();
       }
     } catch {
       // Ignore transient sync failures; next SSE event will retry.

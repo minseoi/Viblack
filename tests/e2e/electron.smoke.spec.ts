@@ -362,14 +362,17 @@ test("electron full feature regression flow", async ({}, testInfo) => {
       `@{${memberAlphaEdited}} FORCE_STREAM_AGENT_MESSAGE_SEQ:abcdefghijklmnopqr|stuv|. FORCE_DELAY_MS:1800 FORCE_FINAL_REPLY:${channelStreamDedupFinalToken}`,
     );
     await page.click("#send-btn");
+    await expect(page.locator("#status")).toHaveText("Channel is working...", { timeout: 1200 });
     await expect(channelMessages).toHaveCount(beforeChannelStreamDedupCount + 2, { timeout: 1200 });
     await expect(channelMessages).toHaveCount(beforeChannelStreamDedupCount + 2, { timeout: 1200 });
+    await expect(page.locator("#status")).toHaveText("Channel is working...");
     await expect(
       page.locator("#messages .msg-agent .msg-content", {
         hasText: channelStreamDedupFinalToken,
       }),
     ).toHaveCount(1, { timeout: 7000 });
     await expect(channelMessages).toHaveCount(beforeChannelStreamDedupCount + 2, { timeout: 7000 });
+    await expect(page.locator("#status")).toContainText("Ready", { timeout: 7000 });
 
     const alphaSenderItems = page.locator("#messages .msg-agent .msg-sender", {
       hasText: memberAlphaEdited,
