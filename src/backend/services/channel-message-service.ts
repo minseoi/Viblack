@@ -34,7 +34,6 @@ interface ChannelMessageListResult {
 }
 
 export class ChannelMessageService {
-  private static readonly MAX_MENTION_CHAIN_DEPTH = 4;
   private static readonly MAX_MENTION_EXECUTIONS = 12;
   private static readonly CHANNEL_PROMPT_RECENT_MESSAGE_LIMIT = 12;
 
@@ -174,6 +173,7 @@ export class ChannelMessageService {
     const queuedAgentIds = new Set<string>();
     const taskQueue: MentionTask[] = [];
     const results: ChannelExecutionResult[] = [];
+    const skippedTasksByJobId = new Map<number, MentionTask>();
 
     const enqueueMentions = (
       nextMentions: MentionedAgent[],
@@ -224,17 +224,24 @@ export class ChannelMessageService {
 
     enqueueMentions(mentions, userMessage.id, userMessage.id, null, content, "result", "mention", 0);
 
-    let chainDepth = 0;
-    while (
-      taskQueue.length > 0 &&
-      chainDepth < ChannelMessageService.MAX_MENTION_CHAIN_DEPTH &&
-      results.length < ChannelMessageService.MAX_MENTION_EXECUTIONS
-    ) {
+    const recordSkippedTasks = (tasks: MentionTask[]): void => {
+      for (const task of tasks) {
+        skippedTasksByJobId.set(task.jobId, task);
+      }
+    };
+
+    while (taskQueue.length > 0 && results.length < ChannelMessageService.MAX_MENTION_EXECUTIONS) {
       const currentBatch = taskQueue.splice(0, taskQueue.length);
       const availableSlots = ChannelMessageService.MAX_MENTION_EXECUTIONS - results.length;
       const runnableBatch = currentBatch.slice(0, availableSlots);
+      const overflowBatch = currentBatch.slice(availableSlots);
       for (const task of currentBatch) {
         queuedAgentIds.delete(task.agentId);
+      }
+      recordSkippedTasks(overflowBatch);
+
+      if (runnableBatch.length === 0) {
+        break;
       }
 
       const batchResults = await Promise.all(
@@ -255,33 +262,39 @@ export class ChannelMessageService {
               "result",
             );
             return {
-              agentId: task.agentId,
-              agentName: "unknown",
-              ok: false,
-              reply: missingReply,
-              message: systemMessage,
+              task,
+              result: {
+                agentId: task.agentId,
+                agentName: "unknown",
+                ok: false,
+                reply: missingReply,
+                message: systemMessage,
+              },
             };
           }
 
           this.channelExecutionRepository.markExecutionJobRunning(task.jobId);
-          return this.executeMentionedAgent(
-            channelId,
-            channel.name,
-            channel.description,
-            targetAgent,
-            members,
-            task.sourceAgentId,
-            task.sourceMessageId,
-            task.sourceContent,
-            task.resultMessageKind,
-            task.jobId,
-          );
+          return {
+            task,
+            result: await this.executeMentionedAgent(
+              channelId,
+              channel.name,
+              channel.description,
+              targetAgent,
+              members,
+              task.sourceAgentId,
+              task.sourceMessageId,
+              task.sourceContent,
+              task.resultMessageKind,
+              task.jobId,
+            ),
+          };
         }),
       );
 
-      results.push(...batchResults);
+      results.push(...batchResults.map((entry) => entry.result));
 
-      for (const batchResult of batchResults) {
+      for (const { task, result: batchResult } of batchResults) {
         if (!batchResult.ok || batchResult.message.senderType !== "agent") {
           continue;
         }
@@ -302,11 +315,29 @@ export class ChannelMessageService {
           batchResult.reply,
           "remention",
           "remention",
-          chainDepth + 1,
+          task.depth + 1,
         );
       }
+    }
 
-      chainDepth += 1;
+    if (taskQueue.length > 0) {
+      recordSkippedTasks(taskQueue.splice(0, taskQueue.length));
+    }
+
+    if (skippedTasksByJobId.size > 0) {
+      const skippedTasks = [...skippedTasksByJobId.values()];
+      const errorText = `mention execution budget exhausted (${ChannelMessageService.MAX_MENTION_EXECUTIONS})`;
+      for (const task of skippedTasks) {
+        queuedAgentIds.delete(task.agentId);
+        this.channelExecutionRepository.markExecutionJobFinished(task.jobId, "skipped", errorText);
+      }
+      this.appendChannelMessageAndNotify(
+        channelId,
+        "system",
+        null,
+        this.buildMentionExecutionBudgetMessage(skippedTasks, memberById),
+        "result",
+      );
     }
 
     return {
@@ -563,5 +594,15 @@ export class ChannelMessageService {
       return "System";
     }
     return senderId ? memberNameById.get(senderId) ?? senderId : "Unknown agent";
+  }
+
+  private buildMentionExecutionBudgetMessage(
+    skippedTasks: Array<{ agentId: string }>,
+    memberById: Map<string, Agent>,
+  ): string {
+    const targetNames = [...new Set(skippedTasks.map((task) => memberById.get(task.agentId)?.name ?? task.agentId))];
+    const targetSuffix =
+      targetNames.length > 0 ? ` 대상: ${targetNames.slice(0, 5).join(", ")}${targetNames.length > 5 ? " 외" : ""}.` : "";
+    return `멘션 실행 한도(${ChannelMessageService.MAX_MENTION_EXECUTIONS}건)에 도달하여 남은 후속 멘션 ${skippedTasks.length}건을 실행하지 않았습니다.${targetSuffix}`;
   }
 }

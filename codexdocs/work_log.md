@@ -617,9 +617,43 @@
   - while 조건이 `chainDepth < MAX_MENTION_CHAIN_DEPTH`라서 깊이 4 작업은 enqueue만 되고 실행 루프에 들어가지 않음.
   - 별도 background worker가 없어 이 queued job은 나중에 자동 소비되지 않음.
 - 결론: 요청이 누락된 것은 아니고, 실제 멘션/실행 잡 생성까지는 됐지만 멘션 체인 최대 깊이 도달로 영희 응답이 영구 대기 상태처럼 멈춘 사례임.
+### 90) 버그 수정 착수: 멘션 체인 깊이 제한 제거
+- 목표:
+  - 고정 `MAX_MENTION_CHAIN_DEPTH` 제거
+  - 총 실행 예산(`MAX_MENTION_EXECUTIONS`)만 유지
+  - 예산 초과로 실행하지 못한 job은 `queued` 방치 대신 `skipped` 종료
+  - 채널에 중단 이유를 시스템 메시지로 남김
+- 테스트 계획:
+  - depth 4를 넘어도 연쇄 재멘션이 계속 실행되는 회귀 E2E 추가
+  - 실행 예산 소진 시 마지막 job이 `skipped`로 끝나는 E2E 추가
+- 구현 진행:
+  - `ChannelMessageService`에서 depth 기반 while 종료 조건 제거
+  - 실행 batch가 예산을 초과하면 초과분을 `skipped`로 마감하고 시스템 결과 메시지를 기록하도록 조정
+  - chained mention depth는 배치 카운터가 아니라 각 task의 실제 depth 기준으로 계산하도록 변경
+  - fake-codex에 `FORCE_CHAIN_BOUNCE:<target>,<remaining>` 지시어 추가
+  - `electron.channel-metadata.spec.ts`에 depth 4 초과 연쇄 실행 케이스와 실행 예산 소진 케이스 추가
+- 중간 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npx playwright test tests/e2e/electron.channel-metadata.spec.ts` 통과 (6 passed)
+- 최종 검증:
+  - `npm run verify` 통과 (`8 passed`, `1 skipped`: `electron.real-codex.spec.ts`)
+### 91) 코드 분석: DM/채널 간 Codex 세션 공유 구조 확인
+- 사용자 질문: 채널에서 말한 내용을 DM에서 물어봐도 멤버가 알고 있는 이유와 현재 저장/세션 구조 확인 요청.
+- 확인 결과:
+  - 메시지 저장은 분리됨: DM은 `messages`, 채널은 `channel_messages`.
+  - 그러나 Codex 대화 세션은 `agents.session_id` 단일 컬럼 하나로 관리됨.
+  - DM 실행(`AgentExecutionService.sendDirectMessage`)과 채널 실행(`ChannelMessageService.executeMentionedAgent`) 모두 같은 `agent.sessionId`를 `runCodex`에 전달하고, 새 session id도 다시 같은 `agents.session_id`에 덮어씀.
+  - `runCodex`는 `sessionId`가 있으면 `buildPrompt()`에서 새 `systemPrompt`를 다시 넣지 않고 `userPrompt`만 보내므로, 기존 thread의 문맥/역할이 더 강하게 이어짐.
+- 판단:
+  - 현재 구현은 "에이전트 1명당 Codex 세션 1개" 구조다.
+  - 따라서 같은 멤버가 채널과 DM을 오가면 Codex 내부 thread가 공유되어 채널 맥락이 DM에서 보이는 것이 자연스러운 현상이다.
+  - 제품 의도가 DM과 채널을 분리된 작업 공간으로 보는 쪽이라면, 세션 키를 최소 `agent_id + conversation_scope(dm|channel:<id>)` 단위로 분리하는 편이 맞음.
 - 커밋 완료: fix_channel_collaboration_context_and_mention_delegation (검증 완료 후 커밋).
 - 원인 분석: channel progress update가 같은 messageId로 SSE에 들어올 때 refreshMessages()가 상태바를 무조건 Ready로 덮어써 실제 실행 중에도 ready로 보였음.
 - 수정 방향: active channel running execution job 수를 추적하고, channel refresh/delta sync가 status를 inflight+running job 기준으로 계산하게 변경.
 - 구현 완료: channel 상태바가 inflight request 뿐 아니라 active channel running execution job 수를 함께 보고 `working/ready`를 계산하도록 수정.
 - 회귀 테스트 추가: streaming channel mention 진행 중 상단바가 Ready로 떨어지지 않고 `Channel is working...`을 유지하는 smoke 검증 추가.
 - 최종 검증: `npm run check`, `npm run build`, `npm run test:e2e -- tests/e2e/electron.smoke.spec.ts`, `npm run verify` 통과.
+### 89) 작업 요청: 현재 워킹트리 전체 커밋
+- 확인 방향: 남아 있는 변경이 코드인지 문서인지 확인 후, 범위 그대로 커밋.

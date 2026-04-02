@@ -533,3 +533,226 @@ test("ambiguous delegated task triggers clarification mention back to requester"
     await electronApp.close();
   }
 });
+
+test("channel mention chain continues beyond the former depth cap", async ({}, testInfo) => {
+  const suffix = Date.now();
+  const alphaName = `ChainAlpha${suffix}`;
+  const betaName = `ChainBeta${suffix}`;
+  const channelName = `chain-room-${suffix}`;
+
+  const { electronApp, page } = await launchIsolatedApp(testInfo);
+
+  try {
+    const alphaCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+      method: "POST",
+      body: {
+        name: alphaName,
+        role: "Planner",
+        systemPrompt: "You are Alpha planner. Reply in concise Korean.",
+      },
+    });
+    expect(alphaCreate.status).toBe(201);
+
+    const betaCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+      method: "POST",
+      body: {
+        name: betaName,
+        role: "Reviewer",
+        systemPrompt: "You are Beta reviewer. Reply in concise Korean.",
+      },
+    });
+    expect(betaCreate.status).toBe(201);
+
+    const channelCreate = await apiRequest<{ channel: { id: string } }>(page, "/api/channels", {
+      method: "POST",
+      body: {
+        name: channelName,
+        description: "deep mention chain verification",
+      },
+    });
+    expect(channelCreate.status).toBe(201);
+
+    const channelId = channelCreate.data.channel.id;
+    const alphaId = alphaCreate.data.agent.id;
+    const betaId = betaCreate.data.agent.id;
+
+    expect(
+      (
+        await apiRequest(page, `/api/channels/${channelId}/members`, {
+          method: "POST",
+          body: { agentId: alphaId },
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await apiRequest(page, `/api/channels/${channelId}/members`, {
+          method: "POST",
+          body: { agentId: betaId },
+        })
+      ).status,
+    ).toBe(201);
+
+    const sendMessage = await apiRequest<{
+      message: { id: number };
+    }>(page, `/api/channels/${channelId}/messages`, {
+      method: "POST",
+      body: {
+        content: `@{${alphaName}} FORCE_CHAIN_BOUNCE:${betaName},4`,
+        messageKind: "general",
+      },
+    });
+    expect(sendMessage.status).toBe(200);
+
+    await expect
+      .poll(async () => {
+        const response = await apiRequest<{
+          jobs: Array<{
+            targetAgentId: string;
+            status: string;
+            depth: number;
+          }>;
+        }>(page, `/api/channels/${channelId}/executions`);
+        return response.data.jobs.map((job) => `${job.targetAgentId}:${job.status}:${job.depth}`);
+      })
+      .toEqual([
+        `${alphaId}:succeeded:0`,
+        `${betaId}:succeeded:1`,
+        `${alphaId}:succeeded:2`,
+        `${betaId}:succeeded:3`,
+        `${alphaId}:succeeded:4`,
+      ]);
+
+    const messagesResponse = await apiRequest<{
+      messages: Array<{
+        senderType: string;
+        senderId: string | null;
+        content: string;
+        messageKind: string;
+      }>;
+    }>(page, `/api/channels/${channelId}/messages`);
+    expect(messagesResponse.status).toBe(200);
+    expect(messagesResponse.data.messages).toHaveLength(6);
+    expect(messagesResponse.data.messages.some((message) => message.senderType === "system")).toBe(false);
+    expect(messagesResponse.data.messages[5]).toMatchObject({
+      senderId: alphaId,
+      messageKind: "remention",
+    });
+    expect(messagesResponse.data.messages[5]?.content).toContain("체인 종료");
+  } finally {
+    await electronApp.close();
+  }
+});
+
+test("mention execution budget exhaustion skips remaining queued jobs", async ({}, testInfo) => {
+  const suffix = Date.now();
+  const alphaName = `BudgetAlpha${suffix}`;
+  const betaName = `BudgetBeta${suffix}`;
+  const channelName = `budget-room-${suffix}`;
+
+  const { electronApp, page } = await launchIsolatedApp(testInfo);
+
+  try {
+    const alphaCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+      method: "POST",
+      body: {
+        name: alphaName,
+        role: "Planner",
+        systemPrompt: "You are Alpha planner. Reply in concise Korean.",
+      },
+    });
+    expect(alphaCreate.status).toBe(201);
+
+    const betaCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+      method: "POST",
+      body: {
+        name: betaName,
+        role: "Reviewer",
+        systemPrompt: "You are Beta reviewer. Reply in concise Korean.",
+      },
+    });
+    expect(betaCreate.status).toBe(201);
+
+    const channelCreate = await apiRequest<{ channel: { id: string } }>(page, "/api/channels", {
+      method: "POST",
+      body: {
+        name: channelName,
+        description: "mention execution budget verification",
+      },
+    });
+    expect(channelCreate.status).toBe(201);
+
+    const channelId = channelCreate.data.channel.id;
+    const alphaId = alphaCreate.data.agent.id;
+    const betaId = betaCreate.data.agent.id;
+
+    expect(
+      (
+        await apiRequest(page, `/api/channels/${channelId}/members`, {
+          method: "POST",
+          body: { agentId: alphaId },
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await apiRequest(page, `/api/channels/${channelId}/members`, {
+          method: "POST",
+          body: { agentId: betaId },
+        })
+      ).status,
+    ).toBe(201);
+
+    const sendMessage = await apiRequest<{
+      message: { id: number };
+    }>(page, `/api/channels/${channelId}/messages`, {
+      method: "POST",
+      body: {
+        content: `@{${alphaName}} FORCE_CHAIN_BOUNCE:${betaName},12`,
+        messageKind: "general",
+      },
+    });
+    expect(sendMessage.status).toBe(200);
+
+    const expectedJobStatuses = Array.from({ length: 12 }, (_, depth) => {
+      const agentId = depth % 2 === 0 ? alphaId : betaId;
+      return `${agentId}:succeeded:${depth}`;
+    });
+    expectedJobStatuses.push(`${alphaId}:skipped:12`);
+
+    await expect
+      .poll(async () => {
+        const response = await apiRequest<{
+          jobs: Array<{
+            targetAgentId: string;
+            status: string;
+            depth: number;
+          }>;
+        }>(page, `/api/channels/${channelId}/executions`);
+        return response.data.jobs.map((job) => `${job.targetAgentId}:${job.status}:${job.depth}`);
+      })
+      .toEqual(expectedJobStatuses);
+
+    const messagesResponse = await apiRequest<{
+      messages: Array<{
+        senderType: string;
+        senderId: string | null;
+        content: string;
+        messageKind: string;
+      }>;
+    }>(page, `/api/channels/${channelId}/messages`);
+    expect(messagesResponse.status).toBe(200);
+
+    const systemMessages = messagesResponse.data.messages.filter((message) => message.senderType === "system");
+    expect(systemMessages).toHaveLength(1);
+    expect(systemMessages[0]?.messageKind).toBe("result");
+    expect(systemMessages[0]?.content).toContain("멘션 실행 한도(12건)");
+    expect(systemMessages[0]?.content).toContain("남은 후속 멘션 1건");
+    expect(messagesResponse.data.messages.at(-1)).toMatchObject({
+      senderType: "system",
+      messageKind: "result",
+    });
+  } finally {
+    await electronApp.close();
+  }
+});

@@ -377,6 +377,18 @@ function buildReply(promptText, runtimeMode = "exec", requestedModel = null, con
   if (bounceReturnMatch) {
     return `테스트 바운스 2단계: @{${bounceReturnMatch[1]}} FORCE_BOUNCE_DONE`;
   }
+  const bounceChainMatch = controlPromptText.match(
+    /FORCE_CHAIN_BOUNCE:\s*([^\s,\r\n]+)\s*,\s*(\d{1,3})/,
+  );
+  if (bounceChainMatch) {
+    const nextTarget = bounceChainMatch[1];
+    const remaining = Number(bounceChainMatch[2]);
+    const currentAgentName = extractAgentName(promptText);
+    if (!currentAgentName || remaining <= 0) {
+      return "체인 종료: 더 이상 후속 멘션이 없습니다.";
+    }
+    return `체인 계속: @{${nextTarget}} FORCE_CHAIN_BOUNCE:${currentAgentName},${remaining - 1}`;
+  }
   const forcedMentionMatch = controlPromptText.match(/FORCE_MENTION_NAME:\s*([^\s\r\n]+)/);
   if (forcedMentionMatch) {
     return `테스트 재멘션: @{${forcedMentionMatch[1]}} FORCE_DELAY_MS:1800 확인 부탁합니다.`;
