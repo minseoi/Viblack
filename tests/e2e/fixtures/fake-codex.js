@@ -110,6 +110,43 @@ function hasExactMentionDelegationRules(promptText) {
   );
 }
 
+function hasChannelActionDelegationRules(promptText) {
+  return (
+    promptText.includes("CHANNEL_ACTION") &&
+    promptText.includes("type=delegate") &&
+    promptText.includes("type=report")
+  );
+}
+
+function getSessionStatePath(sessionId) {
+  return path.join(os.tmpdir(), `viblack-fake-codex-state-${sanitizeMarkerPart(sessionId)}.json`);
+}
+
+function readSessionState(sessionId) {
+  if (!sessionId) {
+    return {};
+  }
+  try {
+    const raw = fs.readFileSync(getSessionStatePath(sessionId), "utf8");
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function updateSessionState(sessionId, patch) {
+  if (!sessionId) {
+    return {};
+  }
+  const nextState = {
+    ...readSessionState(sessionId),
+    ...patch,
+  };
+  fs.writeFileSync(getSessionStatePath(sessionId), JSON.stringify(nextState), "utf8");
+  return nextState;
+}
+
 function findDelegationTarget(triggerText, currentAgentName, memberNames) {
   const delegationKeywords = ["시키", "조사", "부탁", "요청", "넘겨", "맡겨", "물어", "해봐"];
   const normalizedTrigger = triggerText.replace(/\s+/g, " ");
@@ -138,12 +175,26 @@ function isAmbiguousDelegationPrompt(text) {
   return ["그거", "저거", "2번", "모호", "불명확", "방금 말한"].some((token) => text.includes(token));
 }
 
-function maybeBuildDelegationReply(promptText, controlPromptText) {
-  if (!hasExactMentionDelegationRules(promptText)) {
+function appendDelegationAction(contentParts, actionLines, actionProtocolEnabled) {
+  if (!actionProtocolEnabled) {
+    return contentParts.join("\n\n");
+  }
+  return [...contentParts, buildChannelActionBlock(actionLines)].join("\n\n");
+}
+
+function maybeBuildDelegationReply(promptText, controlPromptText, sessionState = {}) {
+  const delegationRulesEnabled =
+    hasExactMentionDelegationRules(promptText) ||
+    hasChannelActionDelegationRules(promptText) ||
+    Boolean(sessionState.hasExactMentionDelegationRules) ||
+    Boolean(sessionState.hasChannelActionDelegationRules);
+  if (!delegationRulesEnabled) {
     return "";
   }
 
-  const currentAgentName = extractAgentName(promptText);
+  const actionProtocolEnabled =
+    hasChannelActionDelegationRules(promptText) || Boolean(sessionState.hasChannelActionDelegationRules);
+  const currentAgentName = extractAgentName(promptText) || sessionState.agentName || "";
   const memberNames = extractChannelMemberNames(promptText);
   const activeTaskRequester = extractActiveTaskRequester(promptText);
   if (!currentAgentName || memberNames.length === 0) {
@@ -156,7 +207,11 @@ function maybeBuildDelegationReply(promptText, controlPromptText) {
     isAmbiguousDelegationPrompt(controlPromptText) &&
     !controlPromptText.includes("확인 질문:")
   ) {
-    return `@{${activeTaskRequester}} 확인 질문: 방금 말한 "그거"가 정확히 어떤 범위인지 먼저 알려줘.`;
+    return appendDelegationAction(
+      [`@{${activeTaskRequester}} 확인 질문: 방금 말한 "그거"가 정확히 어떤 범위인지 먼저 알려줘.`],
+      ["type=report", `target=${activeTaskRequester}`],
+      actionProtocolEnabled,
+    );
   }
 
   if (
@@ -165,7 +220,11 @@ function maybeBuildDelegationReply(promptText, controlPromptText) {
   ) {
     const returnTarget = mentionedMembers.find((memberName) => memberName !== currentAgentName);
     if (returnTarget) {
-      return `조사 결과 보고: 핵심 사실 3개를 정리했습니다. @{${returnTarget}} 이어서 사용자용으로 요약해줘.`;
+      return appendDelegationAction(
+        [`조사 결과 보고: 핵심 사실 3개를 정리했습니다. @{${returnTarget}} 이어서 사용자용으로 요약해줘.`],
+        ["type=report", `target=${returnTarget}`],
+        actionProtocolEnabled,
+      );
     }
   }
 
@@ -173,15 +232,103 @@ function maybeBuildDelegationReply(promptText, controlPromptText) {
     mentionedMembers.includes(currentAgentName) &&
     controlPromptText.includes("조사 결과 보고:")
   ) {
-    return "최종 정리: 하위 리서치 결과를 바탕으로 사용자용 초안을 정리했습니다.";
+    return appendDelegationAction(
+      ["최종 정리: 하위 리서치 결과를 바탕으로 사용자용 초안을 정리했습니다."],
+      ["type=final"],
+      actionProtocolEnabled,
+    );
+  }
+
+  if (
+    mentionedMembers.includes(currentAgentName) &&
+    controlPromptText.includes("확인 질문:")
+  ) {
+    return appendDelegationAction(
+      ['확인 질문: 방금 말한 "그거"의 정확한 범위를 먼저 알려주면 다음 단계를 진행하겠습니다.'],
+      ['type=ask_user', 'question=방금 말한 "그거"의 정확한 범위를 먼저 알려줘.'],
+      actionProtocolEnabled,
+    );
   }
 
   const delegationTarget = findDelegationTarget(controlPromptText, currentAgentName, memberNames);
   if (delegationTarget) {
     if (isAmbiguousDelegationPrompt(controlPromptText)) {
-      return `@{${delegationTarget}} 방금 말한 그거를 조사해줘. 범위가 불명확하면 @{${currentAgentName}} 에게 먼저 확인 질문해줘.`;
+      return appendDelegationAction(
+        [
+          `@{${delegationTarget}} 방금 말한 그거를 조사해줘. 범위가 불명확하면 @{${currentAgentName}} 에게 먼저 확인 질문해줘.`,
+        ],
+        ["type=delegate", `target=${delegationTarget}`, "mode=blocking"],
+        actionProtocolEnabled,
+      );
     }
-    return `@{${delegationTarget}} 조사 부탁합니다. 공개 자료 기준 핵심 사실만 정리하고 결과는 @{${currentAgentName}} 에게 채널에서 보고해줘.`;
+    return appendDelegationAction(
+      [
+        `@{${delegationTarget}} 조사 부탁합니다. 공개 자료 기준 핵심 사실만 정리하고 결과는 @{${currentAgentName}} 에게 채널에서 보고해줘.`,
+      ],
+      ["type=delegate", `target=${delegationTarget}`, "mode=blocking"],
+      actionProtocolEnabled,
+    );
+  }
+
+  return "";
+}
+
+function buildChannelActionBlock(lines) {
+  return ["[CHANNEL_ACTION]", ...lines, "[/CHANNEL_ACTION]"].join("\n");
+}
+
+function maybeBuildDelegationScenarioReply(promptText, sessionId, sessionState = {}) {
+  if (!promptText.includes("인스타 맛집 계정 운영")) {
+    return "";
+  }
+
+  const currentAgentName = (extractAgentName(promptText) || sessionState.agentName || "").trim();
+  if (!currentAgentName) {
+    return "";
+  }
+
+  if (currentAgentName === "영희") {
+    const stage = sessionState.delegationScenarioStage || "";
+    if (!stage) {
+      updateSessionState(sessionId, { delegationScenarioStage: "delegated_research" });
+      return [
+        "결론: 먼저 존 조사부터 진행합니다. 조사 결과가 공개 채널에 올라오면 그 다음에 매튜에게 문서화를 넘기겠습니다.",
+        "@존 인스타 맛집 계정 운영 초보자 가이드에 필요한 조사 결과를 체크리스트 중심으로 정리해줘.",
+        buildChannelActionBlock(["type=delegate", "target=존", "mode=blocking"]),
+      ].join("\n\n");
+    }
+
+    if (stage === "delegated_research") {
+      updateSessionState(sessionId, { delegationScenarioStage: "delegated_writer" });
+      return [
+        "결론: 존 조사 결과가 확보됐으니 이제 매튜가 사용자용 가이드 문서로 정리하면 됩니다.",
+        "@매튜 존 조사 결과를 바탕으로 사용자에게 바로 줄 수 있는 가이드 문서 초안을 작성해줘.",
+        buildChannelActionBlock(["type=delegate", "target=매튜", "mode=blocking"]),
+      ].join("\n\n");
+    }
+
+    updateSessionState(sessionId, { delegationScenarioStage: "completed" });
+    return [
+      "최종 정리: 조사와 문서화가 모두 끝났습니다. 아래 가이드를 사용자에게 바로 전달하면 됩니다.",
+      "핵심 구성은 계정 목표 설정, 콘텐츠 운영 원칙, 초반 30일 루틴, 체크리스트입니다.",
+      buildChannelActionBlock(["type=final"]),
+    ].join("\n\n");
+  }
+
+  if (currentAgentName === "존") {
+    return [
+      "조사 결과 보고: 초보자용 가이드에 필요한 핵심 내용을 정리했습니다. 계정 목적, 콘텐츠 포맷, 업로드 루틴, 광고 표기 주의사항, 초기 체크리스트까지 포함했습니다.",
+      "@영희 조사 결과를 바탕으로 다음 문서화 단계를 진행하면 됩니다.",
+      buildChannelActionBlock(["type=report", "target=영희"]),
+    ].join("\n\n");
+  }
+
+  if (currentAgentName === "매튜") {
+    return [
+      "문서 초안 보고: 존 조사 결과를 구조화해 사용자 전달용 가이드 문서 초안을 완성했습니다.",
+      "@영희 최종 검토 후 사용자에게 전달해줘.",
+      buildChannelActionBlock(["type=report", "target=영희"]),
+    ].join("\n\n");
   }
 
   return "";
@@ -234,6 +381,14 @@ function parseTransientFailOnceKey(promptText) {
   return match[1].trim();
 }
 
+function parseEmptySuccessOnceKey(promptText) {
+  const match = promptText.match(/FORCE_EMPTY_SUCCESS_ONCE:\s*([^\s\r\n]+)/);
+  if (!match) {
+    return "";
+  }
+  return match[1].trim();
+}
+
 function shouldTransientFailOnce(promptText) {
   const key = parseTransientFailOnceKey(promptText);
   if (!key) {
@@ -256,11 +411,94 @@ function shouldTransientFailOnce(promptText) {
   return true;
 }
 
-function buildReply(promptText, runtimeMode = "exec", requestedModel = null, controlPromptText = promptText) {
+function shouldReturnEmptySuccessOnce(promptText) {
+  const key = parseEmptySuccessOnceKey(promptText);
+  if (!key) {
+    return false;
+  }
+  const markerPath = path.join(os.tmpdir(), `viblack-fake-codex-empty-success-${key}`);
+  if (fs.existsSync(markerPath)) {
+    try {
+      fs.unlinkSync(markerPath);
+    } catch {
+      // Ignore cleanup failures and continue as normal on retry.
+    }
+    return false;
+  }
+  try {
+    fs.writeFileSync(markerPath, "1", "utf8");
+  } catch {
+    // If marker cannot be written, keep behavior deterministic by returning empty once.
+  }
+  return true;
+}
+
+function sanitizeMarkerPart(value) {
+  return value.replace(/[^a-z0-9_.-]+/gi, "_").slice(0, 120);
+}
+
+function getSessionMemoryMarkerPath(sessionId, token) {
+  return path.join(
+    os.tmpdir(),
+    `viblack-fake-codex-session-${sanitizeMarkerPart(sessionId)}-${sanitizeMarkerPart(token)}`,
+  );
+}
+
+function writeSessionMemory(sessionId, token) {
+  if (!sessionId || !token) {
+    return;
+  }
+  fs.writeFileSync(getSessionMemoryMarkerPath(sessionId, token), "1", "utf8");
+}
+
+function hasSessionMemory(sessionId, token) {
+  if (!sessionId || !token) {
+    return false;
+  }
+  return fs.existsSync(getSessionMemoryMarkerPath(sessionId, token));
+}
+
+function buildReply(
+  promptText,
+  runtimeMode = "exec",
+  requestedModel = null,
+  controlPromptText = promptText,
+  sessionId = "",
+) {
+  const persistedAgentName = extractAgentName(promptText);
+  const hasDelegationRules = hasExactMentionDelegationRules(promptText);
+  const hasChannelActionRules = hasChannelActionDelegationRules(promptText);
+  const sessionState =
+    persistedAgentName || hasDelegationRules || hasChannelActionRules
+      ? updateSessionState(sessionId, {
+          ...(persistedAgentName ? { agentName: persistedAgentName } : {}),
+          ...(hasDelegationRules ? { hasExactMentionDelegationRules: true } : {}),
+          ...(hasChannelActionRules ? { hasChannelActionDelegationRules: true } : {}),
+        })
+      : readSessionState(sessionId);
   if (promptText.includes("SYSTEM PROMPT를 작성하세요")) {
     return "당신은 테스트용 에이전트입니다. 한국어로 간결하고 정확하게 응답하세요.";
   }
-  const delegatedReply = maybeBuildDelegationReply(promptText, controlPromptText);
+  const sessionMemoryWriteMatch = controlPromptText.match(/FORCE_SESSION_MEMORY_WRITE:\s*([^\s\r\n]+)/);
+  if (sessionMemoryWriteMatch) {
+    const token = sessionMemoryWriteMatch[1].trim();
+    writeSessionMemory(sessionId, token);
+    return `세션 메모리 기록:${token}`;
+  }
+  const sessionMemoryReadMatch = controlPromptText.match(/FORCE_SESSION_MEMORY_READ:\s*([^\s\r\n]+)/);
+  if (sessionMemoryReadMatch) {
+    const token = sessionMemoryReadMatch[1].trim();
+    return hasSessionMemory(sessionId, token) ? `세션 메모리 존재:${token}` : `세션 메모리 없음:${token}`;
+  }
+  const deterministicDelegationScenarioReply = maybeBuildDelegationScenarioReply(
+    promptText,
+    sessionId,
+    sessionState,
+  );
+  if (deterministicDelegationScenarioReply) {
+    return deterministicDelegationScenarioReply;
+  }
+  const delegatedReply = maybeBuildDelegationReply(promptText, controlPromptText, sessionState);
   if (delegatedReply) {
     return delegatedReply;
   }
@@ -383,7 +621,11 @@ function buildReply(promptText, runtimeMode = "exec", requestedModel = null, con
   if (bounceChainMatch) {
     const nextTarget = bounceChainMatch[1];
     const remaining = Number(bounceChainMatch[2]);
-    const currentAgentName = extractAgentName(promptText);
+    const currentAgentName =
+      extractAgentName(promptText) ||
+      sessionState.agentName ||
+      extractMentionedMemberNames(controlPromptText, extractChannelMemberNames(promptText))[0] ||
+      "";
     if (!currentAgentName || remaining <= 0) {
       return "체인 종료: 더 이상 후속 멘션이 없습니다.";
     }
@@ -561,6 +803,7 @@ async function runAppServer() {
         const promptText = extractTurnInputText(params.input);
         const controlPromptText = getControlPromptText(promptText);
         const forceTurnFailed = shouldForceTurnFailed(controlPromptText);
+        const forceEmptySuccessOnce = shouldReturnEmptySuccessOnce(controlPromptText);
         const forceItemCompletedMessage = parseForcedItemCompletedMessage(controlPromptText);
         const streamMessage = parseForcedStreamMessage(controlPromptText);
         const streamSequence = parseForcedStreamSequence(controlPromptText);
@@ -605,7 +848,7 @@ async function runAppServer() {
 
         const reply =
           forceItemCompletedMessage ||
-          buildReply(promptText, "app-server", null, controlPromptText);
+          buildReply(promptText, "app-server", null, controlPromptText, threadId);
 
         notify("item/completed", {
           threadId,
@@ -613,7 +856,7 @@ async function runAppServer() {
           item: {
             id: `item-message-${turnId}`,
             type: "agentMessage",
-            text: reply,
+            text: forceEmptySuccessOnce ? "" : reply,
           },
         });
 
@@ -653,12 +896,13 @@ async function runExec(args) {
   const controlPromptText = getControlPromptText(promptText);
   const forceTurnFailed = shouldForceTurnFailed(controlPromptText);
   const forceTransientFailOnce = shouldTransientFailOnce(controlPromptText);
+  const forceEmptySuccessOnce = shouldReturnEmptySuccessOnce(controlPromptText);
   const forceItemCompletedMessage = parseForcedItemCompletedMessage(controlPromptText);
   const streamMessage = parseForcedStreamMessage(controlPromptText);
   const streamSequence = parseForcedStreamSequence(controlPromptText);
   const forcedDelayMs = parseForcedDelayMs(controlPromptText);
-  const reply = buildReply(promptText, "exec", requestedModel, controlPromptText);
   const effectiveSessionId = sessionId || `fake-session-${Date.now()}`;
+  const reply = buildReply(promptText, "exec", requestedModel, controlPromptText, effectiveSessionId);
 
   if (outputPath) {
     fs.writeFileSync(outputPath, reply, "utf8");
@@ -717,7 +961,9 @@ async function runExec(args) {
     await sleep(forcedDelayMs);
   }
 
-  process.stdout.write(`${JSON.stringify({ type: "response.completed", output_text: reply })}\n`);
+  process.stdout.write(
+    `${JSON.stringify({ type: "response.completed", output_text: forceEmptySuccessOnce ? "" : reply })}\n`,
+  );
   process.exit(0);
 }
 

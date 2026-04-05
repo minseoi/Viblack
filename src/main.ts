@@ -9,6 +9,7 @@ let backendServer: StartedServer | null = null;
 let backendBaseUrl = "";
 let bootCodexStatus: CodexStatus = { ok: false, error: "not initialized" };
 let shutdownInProgress = false;
+const keepAliveWithoutWindow = process.env.VIBLACK_KEEP_ALIVE_WITHOUT_WINDOW === "1";
 
 function resolveDbPath(workspaceDir: string): string {
   const fromEnv = process.env.VIBLACK_DB_PATH?.trim();
@@ -108,5 +109,8 @@ app.on("before-quit", (event) => {
 });
 
 app.on("window-all-closed", () => {
+  if (keepAliveWithoutWindow) {
+    return;
+  }
   void shutdownApp();
 });

@@ -9,6 +9,52 @@ function isMentionBoundaryChar(char: string | undefined): boolean {
   return !char || /[\s.,!?;:()[\]{}<>"'`]/.test(char);
 }
 
+const allowedMentionSuffixes = [
+  "에게서",
+  "한테서",
+  "에게는",
+  "한테는",
+  "에게도",
+  "한테도",
+  "이랑",
+  "으로",
+  "에게",
+  "한테",
+  "께서",
+  "에서",
+  "께는",
+  "께도",
+  "보고",
+  "이여",
+  "랑",
+  "과",
+  "와",
+  "은",
+  "는",
+  "이",
+  "가",
+  "을",
+  "를",
+  "도",
+  "만",
+  "의",
+  "로",
+  "께",
+];
+
+function hasAllowedMentionSuffix(content: string, afterIndex: number): boolean {
+  for (const suffix of allowedMentionSuffixes) {
+    if (!content.startsWith(suffix, afterIndex)) {
+      continue;
+    }
+    const suffixAfter = content[afterIndex + suffix.length];
+    if (isMentionBoundaryChar(suffixAfter)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function extractMentionedAgents(
   content: string,
   candidateAgents: Agent[],
@@ -33,7 +79,10 @@ export function extractMentionedAgents(
         const afterIndex = index + token.length;
         const after = afterIndex < normalizedContent.length ? normalizedContent[afterIndex] : undefined;
 
-        if (isMentionBoundaryChar(before) && isMentionBoundaryChar(after)) {
+        if (
+          isMentionBoundaryChar(before) &&
+          (isMentionBoundaryChar(after) || hasAllowedMentionSuffix(normalizedContent, afterIndex))
+        ) {
           if (!seenAgentIds.has(candidate.id)) {
             seenAgentIds.add(candidate.id);
             mentions.push({ agentId: candidate.id, mentionName: candidate.name });
@@ -50,4 +99,3 @@ export function extractMentionedAgents(
 
   return mentions;
 }
-

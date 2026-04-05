@@ -649,6 +649,29 @@
   - 현재 구현은 "에이전트 1명당 Codex 세션 1개" 구조다.
   - 따라서 같은 멤버가 채널과 DM을 오가면 Codex 내부 thread가 공유되어 채널 맥락이 DM에서 보이는 것이 자연스러운 현상이다.
   - 제품 의도가 DM과 채널을 분리된 작업 공간으로 보는 쪽이라면, 세션 키를 최소 `agent_id + conversation_scope(dm|channel:<id>)` 단위로 분리하는 편이 맞음.
+### 92) 기능 수정 착수: DM/채널 런타임 세션 스코프 분리
+- 목표:
+  - 에이전트 정의(`name`, `role`, `system_prompt`)는 공용으로 유지
+  - Codex 런타임 세션은 `dm`과 `channel:<channelId>` 단위로 분리
+  - DM 메시지 초기화는 DM 세션만 리셋하고, 채널 멤버 제거는 해당 채널 세션만 리셋
+  - 에이전트 정의 수정 시 기존 인스턴스 세션을 비워 새 설정으로 다시 instantiate 되게 함
+- 구현 진행:
+  - `agent_runtime_sessions(agent_id, scope_key, session_id, updated_at)` 테이블 추가
+  - `AgentRepository`에 scoped runtime session 조회/업서트/삭제 API 추가
+  - DM 실행은 `dm` scope 세션만 사용하도록 변경
+  - 채널 실행은 `channel:<id>` scope 세션만 사용하도록 변경
+  - 채널 멤버 제거 시 해당 채널 scope 세션 삭제
+  - 에이전트 수정 시 모든 runtime session 삭제
+  - fake-codex에 session memory 시뮬레이션 추가 (`FORCE_SESSION_MEMORY_WRITE/READ`)
+  - Playwright API E2E에 DM/채널 세션 격리 회귀 테스트 추가
+- 테스트 보강:
+  - fake-codex가 resumed session에서도 agent identity/채널 위임 규칙을 유지하도록 session state 저장 로직 추가
+  - 바운스 체인 시뮬레이션은 현재 프롬프트의 멘션에서 실행 주체를 추론하도록 보강
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npx playwright test tests/e2e/electron.channel-metadata.spec.ts` 통과 (7 passed)
+  - `npm run verify` 통과 (`9 passed`, `1 skipped`: `electron.real-codex.spec.ts`)
 - 커밋 완료: fix_channel_collaboration_context_and_mention_delegation (검증 완료 후 커밋).
 - 원인 분석: channel progress update가 같은 messageId로 SSE에 들어올 때 refreshMessages()가 상태바를 무조건 Ready로 덮어써 실제 실행 중에도 ready로 보였음.
 - 수정 방향: active channel running execution job 수를 추적하고, channel refresh/delta sync가 status를 inflight+running job 기준으로 계산하게 변경.
@@ -657,3 +680,156 @@
 - 최종 검증: `npm run check`, `npm run build`, `npm run test:e2e -- tests/e2e/electron.smoke.spec.ts`, `npm run verify` 통과.
 ### 89) 작업 요청: 현재 워킹트리 전체 커밋
 - 확인 방향: 남아 있는 변경이 코드인지 문서인지 확인 후, 범위 그대로 커밋.
+### 93) 분석: Test2 채널 대화 흐름 점검
+- 요청:
+  - 실제 사용자 DB의 `Test2` 채널 대화 흐름을 확인하고, 사용자 의도 대비 실제 진행 경로와 문제점을 분석.
+- 확인한 자료:
+  - 채널 기능 의도 문서: `codexdocs/channel-functional-spec.md`, `codexdocs/channel-Refactoring.md`
+  - 실제 DB: `~/Library/Application Support/viblack/viblack.sqlite`
+  - 관련 구현: `src/backend/services/channel-message-service.ts`, `src/backend/services/member-prompt.ts`, `src/backend/routes/channel-routes.ts`
+- 데이터 확인 결과:
+  - `Test2` 채널(`channel-4`) 멤버는 영희(시스템 기획자), 존(리서치 전문가), 매튜(문서 작성 전문가).
+  - 사용자 최초 메시지는 `@영희`에게 조사 위임과 문서화 위임을 순서대로 조율한 뒤 최종 보고를 요구.
+  - 실제 실행은 영희 -> 존/매튜 병렬 위임 -> 영희 재질문/재확인 -> 매튜/존/영희 간 반복 재멘션으로 이어졌고, 최종적으로 멘션 실행 한도 12건에 걸려 후속 1건이 스킵됨.
+- 현재 판단:
+  - 사용자 의도는 "영희가 조율자로서 존에게 조사, 매튜에게 문서화, 마지막에 사용자에게 최종 결과 보고"인 단일 파이프라인에 가깝다.
+  - 실제 구현/프롬프트는 채널 멤션을 매우 강하게 요구하고, 재질문/결과 보고도 요청자 멘션을 강제해 멤버 간 핑퐁을 유도한다.
+  - `isCoordinator` 상태는 저장되지만 실제 채널 실행 프롬프트/오케스트레이션에서 조율 정책으로 활용되지 않는다.
+  - 그 결과 대표 멤버가 "사용자에게 닫는" 대신 "상대 멤버에게 다시 열어두는" 대화 루프가 생겼다.
+- 메모:
+  - 이번 작업은 분석만 수행. 코드 수정 및 검증 명령은 실행하지 않음.
+### 94) 질의 응답: 채널 대화 공유/할당/연속성 구조 확인
+- 요청:
+  - 현재 구현에서 채널 대화가 멤버들에게 실제로 어떻게 공유되는지, 멤버들에게 일이 어떤 방식으로 주어지고 대화가 어떻게 이어지는지 설명.
+- 코드 확인:
+  - `src/backend/services/channel-message-service.ts`
+  - `src/backend/services/member-prompt.ts`
+  - `src/backend/repositories/channel-message-repository.ts`
+  - `src/backend/repositories/agent-repository.ts`
+  - `src/backend/services/mention-router.ts`
+  - `src/backend/runtime-session-scope.ts`
+- 확인 결과 요약:
+  - 채널 메시지는 `channel_messages`에 공개 로그로 저장되고, 멘션된 멤버만 실제 실행된다.
+  - 멤버들은 채널을 “실시간으로 계속 듣는” 구조가 아니라, 실행 시점에 최근 채널 메시지 스냅샷과 멤버 목록을 프롬프트로 받아 처리한다.
+  - 연속성은 두 층으로 유지된다:
+    - 공개 맥락: 최근 채널 메시지 최대 12개
+    - 멤버 개인 맥락: `agent_runtime_sessions`의 `channel:<channelId>` 세션
+  - 따라서 채널 전체가 멤버 간 완전히 동일한 숨은 메모리로 공유되는 것은 아니고, 공용 로그 + 멤버별 채널 세션이 결합된 방식이다.
+### 95) 작업 착수: 채널 위임 평가 루프 자동화
+- 요청:
+  - 실제 Codex 기반으로 대표 시나리오를 반복 평가하는 자동화 루프를 만들고, 기준 측정 -> 수정 -> 재측정 -> 재수정 과정을 문서화하며 반복.
+- 현재 진행:
+  - 기존 real-codex/fake-codex E2E 자산 검토 시작.
+  - 새 작업 문서 `codexdocs/channel-delegation-eval-loop.md` 생성.
+  - 평가 목표, 점수 기준, 반복 루프, 초기 가설을 문서화.
+- 확인 메모:
+  - 실제 Real Codex 평가는 `electron.real-codex.spec.ts`의 opt-in 패턴을 재사용하는 것이 적합.
+  - 회귀 검증은 Playwright + fake-codex fixture에 새 협업 프로토콜을 추가해 `verify`에 넣을 수 있게 설계하는 방향이 적합.
+### 96) baseline 측정: real Codex 채널 위임 평가
+- 구현:
+  - `tests/e2e/support/channel-delegation-eval.ts` 추가
+    - 채널/멤버 시나리오 생성
+    - settle 대기
+    - transcript/job 수집
+    - 점수 계산
+    - JSON/Markdown artifact 저장
+  - `tests/e2e/electron.channel-delegation.real.spec.ts` 추가
+    - `VIBLACK_E2E_REAL_CODEX=1`일 때 실제 Codex 평가 실행
+    - `channel-delegation-real-report.{json,md}` artifact 생성
+- baseline 실행:
+  - 명령: `VIBLACK_E2E_REAL_CODEX=1 VIBLACK_E2E_REAL_CODEX_TIMEOUT_MS=420000 npx playwright test tests/e2e/electron.channel-delegation.real.spec.ts`
+  - 결과: 실행 완료, report 생성
+- baseline 점수:
+  - `40/100`, verdict=`fail`
+- 실제 관찰된 핵심 실패:
+  - 영희가 첫 턴에서 순차 위임 의도를 잘 표현했지만, 실제 자동 실행은 `존`까지만 이어짐.
+  - `존` 응답 본문에는 `@영희에게`가 있었지만 후속 실행으로 연결되지 않음.
+  - 현행 `mention-router`는 이름 뒤 한국어 조사 결합형(`에게`, `한테` 등)을 멘션 경계로 인정하지 않아 재진입이 끊기는 것으로 보임.
+  - 따라서 이 baseline은 "루프 폭주"보다 앞선 더 기본적인 실패, 즉 "자연어 멘션 해석 취약성 + coordinator continuation 부재"를 드러냄.
+### 97) 채널 위임 오케스트레이션 개편 + 평가 루프 1차 성공
+- 구현:
+  - `src/backend/services/channel-action-protocol.ts` 추가
+    - `[CHANNEL_ACTION] ... [/CHANNEL_ACTION]` 블록에서 `delegate/report/ask_user/final/noop` 파싱
+  - `src/backend/services/member-prompt.ts` 수정
+    - 채널 프롬프트에 coordinator/worker 모드 명시
+    - 순차 위임 규칙, `CHANNEL_ACTION` 예시, worker/coordinator 책임 경계 추가
+  - `src/backend/services/channel-message-service.ts` 수정
+    - 후속 실행을 자유 텍스트 멘션보다 action block 우선으로 해석
+    - `delegate`만 실행 큐로 넘기고 `report`는 requester/coordinator 재진입, `ask_user/final`은 자동 후속 실행 없이 종료
+    - coordinator state를 읽어 프롬프트에 반영
+  - `src/backend/services/mention-router.ts` 수정
+    - `@이름에게`, `@이름한테` 같은 조사 결합형 멘션 인식
+  - `tests/e2e/fixtures/fake-codex.js` 수정
+    - 대표 시나리오용 결정론적 delegation reply 추가
+  - `tests/e2e/electron.channel-delegation.spec.ts` 추가
+    - fake-codex 기준 `영희 -> 존 -> 영희 -> 매튜 -> 영희` 순서를 회귀 검증
+- real 평가 결과:
+  - 대표 시나리오 재실행 결과 최종 점수 `100/100`, verdict=`pass`
+  - 성공 흐름 확인:
+    - `영희`가 먼저 `존`에게 조사 위임
+    - `존`이 공개 채널에 결과 보고 후 `영희`에게 제어 반환
+    - `영희`가 `매튜`에게 문서화 위임
+    - `매튜`가 공개 채널에 문서 초안 보고
+    - `영희`가 사용자 전달용 최종 결과와 함께 종료
+### 98) verify 회귀 복구 및 최종 검증 완료
+- 최초 `npm run verify` 결과:
+  - 새 대표 시나리오 평가는 통과했지만, 기존 메타데이터 회귀 2건 실패
+  - 실패 테스트:
+    - `natural language delegation request becomes channel mention chain`
+    - `ambiguous delegated task triggers clarification mention back to requester`
+- 원인 분석:
+  - fake-codex generic delegation fixture가 예전 "exact mention" 규칙에만 반응하고, 새 `CHANNEL_ACTION` 프로토콜 기반 응답은 생성하지 못했음
+  - 따라서 실제 런타임은 action block을 기대하는데 fixture가 후속 위임/보고 메시지를 만들지 않아 1턴에서 체인이 끊어짐
+- 수정:
+  - `tests/e2e/fixtures/fake-codex.js`
+    - generic delegation reply도 `CHANNEL_ACTION` 규칙 인식
+    - 위임은 `type=delegate`
+    - worker 결과 반환은 `type=report`
+    - coordinator 최종 응답은 `type=final`
+    - 모호한 위임은 worker가 coordinator에게 `확인 질문`을 보고하고, coordinator가 `type=ask_user`로 멈추도록 조정
+- 검증:
+  - 대상 2개 회귀 재실행: 통과
+  - `npm run check`: 통과
+  - `npm run build`: 통과
+  - `npm run verify`: 통과 (`10 passed, 2 skipped`)
+### 99) real Codex 불안정성 복구: empty response 재시도 + 평가 하네스 내구성 강화
+- 추가 real 평가 중 관찰된 문제:
+  - 일부 실행에서 `매튜` 또는 최종 `영희` 턴이 `empty response from codex`로 끊김
+  - 다른 실행에서는 renderer window 종료와 함께 평가 하네스의 `page.evaluate` 호출이 끊겨, 실제 채널 상태를 끝까지 수집하지 못함
+- 원인 분석:
+  - 오케스트레이션 자체는 맞지만, 실제 Codex `exec` 런타임은 드물게 "성공 종료 + 빈 응답"을 반환할 수 있음
+  - 평가 하네스가 매 API 호출을 renderer page에 의존하고 있어, 창이 닫히면 백엔드 상태 수집도 함께 끊겼음
+  - `main.ts`는 마지막 창이 닫히면 즉시 앱과 서버를 내리므로, 평가 중 창 종료에 취약했음
+- 수정:
+  - `src/backend/codex.ts`
+    - 빈 성공 응답을 transient failure처럼 1회 재시도
+    - 재시도 사이에 새로 획득한 `sessionId`를 이어받아 컨텍스트 보존
+  - `tests/e2e/fixtures/fake-codex.js`
+    - `FORCE_EMPTY_SUCCESS_ONCE` 추가
+  - `tests/e2e/electron.channel-metadata.spec.ts`
+    - `channel execution retries once when codex returns an empty successful response` 회귀 추가
+  - `tests/e2e/support/channel-delegation-eval.ts`
+    - backend base URL을 초기 1회만 가져오고, 이후 API 호출은 Node `fetch`로 수행하도록 전환
+    - 평가 환경에서 `VIBLACK_KEEP_ALIVE_WITHOUT_WINDOW=1` 주입
+  - `src/main.ts`
+    - `VIBLACK_KEEP_ALIVE_WITHOUT_WINDOW=1`일 때 `window-all-closed`로 즉시 shutdown 하지 않도록 조정
+- 실측 재검증:
+  - real Codex 평가 재실행:
+    - 명령: `VIBLACK_E2E_REAL_CODEX=1 VIBLACK_E2E_REAL_CODEX_TIMEOUT_MS=420000 npx playwright test tests/e2e/electron.channel-delegation.real.spec.ts`
+    - 결과: 통과
+    - artifact: `test-results/electron.channel-delegatio-dc6fc-annel-delegation-evaluation/channel-delegation-real-report.json`
+    - 점수: `100/100`, verdict=`pass`
+    - job order: `영희 -> 존 -> 영희 -> 매튜 -> 영희`
+### 100) 최종 전체 검증 갱신
+- 검증:
+  - `npm run check`: 통과
+  - `npm run build`: 통과
+  - `npx playwright test tests/e2e/electron.channel-delegation.spec.ts`: 통과
+  - `npx playwright test tests/e2e/electron.channel-metadata.spec.ts --grep "empty successful response"`: 통과
+  - `npm run verify`: 통과 (`11 passed, 2 skipped`)
+
+### 71) 기능 구현: 테트리스 블럭 회전 엔진 추가(회전 전용)
+- `src/renderer/tetris-rotation.ts` 신규 생성
+- 현재 블럭 상태(`PieceState`) 기준으로 CW/CCW 회전 처리 함수(`tryRotatePiece`) 구현
+- 7종 폴리오미노 좌표 기반 회전, 보드 경계/충돌 검사, 기본 wall-kick 후보 `(0,0),(-1,0),(1,0),(0,-1),(1,-1),(-1,-1)` 재시도 반영
+- 독립형 유틸 함수로 구성(`getPieceCells`, `canPlacePiece`)하여 렌더러 기존 코드와 충돌 최소화

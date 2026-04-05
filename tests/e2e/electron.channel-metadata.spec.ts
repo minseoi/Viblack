@@ -66,6 +66,90 @@ async function apiRequest<T>(
   ) as Promise<{ status: number; data: T }>;
 }
 
+test("channel execution retries once when codex returns an empty successful response", async ({}, testInfo) => {
+  const suffix = Date.now();
+  const alphaName = `RetryAlpha${suffix}`;
+  const channelName = `retry-room-${suffix}`;
+  const retryKey = `channel-empty-retry-${suffix}`;
+  const finalToken = `channel-empty-retry-ok-${suffix}`;
+
+  const { electronApp, page } = await launchIsolatedApp(testInfo);
+
+  try {
+    const alphaCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+      method: "POST",
+      body: {
+        name: alphaName,
+        role: "Planner",
+        systemPrompt: "You are Alpha planner. Reply in concise Korean.",
+      },
+    });
+    expect(alphaCreate.status).toBe(201);
+
+    const channelCreate = await apiRequest<{ channel: { id: string } }>(page, "/api/channels", {
+      method: "POST",
+      body: {
+        name: channelName,
+        description: "channel empty response retry verification",
+      },
+    });
+    expect(channelCreate.status).toBe(201);
+
+    const channelId = channelCreate.data.channel.id;
+    const alphaId = alphaCreate.data.agent.id;
+
+    expect(
+      (
+        await apiRequest(page, `/api/channels/${channelId}/members`, {
+          method: "POST",
+          body: { agentId: alphaId },
+        })
+      ).status,
+    ).toBe(201);
+
+    const sendMessage = await apiRequest<{ message: { id: number } }>(page, `/api/channels/${channelId}/messages`, {
+      method: "POST",
+      body: {
+        content: `@{${alphaName}} FORCE_EMPTY_SUCCESS_ONCE:${retryKey} FORCE_FINAL_REPLY:${finalToken}`,
+        messageKind: "general",
+      },
+    });
+    expect(sendMessage.status).toBe(200);
+
+    await expect
+      .poll(async () => {
+        const response = await apiRequest<{
+          jobs: Array<{
+            targetAgentId: string;
+            status: string;
+          }>;
+        }>(page, `/api/channels/${channelId}/executions`);
+        return response.data.jobs.map((job) => `${job.targetAgentId}:${job.status}`);
+      })
+      .toEqual([`${alphaId}:succeeded`]);
+
+    const messagesResponse = await apiRequest<{
+      messages: Array<{
+        senderType: string;
+        content: string;
+        messageKind: string;
+      }>;
+    }>(page, `/api/channels/${channelId}/messages`);
+    expect(messagesResponse.status).toBe(200);
+    expect(messagesResponse.data.messages).toHaveLength(2);
+    expect(messagesResponse.data.messages[1]).toMatchObject({
+      senderType: "agent",
+      messageKind: "result",
+    });
+    expect(messagesResponse.data.messages[1]?.content).toContain(finalToken);
+    expect(messagesResponse.data.messages.some((message) => message.content.includes("empty response from codex"))).toBe(
+      false,
+    );
+  } finally {
+    await electronApp.close();
+  }
+});
+
 test("channel execution jobs and member state metadata", async ({}, testInfo) => {
   const suffix = Date.now();
   const alphaName = `MetaAlpha${suffix}`;
@@ -302,6 +386,114 @@ test("channel execution prompt includes member roster and recent public history"
     });
     expect(alphaContextCheck.status).toBe(200);
     expect(alphaContextCheck.data.results[0]?.reply).toContain("채널 컨텍스트 확인:ok");
+  } finally {
+    await electronApp.close();
+  }
+});
+
+test("dm and channel use isolated runtime sessions for the same agent", async ({}, testInfo) => {
+  const suffix = Date.now();
+  const memberName = `ScopedMember${suffix}`;
+  const channelName = `scoped-room-${suffix}`;
+  const dmToken = `DM_SCOPE_${suffix}`;
+  const channelToken = `CHANNEL_SCOPE_${suffix}`;
+
+  const { electronApp, page } = await launchIsolatedApp(testInfo);
+
+  try {
+    const memberCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+      method: "POST",
+      body: {
+        name: memberName,
+        role: "Scoped tester",
+        systemPrompt: "You are a scope isolation tester. Reply in concise Korean.",
+      },
+    });
+    expect(memberCreate.status).toBe(201);
+
+    const channelCreate = await apiRequest<{ channel: { id: string } }>(page, "/api/channels", {
+      method: "POST",
+      body: {
+        name: channelName,
+        description: "runtime session scope verification",
+      },
+    });
+    expect(channelCreate.status).toBe(201);
+
+    const memberId = memberCreate.data.agent.id;
+    const channelId = channelCreate.data.channel.id;
+
+    expect(
+      (
+        await apiRequest(page, `/api/channels/${channelId}/members`, {
+          method: "POST",
+          body: { agentId: memberId },
+        })
+      ).status,
+    ).toBe(201);
+
+    const dmWrite = await apiRequest<{ reply: string }>(page, `/api/agents/${memberId}/messages`, {
+      method: "POST",
+      body: {
+        content: `FORCE_SESSION_MEMORY_WRITE:${dmToken}`,
+      },
+    });
+    expect(dmWrite.status).toBe(200);
+    expect(dmWrite.data.reply).toContain(`세션 메모리 기록:${dmToken}`);
+
+    const dmRead = await apiRequest<{ reply: string }>(page, `/api/agents/${memberId}/messages`, {
+      method: "POST",
+      body: {
+        content: `FORCE_SESSION_MEMORY_READ:${dmToken}`,
+      },
+    });
+    expect(dmRead.status).toBe(200);
+    expect(dmRead.data.reply).toContain(`세션 메모리 존재:${dmToken}`);
+
+    const channelReadDmToken = await apiRequest<{
+      results: Array<{ reply: string }>;
+    }>(page, `/api/channels/${channelId}/messages`, {
+      method: "POST",
+      body: {
+        content: `@{${memberName}} FORCE_SESSION_MEMORY_READ:${dmToken}`,
+        messageKind: "general",
+      },
+    });
+    expect(channelReadDmToken.status).toBe(200);
+    expect(channelReadDmToken.data.results[0]?.reply).toContain(`세션 메모리 없음:${dmToken}`);
+
+    const channelWrite = await apiRequest<{
+      results: Array<{ reply: string }>;
+    }>(page, `/api/channels/${channelId}/messages`, {
+      method: "POST",
+      body: {
+        content: `@{${memberName}} FORCE_SESSION_MEMORY_WRITE:${channelToken}`,
+        messageKind: "general",
+      },
+    });
+    expect(channelWrite.status).toBe(200);
+    expect(channelWrite.data.results[0]?.reply).toContain(`세션 메모리 기록:${channelToken}`);
+
+    const channelRead = await apiRequest<{
+      results: Array<{ reply: string }>;
+    }>(page, `/api/channels/${channelId}/messages`, {
+      method: "POST",
+      body: {
+        content: `@{${memberName}} FORCE_SESSION_MEMORY_READ:${channelToken}`,
+        messageKind: "general",
+      },
+    });
+    expect(channelRead.status).toBe(200);
+    expect(channelRead.data.results[0]?.reply).toContain(`세션 메모리 존재:${channelToken}`);
+
+    const dmReadChannelToken = await apiRequest<{ reply: string }>(page, `/api/agents/${memberId}/messages`, {
+      method: "POST",
+      body: {
+        content: `FORCE_SESSION_MEMORY_READ:${channelToken}`,
+      },
+    });
+    expect(dmReadChannelToken.status).toBe(200);
+    expect(dmReadChannelToken.data.reply).toContain(`세션 메모리 없음:${channelToken}`);
   } finally {
     await electronApp.close();
   }

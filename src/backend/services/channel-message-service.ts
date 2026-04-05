@@ -1,5 +1,6 @@
 import { runCodex } from "../codex";
 import { ChannelEventBus } from "../events/channel-event-bus";
+import { getChannelRuntimeSessionScope } from "../runtime-session-scope";
 import { AgentRepository } from "../repositories/agent-repository";
 import { ChannelExecutionRepository } from "../repositories/channel-execution-repository";
 import { ChannelMemberRepository } from "../repositories/channel-member-repository";
@@ -15,6 +16,7 @@ import {
   isAgentMessageStreamType,
   type ChannelPromptTimelineEntry,
 } from "./member-prompt";
+import { parseChannelActions } from "./channel-action-protocol";
 import { extractMentionedAgents, type MentionedAgent } from "./mention-router";
 
 interface ChannelExecutionResult {
@@ -299,9 +301,14 @@ export class ChannelMessageService {
           continue;
         }
 
-        const chainedMentions = extractMentionedAgents(batchResult.reply, members).filter(
-          (mention) => mention.agentId !== batchResult.agentId,
-        );
+        const coordinator = this.resolveChannelCoordinator(channelId, members);
+        const chainedMentions = this.resolveChainedMentions({
+          reply: batchResult.reply,
+          members,
+          replyingAgentId: batchResult.agentId,
+          sourceAgentId: task.sourceAgentId,
+          coordinatorAgentId: coordinator?.id ?? null,
+        });
         if (chainedMentions.length === 0) {
           continue;
         }
@@ -403,6 +410,8 @@ export class ChannelMessageService {
     try {
       return await this.lockManager.withAgentLock(targetAgent.id, async () => {
         const selectedModel = this.appSettingsService.getSelectedModel();
+        const runtimeSessionScope = getChannelRuntimeSessionScope(channelId);
+        const runtimeSessionId = this.agentRepository.getRuntimeSession(targetAgent.id, runtimeSessionScope);
         const prompt = this.buildChannelExecutionPrompt({
           channelId,
           channelName,
@@ -419,7 +428,7 @@ export class ChannelMessageService {
           prompt,
           systemPrompt: buildMemberExecutionSystemPrompt(targetAgent, "channel"),
           model: selectedModel,
-          sessionId: targetAgent.sessionId,
+          sessionId: runtimeSessionId,
           cwd: this.workspaceDir,
           timeoutMs: 120_000,
           onStream: (event) => {
@@ -453,8 +462,8 @@ export class ChannelMessageService {
           },
         });
 
-        if (codexResult.sessionId && codexResult.sessionId !== targetAgent.sessionId) {
-          this.agentRepository.updateAgentSession(targetAgent.id, codexResult.sessionId);
+        if (codexResult.sessionId && codexResult.sessionId !== runtimeSessionId) {
+          this.agentRepository.upsertRuntimeSession(targetAgent.id, runtimeSessionScope, codexResult.sessionId);
         }
 
         const normalizedReply = codexResult.reply.trim();
@@ -543,6 +552,7 @@ export class ChannelMessageService {
     fallbackTriggerContent: string;
   }): string {
     const memberNameById = new Map(input.members.map((member) => [member.id, member.name]));
+    const coordinator = this.resolveChannelCoordinator(input.channelId, input.members);
     const recentMessages = this.channelMessageRepository
       .listRecentChannelMessages(
         input.channelId,
@@ -571,6 +581,8 @@ export class ChannelMessageService {
       channelName: input.channelName,
       channelDescription: input.channelDescription,
       targetAgentName: input.targetAgent.name,
+      coordinatorName: coordinator?.name ?? null,
+      targetAgentMode: coordinator?.id === input.targetAgent.id ? "coordinator" : "worker",
       taskRequesterName: input.sourceAgentId ? memberNameById.get(input.sourceAgentId) ?? input.sourceAgentId : null,
       members: input.members.map((member) => ({
         name: member.name,
@@ -594,6 +606,83 @@ export class ChannelMessageService {
       return "System";
     }
     return senderId ? memberNameById.get(senderId) ?? senderId : "Unknown agent";
+  }
+
+  private resolveChannelCoordinator(channelId: string, members: Agent[]): Agent | null {
+    const coordinatorState = this.channelMemberStateRepository
+      .listChannelMemberStates(channelId)
+      .find((state) => state.isCoordinator);
+    if (!coordinatorState) {
+      return null;
+    }
+    return members.find((member) => member.id === coordinatorState.agentId) ?? null;
+  }
+
+  private resolveChainedMentions(input: {
+    reply: string;
+    members: Agent[];
+    replyingAgentId: string;
+    sourceAgentId: string | null;
+    coordinatorAgentId: string | null;
+  }): MentionedAgent[] {
+    const actions = parseChannelActions(input.reply);
+    if (actions.length === 0) {
+      return extractMentionedAgents(input.reply, input.members).filter(
+        (mention) => mention.agentId !== input.replyingAgentId,
+      );
+    }
+
+    const mentions: MentionedAgent[] = [];
+    const seen = new Set<string>();
+    const pushMention = (mention: MentionedAgent | null): void => {
+      if (!mention || mention.agentId === input.replyingAgentId || seen.has(mention.agentId)) {
+        return;
+      }
+      seen.add(mention.agentId);
+      mentions.push(mention);
+    };
+
+    for (const action of actions) {
+      if (action.type === "delegate") {
+        pushMention(this.findMemberMentionByName(action.targetName, input.members));
+        continue;
+      }
+
+      if (action.type === "report") {
+        pushMention(
+          this.findMemberMentionByName(action.targetName ?? action.deliverTo, input.members) ??
+            this.findMemberMentionById(input.sourceAgentId, input.members) ??
+            this.findMemberMentionById(input.coordinatorAgentId, input.members),
+        );
+      }
+    }
+
+    return mentions;
+  }
+
+  private findMemberMentionByName(
+    targetName: string | null | undefined,
+    members: Agent[],
+  ): MentionedAgent | null {
+    if (!targetName) {
+      return null;
+    }
+
+    const normalizedTargetName = targetName.trim().toLowerCase();
+    if (!normalizedTargetName) {
+      return null;
+    }
+
+    const member = members.find((candidate) => candidate.name.trim().toLowerCase() === normalizedTargetName);
+    return member ? { agentId: member.id, mentionName: member.name } : null;
+  }
+
+  private findMemberMentionById(agentId: string | null | undefined, members: Agent[]): MentionedAgent | null {
+    if (!agentId) {
+      return null;
+    }
+    const member = members.find((candidate) => candidate.id === agentId);
+    return member ? { agentId: member.id, mentionName: member.name } : null;
   }
 
   private buildMentionExecutionBudgetMessage(

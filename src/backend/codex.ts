@@ -234,7 +234,7 @@ function pickLongest(parts: string[]): string {
     .sort((a, b) => b.length - a.length)[0] ?? "";
 }
 
-function isTransientCodexFailure(result: CodexRunResult): boolean {
+function isTransientCodexFailure(result: Pick<CodexRunResult, "ok" | "reply" | "error">): boolean {
   if (result.ok) {
     return false;
   }
@@ -253,6 +253,20 @@ function isTransientCodexFailure(result: CodexRunResult): boolean {
     "etimedout",
   ];
   return transientNeedles.some((needle) => text.includes(needle));
+}
+
+function isEmptySuccessfulCodexResult(result: Pick<CodexRunResult, "ok" | "reply">): boolean {
+  return result.ok && result.reply.trim().length === 0;
+}
+
+function shouldRetryCodexResult(
+  result: Pick<CodexRunResult, "ok" | "reply" | "error">,
+  attempt: number,
+): boolean {
+  if (attempt >= CODEX_MAX_TRANSIENT_RETRIES) {
+    return false;
+  }
+  return isTransientCodexFailure(result) || isEmptySuccessfulCodexResult(result);
 }
 
 function isAppServerUnavailableError(message: string): boolean {
@@ -892,14 +906,19 @@ async function runCodexViaAppServer(params: {
   onStream?: (event: CodexStreamEvent) => void;
 }): Promise<InternalCodexRunResult> {
   let latestResult: InternalCodexRunResult | null = null;
+  let currentSessionId = params.sessionId;
 
   for (let attempt = 0; attempt <= CODEX_MAX_TRANSIENT_RETRIES; attempt += 1) {
-    const result = await runCodexViaAppServerOnce(params);
+    const result = await runCodexViaAppServerOnce({
+      ...params,
+      sessionId: currentSessionId,
+    });
     latestResult = result;
-    if (result.ok) {
+    currentSessionId = result.sessionId ?? currentSessionId;
+    if (result.ok && !isEmptySuccessfulCodexResult(result)) {
       return result;
     }
-    const shouldRetry = isTransientCodexFailure(result) && attempt < CODEX_MAX_TRANSIENT_RETRIES;
+    const shouldRetry = shouldRetryCodexResult(result, attempt);
     if (!shouldRetry) {
       return result;
     }
@@ -1027,14 +1046,19 @@ interface CodexRunOnceParams {
 
 async function runCodexViaExec(params: CodexRunOnceParams): Promise<CodexRunResult> {
   let latestResult: CodexRunResult | null = null;
+  let currentSessionId = params.sessionId;
 
   for (let attempt = 0; attempt <= CODEX_MAX_TRANSIENT_RETRIES; attempt += 1) {
-    const result = await runCodexExecOnce(params);
+    const result = await runCodexExecOnce({
+      ...params,
+      sessionId: currentSessionId,
+    });
     latestResult = result;
-    if (result.ok) {
+    currentSessionId = result.sessionId ?? currentSessionId;
+    if (result.ok && !isEmptySuccessfulCodexResult(result)) {
       return result;
     }
-    const shouldRetry = isTransientCodexFailure(result) && attempt < CODEX_MAX_TRANSIENT_RETRIES;
+    const shouldRetry = shouldRetryCodexResult(result, attempt);
     if (!shouldRetry) {
       return result;
     }
