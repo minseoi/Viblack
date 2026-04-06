@@ -926,6 +926,30 @@
   - `npm run build`: 통과
   - `npx playwright test tests/e2e/electron.channel-metadata.spec.ts`: 통과 (`11 passed`)
 
+### 106) `CHANNEL_ACTION` 스키마 정리: 미사용 파라미터 제거
+- 판단:
+  - `type`, `target`, `artifact_path`는 실제 엔진에서 소비됨
+  - `mode`, `question`, `deliver_to`는 현재 파싱만 하거나 테스트 보조 코드에만 남아 있고 실행 의미가 없음
+- 수정:
+  - `src/backend/services/channel-action-protocol.ts`
+    - `mode`, `question`, `deliver_to` 제거
+  - `src/backend/services/channel-message-service.ts`
+    - report fallback에서 `deliver_to` 의존 제거
+  - `src/backend/services/member-prompt.ts`
+    - action example에서 `mode=blocking` 제거
+  - `tests/e2e/fixtures/fake-codex.js`
+    - ask_user/delegate 예시에서 불필요 파라미터 제거
+  - `tests/e2e/support/channel-delegation-eval.ts`
+    - 테스트용 action parser/interface도 동일 스키마로 정리
+
+### 107) 불필요한 테트리스 산출물 정리
+- 조사:
+  - `src/renderer/tetris-rotation.ts`는 리포 내 어디에서도 import되지 않는 고립 파일이었음
+  - 관련 문서는 `codexdocs/tetris-rotation-research-notes.md`에만 남아 있었고 제품 동작과 무관했음
+- 정리:
+  - `src/renderer/tetris-rotation.ts` 삭제
+  - `codexdocs/tetris-rotation-research-notes.md` 삭제
+
 - 2026-04-06: `src/renderer/tetris-rotation.ts` 생성 — `PieceState` 기준 회전 적용, 보드 경계/충돌 검사(`canPlacePiece`), wall-kick 후보 순회 포함 `tryRotatePiece` 구현.
 
 - 2026-04-06: `src/renderer/tetris-rotation.ts`에 `applyRotation(board,state,direction)`를 추가해 회전 시도 결과(`RotationResult`)를 함께 반환하도록 확장해 블럭 회전 시스템 완결성을 높였습니다.

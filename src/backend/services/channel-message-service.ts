@@ -943,7 +943,7 @@ export class ChannelMessageService {
 
       if (action.type === "report") {
         pushMention(
-          this.findMemberMentionByName(action.targetName ?? action.deliverTo, input.members) ??
+          this.findMemberMentionByName(action.targetName, input.members) ??
             this.findMemberMentionById(input.sourceAgentId, input.members) ??
             this.findMemberMentionById(input.coordinatorAgentId, input.members),
         );

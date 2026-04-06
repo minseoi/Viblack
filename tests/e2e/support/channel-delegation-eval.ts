@@ -82,9 +82,6 @@ export interface DelegationJobEntry {
 export interface ChannelAction {
   type: string;
   target?: string;
-  mode?: string;
-  deliverTo?: string;
-  question?: string;
   artifactPath?: string;
 }
 
@@ -387,12 +384,6 @@ function parseChannelActions(content: string): ChannelAction[] {
         nextAction.type = value;
       } else if (key === "target") {
         nextAction.target = value;
-      } else if (key === "mode") {
-        nextAction.mode = value;
-      } else if (key === "deliver_to") {
-        nextAction.deliverTo = value;
-      } else if (key === "question") {
-        nextAction.question = value;
       } else if (key === "artifact_path") {
         nextAction.artifactPath = value;
       }

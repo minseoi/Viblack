@@ -3,9 +3,6 @@ export type ChannelActionType = "delegate" | "report" | "ask_user" | "final" | "
 export interface ParsedChannelAction {
   type: ChannelActionType;
   targetName: string | null;
-  mode: string | null;
-  deliverTo: string | null;
-  question: string | null;
   artifactPath: string | null;
 }
 
@@ -46,9 +43,6 @@ export function parseChannelActions(content: string): ParsedChannelAction[] {
     const nextAction: ParsedChannelAction = {
       type: "noop",
       targetName: null,
-      mode: null,
-      deliverTo: null,
-      question: null,
       artifactPath: null,
     };
 
@@ -74,21 +68,6 @@ export function parseChannelActions(content: string): ParsedChannelAction[] {
 
       if (key === "target") {
         nextAction.targetName = normalizeTargetName(value) || null;
-        continue;
-      }
-
-      if (key === "mode") {
-        nextAction.mode = value || null;
-        continue;
-      }
-
-      if (key === "deliver_to") {
-        nextAction.deliverTo = normalizeTargetName(value) || null;
-        continue;
-      }
-
-      if (key === "question") {
-        nextAction.question = value || null;
         continue;
       }
 

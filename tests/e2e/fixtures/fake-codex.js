@@ -245,7 +245,7 @@ function maybeBuildDelegationReply(promptText, controlPromptText, sessionState =
   ) {
     return appendDelegationAction(
       ['확인 질문: 방금 말한 "그거"의 정확한 범위를 먼저 알려주면 다음 단계를 진행하겠습니다.'],
-      ['type=ask_user', 'question=방금 말한 "그거"의 정확한 범위를 먼저 알려줘.'],
+      ["type=ask_user"],
       actionProtocolEnabled,
     );
   }
@@ -257,7 +257,7 @@ function maybeBuildDelegationReply(promptText, controlPromptText, sessionState =
         [
           `@{${delegationTarget}} 방금 말한 그거를 조사해줘. 범위가 불명확하면 @{${currentAgentName}} 에게 먼저 확인 질문해줘.`,
         ],
-        ["type=delegate", `target=${delegationTarget}`, "mode=blocking"],
+        ["type=delegate", `target=${delegationTarget}`],
         actionProtocolEnabled,
       );
     }
@@ -265,7 +265,7 @@ function maybeBuildDelegationReply(promptText, controlPromptText, sessionState =
       [
         `@{${delegationTarget}} 조사 부탁합니다. 공개 자료 기준 핵심 사실만 정리하고 결과는 @{${currentAgentName}} 에게 채널에서 보고해줘.`,
       ],
-      ["type=delegate", `target=${delegationTarget}`, "mode=blocking"],
+      ["type=delegate", `target=${delegationTarget}`],
       actionProtocolEnabled,
     );
   }
@@ -294,7 +294,7 @@ function maybeBuildDelegationScenarioReply(promptText, sessionId, sessionState =
       return [
         "결론: 먼저 존 조사부터 진행합니다. 조사 결과가 공개 채널에 올라오면 그 다음에 매튜에게 문서화를 넘기겠습니다.",
         "@존 인스타 맛집 계정 운영 초보자 가이드에 필요한 조사 결과를 체크리스트 중심으로 정리해줘.",
-        buildChannelActionBlock(["type=delegate", "target=존", "mode=blocking"]),
+        buildChannelActionBlock(["type=delegate", "target=존"]),
       ].join("\n\n");
     }
 
@@ -303,7 +303,7 @@ function maybeBuildDelegationScenarioReply(promptText, sessionId, sessionState =
       return [
         "결론: 존 조사 결과가 확보됐으니 이제 매튜가 사용자용 가이드 문서로 정리하면 됩니다.",
         "@매튜 존 조사 결과를 바탕으로 사용자에게 바로 줄 수 있는 가이드 문서 초안을 작성해줘.",
-        buildChannelActionBlock(["type=delegate", "target=매튜", "mode=blocking"]),
+        buildChannelActionBlock(["type=delegate", "target=매튜"]),
       ].join("\n\n");
     }
 
@@ -362,7 +362,7 @@ function maybeBuildCodeArtifactScenarioReply(promptText, sessionId, sessionState
     return [
       "철수에게 구현 작업을 넘깁니다. 실제 구현 파일 경로까지 보고받아야 합니다.",
       `@${workerName} 블럭 회전 로직을 구현하고 완료되면 파일 경로를 포함해 보고해줘.`,
-      buildChannelActionBlock(["type=delegate", `target=${workerName}`, "mode=blocking"]),
+      buildChannelActionBlock(["type=delegate", `target=${workerName}`]),
     ].join("\n\n");
   }
 

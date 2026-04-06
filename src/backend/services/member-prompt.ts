@@ -95,7 +95,6 @@ export function buildChannelPrompt(input: {
     "[CHANNEL_ACTION]",
     "type=delegate",
     "target=존",
-    "mode=blocking",
     "[/CHANNEL_ACTION]",
     "[CHANNEL_ACTION]",
     "type=report",
