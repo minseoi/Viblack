@@ -1060,6 +1060,47 @@
   - `tests/e2e/electron.smoke.spec.ts`에 일반 응답과 스트리밍 응답의 border 색상 일치 회귀 추가
   - `npm run verify` 통과
 
+### 110) UX 버그 수정 착수: `CHANNEL_ACTION` 태그 디버그 모드에서만 표시
+- 사용자 이슈:
+  - 메시지 본문에 `[CHANNEL_ACTION] ... [/CHANNEL_ACTION]` 블록이 그대로 노출됨
+- 조치 계획:
+  - 앱 설정에 `debugMode` 플래그 추가
+  - 설정 모달에서 디버그 모드 on/off 저장 가능하게 연결
+  - 렌더러에서 디버그 모드가 꺼져 있으면 `CHANNEL_ACTION` 블록을 숨기고, 켜져 있으면 원문 그대로 표시
+  - Playwright 설정/채널 회귀 추가
+- 진행 업데이트:
+  - `AppSettingsSnapshot/AppSettingsService`에 `debugMode` 플래그 및 저장 로직 추가
+  - `PATCH /api/settings` 및 `PATCH /api/settings/debug-mode` 경로를 추가해 모델/디버그 설정을 함께 또는 개별 저장 가능하게 정리
+  - 설정 모달에 디버그 상태 카드와 체크박스 토글을 추가
+  - 렌더러 메시지 표시 단계에서 디버그 모드가 꺼져 있으면 `[CHANNEL_ACTION]` 블록을 제거하도록 변경
+  - `tests/e2e/electron.settings.spec.ts`에 기본 숨김/켜면 표시/다시 끄면 숨김 회귀 추가
+- 중간 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npx playwright test tests/e2e/electron.settings.spec.ts` 통과
+- 최종 검증:
+  - `npm run verify` 통과
+  - 결과: Playwright 15 passed, real-codex 계열 2 skipped
+
+### 111) 설정 UX 조정 착수: 디버그 모드 전용 탭 분리
+- 사용자 요청:
+  - 디버그 옵션을 `AI 모델` 탭 안에 두지 말고, `디버그 모드` 전용 탭에 배치
+- 조치 계획:
+  - 설정 모달 좌측 nav를 실제 탭 전환 구조로 변경
+  - `AI 모델`과 `디버그 모드` 패널을 분리
+  - 기존 저장 동작은 유지하되 E2E를 탭 전환 흐름에 맞춰 갱신
+- 진행 업데이트:
+  - 설정 nav에 `AI 모델`, `디버그 모드` 탭 버튼 추가
+  - 모델 카드/셀렉트는 모델 패널에만 남기고, 액션 태그 표시 토글은 디버그 패널로 이동
+  - 렌더러에 설정 탭 상태(`model/debug`)와 패널 표시 전환 로직 추가
+  - `tests/e2e/electron.settings.spec.ts`를 탭 전환 흐름에 맞춰 수정
+- 최종 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npx playwright test tests/e2e/electron.settings.spec.ts` 통과
+  - `npm run verify` 통과
+  - 결과: Playwright 15 passed, real-codex 계열 2 skipped
+
 ### 112) 채널 액션 프로토콜 안정화 착수: bracket block -> BEGIN/END sentinel
 - 사용자 요청:
   - 가장 안정적인 방식으로 channel action 구분자를 교체

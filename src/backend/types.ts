@@ -89,6 +89,7 @@ export interface AppSettingsSnapshot {
   availableModels: string[];
   modelsCachePath: string;
   cacheError: string | null;
+  debugMode: boolean;
 }
 
 export interface CodexStatus {

@@ -1,6 +1,7 @@
 type SenderType = "user" | "agent" | "system";
 type ChannelMessageKind = "request" | "progress" | "result" | "remention" | "general";
 type AvatarVariant = "user" | "agent" | "system" | "channel" | "app";
+type SettingsTab = "model" | "debug";
 
 interface Agent {
   id: string;
@@ -68,6 +69,7 @@ interface AppSettingsResponse {
   availableModels: string[];
   modelsCachePath: string;
   cacheError: string | null;
+  debugMode: boolean;
 }
 
 let backendBaseUrl = "";
@@ -92,9 +94,12 @@ const unreadAgentIds = new Set<string>();
 const inflightAgentIds = new Set<string>();
 let isGeneratingMemberPrompt = false;
 let isSavingSettings = false;
+let activeSettingsTab: SettingsTab = "model";
 const channelStore = new ChannelStore();
 let channelSyncController: ChannelSyncController | null = null;
 const DM_INFLIGHT_SYNC_INTERVAL_MS = 350;
+const CHANNEL_ACTION_BLOCK_PATTERN =
+  /(?:CHANNEL_ACTION_BEGIN\s*[\s\S]*?\s*CHANNEL_ACTION_END|\[CHANNEL_ACTION\]\s*[\s\S]*?\s*(?:\[\/CHANNEL_ACTION\]|\[\/CHANNEL_ACTION>|<\/CHANNEL_ACTION>))/g;
 
 function escapeHtml(value: string): string {
   return value
@@ -489,6 +494,22 @@ function renderMarkdown(text: string): string {
   return htmlParts.join("") || `<p>${escapeHtml(text)}</p>`;
 }
 
+function stripChannelActionBlocks(text: string): string {
+  return text
+    .replace(/\r\n/g, "\n")
+    .replace(CHANNEL_ACTION_BLOCK_PATTERN, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function getRenderableMessageText(message: ChatMessage): string {
+  if (message.sender === "user" || appSettings?.debugMode) {
+    return message.content;
+  }
+  return stripChannelActionBlocks(message.content);
+}
+
 function focusInput(): void {
   const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
   if (!input) {
@@ -610,6 +631,32 @@ function getActiveChannelStatusText(): string {
   return codexReady ? getReadyStatusText() : "Codex unavailable";
 }
 
+function renderSettingsTabUi(): void {
+  const modelTabBtn = document.getElementById("settings-tab-model");
+  const debugTabBtn = document.getElementById("settings-tab-debug");
+  const modelPanel = document.getElementById("settings-panel-model");
+  const debugPanel = document.getElementById("settings-panel-debug");
+  if (!modelTabBtn || !debugTabBtn || !modelPanel || !debugPanel) {
+    return;
+  }
+
+  const isModelTab = activeSettingsTab === "model";
+  modelTabBtn.classList.toggle("active", isModelTab);
+  modelTabBtn.setAttribute("aria-selected", String(isModelTab));
+  modelPanel.classList.toggle("active", isModelTab);
+  modelPanel.toggleAttribute("hidden", !isModelTab);
+
+  debugTabBtn.classList.toggle("active", !isModelTab);
+  debugTabBtn.setAttribute("aria-selected", String(!isModelTab));
+  debugPanel.classList.toggle("active", !isModelTab);
+  debugPanel.toggleAttribute("hidden", isModelTab);
+}
+
+function setActiveSettingsTab(nextTab: SettingsTab): void {
+  activeSettingsTab = nextTab;
+  renderSettingsTabUi();
+}
+
 function syncStatusForCurrentContext(): void {
   if (channelStore.getActiveChannelId()) {
     setStatus(getActiveChannelStatusText());
@@ -626,20 +673,33 @@ function syncStatusForCurrentContext(): void {
 function renderSettingsModal(): void {
   const modelSelect = document.getElementById("settings-model-select") as HTMLSelectElement | null;
   const currentModelEl = document.getElementById("settings-current-model");
+  const debugModeStatusEl = document.getElementById("settings-debug-mode-status");
+  const debugModeInput = document.getElementById("settings-debug-mode-input") as HTMLInputElement | null;
   const cachePathEl = document.getElementById("settings-cache-path");
   const helpEl = document.getElementById("settings-model-help");
   const errorEl = document.getElementById("settings-cache-error");
   const saveBtn = document.getElementById("settings-model-save-btn") as HTMLButtonElement | null;
   const indicatorEl = document.getElementById("workspace-model-indicator");
-  if (!modelSelect || !currentModelEl || !cachePathEl || !helpEl || !errorEl || !saveBtn) {
+  if (
+    !modelSelect ||
+    !currentModelEl ||
+    !debugModeStatusEl ||
+    !debugModeInput ||
+    !cachePathEl ||
+    !helpEl ||
+    !errorEl ||
+    !saveBtn
+  ) {
     return;
   }
 
   const settings = appSettings;
   const availableModels = settings?.availableModels ?? [];
   const selectedModel = settings?.selectedModel ?? null;
+  const debugMode = settings?.debugMode ?? false;
 
   currentModelEl.textContent = getSelectedModelLabel();
+  debugModeStatusEl.textContent = debugMode ? "켜짐" : "꺼짐";
   cachePathEl.textContent = settings?.modelsCachePath ?? "~/.codex/models_cache.json";
   helpEl.textContent = selectedModel
     ? `현재 모든 Codex 질의는 ${selectedModel}로 실행됩니다.`
@@ -671,6 +731,8 @@ function renderSettingsModal(): void {
 
   modelSelect.value = selectedModel ?? "";
   modelSelect.disabled = isSavingSettings;
+  debugModeInput.checked = debugMode;
+  debugModeInput.disabled = isSavingSettings;
   saveBtn.disabled = isSavingSettings;
 
   const errorMessage =
@@ -680,6 +742,7 @@ function renderSettingsModal(): void {
       : null);
   errorEl.textContent = errorMessage ?? "";
   errorEl.classList.toggle("show", Boolean(errorMessage));
+  renderSettingsTabUi();
 }
 
 async function loadSettings(): Promise<void> {
@@ -689,7 +752,6 @@ async function loadSettings(): Promise<void> {
 
 async function openSettingsModal(): Promise<void> {
   const modal = document.getElementById("settings-modal") as HTMLDialogElement | null;
-  const modelSelect = document.getElementById("settings-model-select") as HTMLSelectElement | null;
   if (!modal) {
     return;
   }
@@ -697,6 +759,7 @@ async function openSettingsModal(): Promise<void> {
   closeMemberMenu();
   closeChannelMenu();
   closeChannelMemberMenu();
+  setActiveSettingsTab("model");
   await loadSettings();
 
   if (modal.open) {
@@ -704,7 +767,11 @@ async function openSettingsModal(): Promise<void> {
   }
   modal.showModal();
   setTimeout(() => {
-    modelSelect?.focus();
+    const focusTarget =
+      activeSettingsTab === "debug"
+        ? (document.getElementById("settings-debug-mode-input") as HTMLInputElement | null)
+        : (document.getElementById("settings-model-select") as HTMLSelectElement | null);
+    focusTarget?.focus();
   }, 0);
 }
 
@@ -716,29 +783,34 @@ function closeSettingsModal(): void {
   modal.close();
 }
 
-async function saveSelectedModelSetting(): Promise<void> {
+async function saveSettings(): Promise<void> {
   const modelSelect = document.getElementById("settings-model-select") as HTMLSelectElement | null;
-  if (!modelSelect) {
+  const debugModeInput = document.getElementById("settings-debug-mode-input") as HTMLInputElement | null;
+  if (!modelSelect || !debugModeInput) {
     return;
   }
   const nextSelectedModel = modelSelect.value || null;
+  const nextDebugMode = debugModeInput.checked;
 
   isSavingSettings = true;
   renderSettingsModal();
 
   try {
-    appSettings = await fetchJson<AppSettingsResponse>(`${backendBaseUrl}/api/settings/model`, {
+    appSettings = await fetchJson<AppSettingsResponse>(`${backendBaseUrl}/api/settings`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ selectedModel: nextSelectedModel }),
+      body: JSON.stringify({
+        selectedModel: nextSelectedModel,
+        debugMode: nextDebugMode,
+      }),
     });
     renderSettingsModal();
+    await refreshMessages();
     showWarning(null);
-    setStatus(codexReady ? getReadyStatusText() : "Codex unavailable");
     closeSettingsModal();
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown error";
-    showWarning(`모델 설정 저장 실패: ${message}`);
+    showWarning(`환경 설정 저장 실패: ${message}`);
     setStatus(`Error: ${message}`);
   } finally {
     isSavingSettings = false;
@@ -958,7 +1030,7 @@ function renderMessages(messages: ChatMessage[], agentName = "Agent"): void {
 
     const body = document.createElement("div");
     body.className = "msg-content";
-    body.innerHTML = renderMarkdown(message.content);
+    body.innerHTML = renderMarkdown(getRenderableMessageText(message));
 
     main.appendChild(meta);
     main.appendChild(body);
@@ -2093,6 +2165,8 @@ function initMemberCrudUi(): void {
   const settingsCloseBtn = document.getElementById("settings-close-btn");
   const settingsCancelBtn = document.getElementById("settings-model-cancel-btn");
   const settingsSaveBtn = document.getElementById("settings-model-save-btn");
+  const settingsModelTabBtn = document.getElementById("settings-tab-model");
+  const settingsDebugTabBtn = document.getElementById("settings-tab-debug");
   const addChannelBtn = document.getElementById("add-channel-btn");
   const channelMenu = document.getElementById("channel-menu");
   const channelMenuEditBtn = document.getElementById("channel-menu-edit");
@@ -2150,7 +2224,15 @@ function initMemberCrudUi(): void {
   });
 
   settingsSaveBtn?.addEventListener("click", () => {
-    void saveSelectedModelSetting();
+    void saveSettings();
+  });
+
+  settingsModelTabBtn?.addEventListener("click", () => {
+    setActiveSettingsTab("model");
+  });
+
+  settingsDebugTabBtn?.addEventListener("click", () => {
+    setActiveSettingsTab("debug");
   });
 
   settingsModal?.addEventListener("close", () => {

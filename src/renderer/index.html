@@ -1084,6 +1084,7 @@
         font-size: 13px;
         font-weight: 600;
         text-align: left;
+        cursor: pointer;
       }
       .settings-nav-item.active {
         background: rgba(255, 255, 255, 0.16);
@@ -1136,6 +1137,14 @@
         overflow-y: auto;
         min-height: 0;
       }
+      .settings-panel {
+        display: none;
+        gap: 18px;
+        align-content: start;
+      }
+      .settings-panel.active {
+        display: grid;
+      }
       .settings-card-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1170,6 +1179,36 @@
       }
       .settings-inline-help {
         margin: 0;
+        font-size: 12px;
+        color: #5d6e84;
+        line-height: 1.5;
+      }
+      .settings-toggle {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        border: 1px solid #d9e3f1;
+        border-radius: 14px;
+        padding: 14px 16px;
+        background: rgba(255, 255, 255, 0.92);
+        box-shadow: 0 10px 28px rgba(35, 55, 87, 0.07);
+        cursor: pointer;
+      }
+      .settings-toggle input {
+        margin: 3px 0 0;
+        width: 16px;
+        height: 16px;
+        accent-color: #2d6cdf;
+      }
+      .settings-toggle-copy {
+        display: grid;
+        gap: 4px;
+      }
+      .settings-toggle-copy strong {
+        font-size: 14px;
+        color: #17283f;
+      }
+      .settings-toggle-copy span {
         font-size: 12px;
         color: #5d6e84;
         line-height: 1.5;
@@ -1451,15 +1490,34 @@
             </div>
           </div>
           <div class="settings-nav">
-            <button class="settings-nav-item active" type="button">AI 모델</button>
+            <button
+              id="settings-tab-model"
+              class="settings-nav-item active"
+              type="button"
+              role="tab"
+              aria-selected="true"
+              aria-controls="settings-panel-model"
+            >
+              AI 모델
+            </button>
+            <button
+              id="settings-tab-debug"
+              class="settings-nav-item"
+              type="button"
+              role="tab"
+              aria-selected="false"
+              aria-controls="settings-panel-debug"
+            >
+              디버그 모드
+            </button>
           </div>
         </aside>
         <section class="settings-content">
           <div class="settings-head">
             <div>
-              <h3 class="settings-title">AI 모델 설정</h3>
+              <h3 class="settings-title">환경 설정</h3>
               <p class="settings-subtitle">
-                멤버 DM, 채널 멘션 실행, 시스템 프롬프트 생성에 사용할 Codex 모델을 선택합니다.
+                탭별로 Codex 실행 모델과 채널 디버그 옵션을 관리합니다.
               </p>
             </div>
             <button
@@ -1472,25 +1530,47 @@
             </button>
           </div>
           <div class="settings-scroll">
-            <div class="settings-card-grid">
-              <div class="settings-card">
-                <div class="settings-card-label">현재 실행</div>
-                <div id="settings-current-model" class="settings-card-value">Codex 기본값</div>
-                <div id="settings-model-help" class="settings-inline-help">
-                  현재 Codex 기본 모델을 사용합니다.
+            <div id="settings-panel-model" class="settings-panel active" role="tabpanel">
+              <div class="settings-card-grid">
+                <div class="settings-card">
+                  <div class="settings-card-label">현재 실행</div>
+                  <div id="settings-current-model" class="settings-card-value">Codex 기본값</div>
+                  <div id="settings-model-help" class="settings-inline-help">
+                    현재 Codex 기본 모델을 사용합니다.
+                  </div>
+                </div>
+                <div class="settings-card">
+                  <div class="settings-card-label">모델 캐시</div>
+                  <div class="settings-card-value">로컬 캐시</div>
+                  <div id="settings-cache-path" class="settings-card-sub">~/.codex/models_cache.json</div>
                 </div>
               </div>
-              <div class="settings-card">
-                <div class="settings-card-label">모델 캐시</div>
-                <div class="settings-card-value">로컬 캐시</div>
-                <div id="settings-cache-path" class="settings-card-sub">~/.codex/models_cache.json</div>
+              <div class="modal-field">
+                <label for="settings-model-select">실행 모델</label>
+                <select id="settings-model-select"></select>
               </div>
+              <div id="settings-cache-error" class="settings-inline-error" aria-live="polite"></div>
             </div>
-            <div class="modal-field">
-              <label for="settings-model-select">실행 모델</label>
-              <select id="settings-model-select"></select>
+            <div id="settings-panel-debug" class="settings-panel" role="tabpanel" hidden>
+              <div class="settings-card-grid">
+                <div class="settings-card">
+                  <div class="settings-card-label">디버그 모드</div>
+                  <div id="settings-debug-mode-status" class="settings-card-value">꺼짐</div>
+                  <div class="settings-inline-help">
+                    켜면 채널 메시지의 <code>CHANNEL_ACTION_BEGIN ... CHANNEL_ACTION_END</code> 블록을 그대로 표시합니다.
+                  </div>
+                </div>
+              </div>
+              <label class="settings-toggle" for="settings-debug-mode-input">
+                <input id="settings-debug-mode-input" type="checkbox" />
+                <span class="settings-toggle-copy">
+                  <strong>액션 블록 표시</strong>
+                  <span>
+                    끄면 <code>CHANNEL_ACTION_BEGIN ... CHANNEL_ACTION_END</code> 블록은 숨기고, 켜면 원문 그대로 보여줍니다.
+                  </span>
+                </span>
+              </label>
             </div>
-            <div id="settings-cache-error" class="settings-inline-error" aria-live="polite"></div>
           </div>
           <div class="settings-actions">
             <button id="settings-model-cancel-btn" class="btn" type="button">취소</button>

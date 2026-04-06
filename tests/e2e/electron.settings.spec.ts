@@ -49,6 +49,29 @@ async function launchIsolatedApp(
   return { electronApp, page };
 }
 
+async function apiRequest<T>(
+  page: Page,
+  pathname: string,
+  init?: { method?: string; body?: unknown },
+): Promise<{ status: number; data: T }> {
+  return page.evaluate(
+    async ({ pathname: requestPath, init: requestInit }) => {
+      const baseUrl = await window.viblackApi.getBackendBaseUrl();
+      const response = await fetch(`${baseUrl}${requestPath}`, {
+        method: requestInit?.method ?? "GET",
+        headers: requestInit?.body ? { "Content-Type": "application/json" } : undefined,
+        body: requestInit?.body ? JSON.stringify(requestInit.body) : undefined,
+      });
+      const text = await response.text();
+      return {
+        status: response.status,
+        data: text ? JSON.parse(text) : null,
+      };
+    },
+    { pathname, init },
+  ) as Promise<{ status: number; data: T }>;
+}
+
 async function openAddMemberModal(page: Page): Promise<void> {
   await page.locator('[data-section="members"] .section-header').hover();
   await page.locator("#add-member-btn").click({ force: true });
@@ -57,6 +80,10 @@ async function openAddMemberModal(page: Page): Promise<void> {
 
 function memberRow(page: Page, name: string) {
   return page.locator("#member-list .member-item", { hasText: name });
+}
+
+function channelRow(page: Page, channelName: string) {
+  return page.locator("#channel-list .section-item.channel", { hasText: `# ${channelName}` });
 }
 
 test("electron settings modal saves selected model and uses it for exec", async ({}, testInfo) => {
@@ -73,6 +100,10 @@ test("electron settings modal saves selected model and uses it for exec", async 
     await expect(page.locator(".settings-workspace")).not.toContainText(
       "Slack 스타일 설정 화면에서 Codex 실행 모델을 관리합니다.",
     );
+    await expect(page.locator("#settings-tab-model")).toHaveClass(/active/);
+    await expect(page.locator("#settings-tab-debug")).not.toHaveClass(/active/);
+    await expect(page.locator("#settings-panel-model")).toBeVisible();
+    await expect(page.locator("#settings-panel-debug")).toBeHidden();
 
     const modelSelect = page.locator("#settings-model-select");
     await expect(modelSelect.locator("option")).toHaveCount(4);
@@ -108,6 +139,110 @@ test("electron settings modal saves selected model and uses it for exec", async 
         hasText: `모델 확인:${selectedModel}`,
       }),
     ).toHaveCount(1);
+  } finally {
+    await electronApp.close();
+  }
+});
+
+test("channel action blocks are visible only when debug mode is enabled", async ({}, testInfo) => {
+  const suffix = Date.now();
+  const leaderName = `영희${suffix}`;
+  const researcherName = `존${suffix}`;
+  const channelName = `debug-room-${suffix}`;
+  const { electronApp, page } = await launchIsolatedApp(testInfo);
+
+  try {
+    const leaderCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+      method: "POST",
+      body: {
+        name: leaderName,
+        role: "Coordinator",
+        systemPrompt: "You are the coordinator. Reply in concise Korean.",
+      },
+    });
+    expect(leaderCreate.status).toBe(201);
+
+    const researcherCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+      method: "POST",
+      body: {
+        name: researcherName,
+        role: "Researcher",
+        systemPrompt: "You are the researcher. Reply in concise Korean.",
+      },
+    });
+    expect(researcherCreate.status).toBe(201);
+
+    const channelCreate = await apiRequest<{ channel: { id: string } }>(page, "/api/channels", {
+      method: "POST",
+      body: {
+        name: channelName,
+        description: "debug mode channel action block visibility verification",
+      },
+    });
+    expect(channelCreate.status).toBe(201);
+
+    const channelId = channelCreate.data.channel.id;
+    expect(
+      (
+        await apiRequest(page, `/api/channels/${channelId}/members`, {
+          method: "POST",
+          body: { agentId: leaderCreate.data.agent.id },
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await apiRequest(page, `/api/channels/${channelId}/members`, {
+          method: "POST",
+          body: { agentId: researcherCreate.data.agent.id },
+        })
+      ).status,
+    ).toBe(201);
+
+    await page.reload();
+    await page.waitForLoadState("domcontentloaded");
+    await expect(page.locator("#status")).not.toHaveText("Loading...");
+
+    await expect(channelRow(page, channelName)).toHaveCount(1);
+    await channelRow(page, channelName).click();
+    await expect(page.locator("#agent-title")).toHaveText(`# ${channelName}`);
+
+    await page.fill(
+      "#chat-input",
+      `@{${leaderName}} ${researcherName}한테 조사 시키고 그 결과를 정리해서 나한테 줘`,
+    );
+    await page.click("#send-btn");
+
+    await expect(
+      page.locator("#messages .msg-agent .msg-content", {
+        hasText: "최종 정리: 하위 리서치 결과를 바탕으로 사용자용 초안을 정리했습니다.",
+      }),
+    ).toHaveCount(1);
+    await expect(page.locator("#messages")).not.toContainText("CHANNEL_ACTION_BEGIN");
+
+    await page.locator("#open-settings-btn").click();
+    await expect(page.locator("#settings-modal[open]")).toHaveCount(1);
+    await page.locator("#settings-tab-debug").click();
+    await expect(page.locator("#settings-tab-debug")).toHaveClass(/active/);
+    await expect(page.locator("#settings-panel-debug")).toBeVisible();
+    await expect(page.locator("#settings-panel-model")).toBeHidden();
+    await expect(page.locator("#settings-debug-mode-input")).not.toBeChecked();
+    await page.locator("#settings-debug-mode-input").check();
+    await page.locator("#settings-model-save-btn").click();
+    await expect(page.locator("#settings-modal[open]")).toHaveCount(0);
+
+    await expect(page.locator("#messages")).toContainText("CHANNEL_ACTION_BEGIN");
+    await expect(page.locator("#messages")).toContainText("type=delegate");
+
+    await page.locator("#open-settings-btn").click();
+    await expect(page.locator("#settings-modal[open]")).toHaveCount(1);
+    await page.locator("#settings-tab-debug").click();
+    await expect(page.locator("#settings-debug-mode-input")).toBeChecked();
+    await page.locator("#settings-debug-mode-input").uncheck();
+    await page.locator("#settings-model-save-btn").click();
+    await expect(page.locator("#settings-modal[open]")).toHaveCount(0);
+
+    await expect(page.locator("#messages")).not.toContainText("CHANNEL_ACTION_BEGIN");
   } finally {
     await electronApp.close();
   }

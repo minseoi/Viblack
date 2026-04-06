@@ -5,6 +5,7 @@ import { AppSettingsRepository } from "../repositories/app-settings-repository";
 import type { AppSettingsSnapshot } from "../types";
 
 const SELECTED_MODEL_KEY = "selected_model";
+const DEBUG_MODE_KEY = "debug_mode";
 
 interface ModelsCacheSnapshot {
   availableModels: string[];
@@ -25,6 +26,7 @@ export class AppSettingsService {
       availableModels: modelsSnapshot.availableModels,
       modelsCachePath: modelsSnapshot.modelsCachePath,
       cacheError: modelsSnapshot.cacheError,
+      debugMode: this.getDebugMode(),
     };
   }
 
@@ -34,9 +36,42 @@ export class AppSettingsService {
   }
 
   updateSelectedModel(selectedModel: string | null): AppSettingsSnapshot {
+    this.persistSelectedModel(selectedModel);
+    return this.getSettings();
+  }
+
+  getDebugMode(): boolean {
+    const rawValue = this.appSettingsRepository.getSetting(DEBUG_MODE_KEY)?.value.trim().toLowerCase() ?? "";
+    return rawValue === "1" || rawValue === "true" || rawValue === "on";
+  }
+
+  updateDebugMode(debugMode: boolean): AppSettingsSnapshot {
+    if (debugMode) {
+      this.appSettingsRepository.setSetting(DEBUG_MODE_KEY, "1");
+    } else {
+      this.appSettingsRepository.deleteSetting(DEBUG_MODE_KEY);
+    }
+    return this.getSettings();
+  }
+
+  updateSettings(input: { selectedModel?: string | null; debugMode?: boolean }): AppSettingsSnapshot {
+    if (Object.prototype.hasOwnProperty.call(input, "selectedModel")) {
+      this.persistSelectedModel(input.selectedModel ?? null);
+    }
+    if (Object.prototype.hasOwnProperty.call(input, "debugMode")) {
+      if (input.debugMode) {
+        this.appSettingsRepository.setSetting(DEBUG_MODE_KEY, "1");
+      } else {
+        this.appSettingsRepository.deleteSetting(DEBUG_MODE_KEY);
+      }
+    }
+    return this.getSettings();
+  }
+
+  private persistSelectedModel(selectedModel: string | null): void {
     if (!selectedModel) {
       this.appSettingsRepository.deleteSetting(SELECTED_MODEL_KEY);
-      return this.getSettings();
+      return;
     }
 
     const modelsSnapshot = this.readModelsCache();
@@ -48,7 +83,6 @@ export class AppSettingsService {
     }
 
     this.appSettingsRepository.setSetting(SELECTED_MODEL_KEY, selectedModel);
-    return this.getSettings();
   }
 
   private readModelsCache(): ModelsCacheSnapshot {
