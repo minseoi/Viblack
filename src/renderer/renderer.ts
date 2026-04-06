@@ -1,4 +1,6 @@
 type SenderType = "user" | "agent" | "system";
+type ChannelMessageKind = "request" | "progress" | "result" | "remention" | "general";
+type AvatarVariant = "user" | "agent" | "system" | "channel" | "app";
 
 interface Agent {
   id: string;
@@ -11,9 +13,11 @@ interface Agent {
 interface ChatMessage {
   id: number;
   sender: SenderType;
+  senderId?: string | null;
   senderLabel?: string;
   content: string;
   createdAt: string;
+  messageKind?: ChannelMessageKind;
 }
 
 interface Channel {
@@ -35,7 +39,7 @@ interface ChannelApiMessage {
   senderType: SenderType;
   senderId: string | null;
   content: string;
-  messageKind: "request" | "progress" | "result" | "remention" | "general";
+  messageKind: ChannelMessageKind;
   createdAt: string;
 }
 
@@ -46,6 +50,7 @@ interface ChannelMessageEventPayload {
 
 interface ChannelExecutionJob {
   id: number;
+  targetAgentId: string;
   status: "queued" | "running" | "succeeded" | "failed" | "skipped";
 }
 
@@ -101,6 +106,227 @@ function escapeHtml(value: string): string {
 
 function escapeAttr(value: string): string {
   return value.replaceAll('"', "&quot;");
+}
+
+function hashSeed(value: string): number {
+  let hash = 0;
+  for (const char of value) {
+    hash = (hash * 31 + char.charCodeAt(0)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+function getAvatarInitials(label: string, variant: AvatarVariant): string {
+  if (variant === "channel") {
+    return "#";
+  }
+  if (variant === "system") {
+    return "SY";
+  }
+  if (variant === "app") {
+    return "VB";
+  }
+  if (variant === "user") {
+    return "ME";
+  }
+
+  const normalized = label.trim();
+  if (!normalized) {
+    return "AI";
+  }
+
+  const words = normalized.split(/\s+/).filter(Boolean);
+  if (words.length >= 2) {
+    return `${Array.from(words[0] ?? "")[0] ?? ""}${Array.from(words[1] ?? "")[0] ?? ""}`.toUpperCase();
+  }
+
+  return Array.from(normalized.replace(/[#@]/g, ""))
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+}
+
+function getAvatarTone(seed: string, variant: AvatarVariant): {
+  background: string;
+  color: string;
+  ring: string;
+} {
+  if (variant === "user") {
+    return {
+      background: "linear-gradient(135deg, #d7f4e9 0%, #97d5bc 100%)",
+      color: "#0f5137",
+      ring: "rgba(15, 81, 55, 0.22)",
+    };
+  }
+  if (variant === "system") {
+    return {
+      background: "linear-gradient(135deg, #fff2d6 0%, #f2ca7b 100%)",
+      color: "#714800",
+      ring: "rgba(113, 72, 0, 0.2)",
+    };
+  }
+  if (variant === "channel") {
+    return {
+      background: "linear-gradient(135deg, #dde6f2 0%, #b9c9de 100%)",
+      color: "#23364d",
+      ring: "rgba(35, 54, 77, 0.2)",
+    };
+  }
+  if (variant === "app") {
+    return {
+      background: "linear-gradient(135deg, #d9e5f4 0%, #9cb6d8 100%)",
+      color: "#213552",
+      ring: "rgba(33, 53, 82, 0.22)",
+    };
+  }
+
+  const hue = hashSeed(seed) % 360;
+  return {
+    background: `linear-gradient(135deg, hsl(${hue} 82% 93%) 0%, hsl(${(hue + 24) % 360} 67% 79%) 100%)`,
+    color: `hsl(${hue} 42% 24%)`,
+    ring: `hsla(${hue}, 38%, 28%, 0.2)`,
+  };
+}
+
+function applyAvatarStyle(
+  element: HTMLElement,
+  label: string,
+  variant: AvatarVariant,
+  seed = label,
+): void {
+  const initials = getAvatarInitials(label, variant);
+  const tone = getAvatarTone(seed, variant);
+  element.textContent = initials || "AI";
+  element.style.setProperty("--avatar-bg", tone.background);
+  element.style.setProperty("--avatar-fg", tone.color);
+  element.style.setProperty("--avatar-ring", tone.ring);
+}
+
+function getMessageSenderLabel(message: ChatMessage, agentName = "Agent"): string {
+  if (message.sender === "user") {
+    return "You";
+  }
+  if (message.sender === "system") {
+    return "System";
+  }
+  return message.senderLabel ?? agentName;
+}
+
+function getMessageAvatarVariant(message: ChatMessage): AvatarVariant {
+  if (message.sender === "user") {
+    return "user";
+  }
+  if (message.sender === "system") {
+    return "system";
+  }
+  return "agent";
+}
+
+function formatMessageTimestamp(createdAt: string): string {
+  const parsed = new Date(createdAt);
+  if (Number.isNaN(parsed.getTime())) {
+    return createdAt;
+  }
+  return parsed.toLocaleString([], {
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function renderHeaderAvatar(): void {
+  const avatarEl = document.getElementById("header-avatar");
+  if (!avatarEl) {
+    return;
+  }
+
+  const activeChannelId = channelStore.getActiveChannelId();
+  if (activeChannelId) {
+    const channel = getChannelById(activeChannelId);
+    applyAvatarStyle(avatarEl, channel?.name ?? "#", "channel", channel?.id ?? activeChannelId);
+    return;
+  }
+
+  if (activeAgentId) {
+    const activeAgent = agents.find((agent) => agent.id === activeAgentId);
+    applyAvatarStyle(
+      avatarEl,
+      activeAgent?.name ?? "Agent",
+      "agent",
+      activeAgent?.id ?? activeAgent?.name ?? activeAgentId,
+    );
+    return;
+  }
+
+  applyAvatarStyle(avatarEl, "Viblack", "app", "viblack");
+}
+
+function getActiveTypingActors(): Array<{ id: string; name: string; variant: AvatarVariant }> {
+  const activeChannelId = channelStore.getActiveChannelId();
+  if (activeChannelId) {
+    const memberNameById = new Map(
+      channelStore.getActiveChannelMembers().map((member) => [member.id, member.name]),
+    );
+    return channelStore
+      .getActiveChannelTypingAgentIds()
+      .map((agentId) => ({
+        id: agentId,
+        name: memberNameById.get(agentId) ?? "Agent",
+        variant: "agent" as const,
+      }));
+  }
+
+  if (activeAgentId && inflightAgentIds.has(activeAgentId)) {
+    const activeAgent = agents.find((agent) => agent.id === activeAgentId);
+    return [
+      {
+        id: activeAgentId,
+        name: activeAgent?.name ?? "Agent",
+        variant: "agent" as const,
+      },
+    ];
+  }
+
+  return [];
+}
+
+function renderTypingIndicator(): void {
+  const indicator = document.getElementById("typing-indicator");
+  const avatarsEl = document.getElementById("typing-avatars");
+  const labelEl = document.getElementById("typing-label");
+  if (!indicator || !avatarsEl || !labelEl) {
+    return;
+  }
+
+  const actors = getActiveTypingActors();
+  avatarsEl.innerHTML = "";
+
+  if (actors.length === 0) {
+    indicator.classList.remove("show");
+    labelEl.textContent = "";
+    return;
+  }
+
+  indicator.classList.add("show");
+  for (const actor of actors.slice(0, 3)) {
+    const avatar = document.createElement("div");
+    avatar.className = "avatar typing-avatar";
+    applyAvatarStyle(avatar, actor.name, actor.variant, actor.id);
+    avatarsEl.appendChild(avatar);
+  }
+
+  if (actors.length === 1) {
+    labelEl.textContent = `${actors[0]?.name ?? "Agent"} 작성 중`;
+    return;
+  }
+
+  const visibleNames = actors.slice(0, 2).map((actor) => actor.name);
+  const remainingCount = actors.length - visibleNames.length;
+  labelEl.textContent =
+    remainingCount > 0
+      ? `${visibleNames.join(", ")} 외 ${remainingCount}명 작성 중`
+      : `${visibleNames.join(", ")} 작성 중`;
 }
 
 function highlightInlineMentions(text: string): string {
@@ -282,6 +508,7 @@ function setStatus(text: string): void {
   if (statusEl) {
     statusEl.textContent = text;
   }
+  renderTypingIndicator();
 }
 
 function setHeader(title: string, subtitle = ""): void {
@@ -293,6 +520,22 @@ function setHeader(title: string, subtitle = ""): void {
   if (subtitleEl) {
     subtitleEl.textContent = subtitle;
   }
+  renderHeaderAvatar();
+}
+
+function getEnabledComposerPlaceholder(): string {
+  const activeChannelId = channelStore.getActiveChannelId();
+  if (activeChannelId) {
+    const channel = getChannelById(activeChannelId);
+    return channel
+      ? `#${channel.name} 채널에 메시지를 남기세요. (@멤버 멘션으로 작업 위임)`
+      : "채널에 메시지를 남기세요. (@멤버 멘션으로 작업 위임)";
+  }
+  if (activeAgentId) {
+    const agent = agents.find((item) => item.id === activeAgentId);
+    return `${agent?.name ?? "멤버"}에게 메시지를 보내세요. (Enter 전송, Shift+Enter 줄바꿈)`;
+  }
+  return "Helper에게 작업을 요청하세요. (Enter 전송, Shift+Enter 줄바꿈)";
 }
 
 function setComposerEnabled(enabled: boolean, disabledPlaceholder = "먼저 멤버를 추가하세요."): void {
@@ -300,9 +543,7 @@ function setComposerEnabled(enabled: boolean, disabledPlaceholder = "먼저 멤�
   const button = document.getElementById("send-btn") as HTMLButtonElement | null;
   if (input) {
     input.disabled = !enabled;
-    input.placeholder = enabled
-      ? "Helper에게 작업을 요청하세요. (Enter 전송, Shift+Enter 줄바꿈)"
-      : disabledPlaceholder;
+    input.placeholder = enabled ? getEnabledComposerPlaceholder() : disabledPlaceholder;
   }
   if (button) {
     button.disabled = !enabled;
@@ -336,6 +577,13 @@ function getReadyStatusText(command?: string): string {
 }
 
 function getActiveChannelStatusText(): string {
+  const typingActors = getActiveTypingActors();
+  if (typingActors.length > 0) {
+    if (typingActors.length === 1) {
+      return `${typingActors[0]?.name ?? "Agent"} 작성 중...`;
+    }
+    return `${typingActors.length}명 작성 중...`;
+  }
   if (
     channelStore.getInflightChannelRequestCount() > 0 ||
     channelStore.getActiveChannelRunningJobCount() > 0
@@ -352,7 +600,7 @@ function syncStatusForCurrentContext(): void {
   }
   if (activeAgentId && inflightAgentIds.has(activeAgentId)) {
     const activeAgent = agents.find((agent) => agent.id === activeAgentId);
-    setStatus(`${activeAgent?.name ?? "Agent"} is working...`);
+    setStatus(`${activeAgent?.name ?? "Agent"} 작성 중...`);
     return;
   }
   setStatus(codexReady ? getReadyStatusText() : "Codex unavailable");
@@ -551,9 +799,11 @@ function mapChannelMessagesToChatMessages(
   return messages.map((message) => ({
     id: message.id,
     sender: message.senderType,
+    senderId: message.senderId,
     senderLabel: message.senderId ? memberNameById.get(message.senderId) : undefined,
     content: message.content,
     createdAt: message.createdAt,
+    messageKind: message.messageKind,
   }));
 }
 
@@ -658,25 +908,45 @@ function renderMessages(messages: ChatMessage[], agentName = "Agent"): void {
   for (const message of messages) {
     const item = document.createElement("li");
     item.className = `msg msg-${message.sender}`;
+    if (message.messageKind && message.messageKind !== "general") {
+      item.classList.add(message.messageKind);
+    }
+
+    const avatar = document.createElement("div");
+    avatar.className = "avatar msg-avatar";
+    const senderLabel = getMessageSenderLabel(message, agentName);
+    applyAvatarStyle(
+      avatar,
+      senderLabel,
+      getMessageAvatarVariant(message),
+      message.senderId ?? senderLabel,
+    );
+
+    const main = document.createElement("div");
+    main.className = "msg-main";
+
+    const meta = document.createElement("div");
+    meta.className = "msg-meta";
 
     const sender = document.createElement("div");
     sender.className = "msg-sender";
-    sender.textContent =
-      message.sender === "user"
-        ? "You"
-        : message.senderLabel ?? (message.sender === "agent" ? agentName : "System");
+    sender.textContent = senderLabel;
+
+    const ts = document.createElement("div");
+    ts.className = "msg-time";
+    ts.textContent = formatMessageTimestamp(message.createdAt);
+
+    meta.appendChild(sender);
+    meta.appendChild(ts);
 
     const body = document.createElement("div");
     body.className = "msg-content";
     body.innerHTML = renderMarkdown(message.content);
 
-    const ts = document.createElement("div");
-    ts.className = "msg-time";
-    ts.textContent = new Date(message.createdAt).toLocaleString();
-
-    item.appendChild(sender);
-    item.appendChild(body);
-    item.appendChild(ts);
+    main.appendChild(meta);
+    main.appendChild(body);
+    item.appendChild(avatar);
+    item.appendChild(main);
     list.appendChild(item);
   }
 
@@ -886,6 +1156,10 @@ function renderMemberList(): void {
       void refreshMessages();
     });
 
+    const avatar = document.createElement("div");
+    avatar.className = "avatar member-avatar";
+    applyAvatarStyle(avatar, agent.name, "agent", agent.id);
+
     const textWrap = document.createElement("div");
     textWrap.className = "member-text";
 
@@ -898,10 +1172,10 @@ function renderMemberList(): void {
     nameRowEl.appendChild(nameEl);
 
     if (inflightAgentIds.has(agent.id) || unreadAgentIds.has(agent.id)) {
-      const dot = document.createElement("span");
-      dot.className = `member-dot-badge ${inflightAgentIds.has(agent.id) ? "working" : "unread"}`;
-      dot.title = inflightAgentIds.has(agent.id) ? "응답 생성 중" : "새 응답";
-      nameRowEl.appendChild(dot);
+      const statusChip = document.createElement("span");
+      statusChip.className = `member-status-chip ${inflightAgentIds.has(agent.id) ? "working" : "unread"}`;
+      statusChip.textContent = inflightAgentIds.has(agent.id) ? "작성중" : "새 응답";
+      nameRowEl.appendChild(statusChip);
     }
 
     const roleEl = document.createElement("div");
@@ -921,6 +1195,7 @@ function renderMemberList(): void {
       openMemberMenu(agent.id, menuBtn);
     });
 
+    mainBtn.appendChild(avatar);
     mainBtn.appendChild(textWrap);
     mainBtn.appendChild(menuBtn);
     item.appendChild(mainBtn);
@@ -1512,6 +1787,11 @@ async function refreshActiveChannelExecutionState(channelId: string): Promise<vo
     (job) => job.status === "queued" || job.status === "running",
   ).length;
   channelStore.setActiveChannelRunningJobCount(runningJobCount);
+  channelStore.setActiveChannelTypingAgentIds(
+    data.jobs
+      .filter((job) => job.status === "queued" || job.status === "running")
+      .map((job) => job.targetAgentId),
+  );
 }
 
 async function refreshMessages(): Promise<void> {
@@ -1535,6 +1815,11 @@ async function refreshMessages(): Promise<void> {
         (job) => job.status === "queued" || job.status === "running",
       ).length;
       channelStore.setActiveChannelRunningJobCount(runningJobCount);
+      channelStore.setActiveChannelTypingAgentIds(
+        executionData.jobs
+          .filter((job) => job.status === "queued" || job.status === "running")
+          .map((job) => job.targetAgentId),
+      );
       channelStore.setActiveChannelMembers(data.members);
       setHeader(`# ${data.channel.name}`, data.channel.description);
       syncStatusForCurrentContext();
@@ -1551,6 +1836,7 @@ async function refreshMessages(): Promise<void> {
     channelStore.resetLastSeenChannelMessageId();
     channelStore.clearPendingChannelDeltaSync();
     channelStore.clearActiveChannelRunningJobCount();
+    channelStore.clearActiveChannelTypingAgentIds();
     if (!activeAgentId) {
       setHeader("멤버를 추가하세요", "");
       setStatus("No member selected");
@@ -2135,6 +2421,7 @@ async function sendMessage(): Promise<void> {
     sender: "user",
     content,
     createdAt: nowIso,
+    messageKind: "general",
   };
   renderMessages([...renderedMessages, optimisticUser]);
 
@@ -2171,6 +2458,7 @@ async function sendMessage(): Promise<void> {
     window.clearInterval(dmInflightSyncTimer);
     inflightAgentIds.delete(targetAgentId);
     renderMemberList();
+    syncStatusForCurrentContext();
     button.disabled = !activeAgentId && !channelStore.getActiveChannelId();
   }
 }

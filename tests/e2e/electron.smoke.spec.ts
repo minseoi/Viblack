@@ -124,6 +124,9 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     await page.click("#member-save-btn");
     await expect(page.locator("#member-modal[open]")).toHaveCount(0);
     await expect(memberRow(page, memberBeta)).toHaveCount(1);
+    await expect
+      .poll(async () => page.locator("#member-list .member-avatar").count())
+      .toBeGreaterThanOrEqual(2);
 
     await openAddMemberModal(page);
     await page.fill("#member-name-input", memberAlpha);
@@ -166,6 +169,33 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     await page.click("#send-btn");
     await expect(page.locator("#messages .msg-user .msg-content", { hasText: "DM smoke ping" })).toHaveCount(1);
     await expect(page.locator("#messages .msg-agent .msg-content", { hasText: "테스트 응답" })).toHaveCount(1);
+    await expect(page.locator("#messages .msg-user .msg-avatar").first()).toBeVisible();
+    await expect(page.locator("#messages .msg-agent .msg-avatar").first()).toBeVisible();
+    await expect(page.locator("#header-avatar")).toBeVisible();
+    await expect(page.locator("#messages .msg-kind")).toHaveCount(0);
+    const dmMessageRow = page.locator("#messages .msg-agent").filter({ hasText: "테스트 응답" }).first();
+    const dmAgentBaseBorderColor = await dmMessageRow.evaluate((node) =>
+      window.getComputedStyle(node).borderTopColor,
+    );
+    const dmMessageStyleBeforeHover = await dmMessageRow.evaluate((node) => {
+      const style = window.getComputedStyle(node);
+      return {
+        backgroundColor: style.backgroundColor,
+        borderColor: style.borderColor,
+        boxShadow: style.boxShadow,
+      };
+    });
+    await dmMessageRow.hover();
+    await expect.poll(async () =>
+      dmMessageRow.evaluate((node) => {
+        const style = window.getComputedStyle(node);
+        return JSON.stringify({
+          backgroundColor: style.backgroundColor,
+          borderColor: style.borderColor,
+          boxShadow: style.boxShadow,
+        });
+      }),
+    ).toBe(JSON.stringify(dmMessageStyleBeforeHover));
     await page.fill("#chat-input", "FORCE_REQUIRE_APP_SERVER");
     await page.click("#send-btn");
     await expect(
@@ -233,6 +263,8 @@ test("electron full feature regression flow", async ({}, testInfo) => {
       `DM stream check FORCE_STREAM_AGENT_MESSAGE:${dmStreamToken} FORCE_DELAY_MS:1800 FORCE_FINAL_REPLY:${dmFinalToken}`,
     );
     await page.click("#send-btn");
+    await expect(page.locator("#typing-indicator")).toHaveClass(/show/, { timeout: 1200 });
+    await expect(page.locator("#typing-label")).toContainText(memberAlphaEdited);
     await expect(
       page.locator("#messages .msg-agent .msg-content", {
         hasText: dmStreamToken,
@@ -248,6 +280,14 @@ test("electron full feature regression flow", async ({}, testInfo) => {
         hasText: dmFinalToken,
       }),
     ).toHaveCount(1, { timeout: 7000 });
+    const dmStreamMessageRow = page.locator("#messages .msg-agent").filter({ hasText: dmFinalToken }).first();
+    await expect
+      .poll(async () =>
+        dmStreamMessageRow.evaluate((node) => window.getComputedStyle(node).borderTopColor),
+      )
+      .toBe(dmAgentBaseBorderColor);
+    await expect(page.locator("#status")).toContainText("Ready", { timeout: 7000 });
+    await expect(page.locator("#typing-indicator")).not.toHaveClass(/show/);
 
     const dmAgentMessages = page.locator("#messages .msg-agent .msg-content");
     const beforeDmStreamDedupCount = await dmAgentMessages.count();
@@ -326,6 +366,7 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     await channelRow(page, editedChannelName).click();
     await expect(page.locator("#agent-title")).toHaveText(`# ${editedChannelName}`);
     await expect(page.locator("#channel-members-btn")).toBeVisible();
+    await expect(page.locator("#header-avatar")).toBeVisible();
 
     await page.click("#channel-members-btn");
     await expect(page.locator("#channel-members-modal[open]")).toHaveCount(1);
@@ -368,6 +409,8 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     await expect(page.locator("#messages .msg-agent .msg-sender", { hasText: memberAlphaEdited })).toHaveCount(
       1,
     );
+    await expect(page.locator("#messages .msg-agent .msg-avatar").first()).toBeVisible();
+    await expect(page.locator("#messages .msg-kind")).toHaveCount(0);
     await expect(
       page.locator("#messages .msg-user .msg-content .mention", {
         hasText: `@{${memberAlphaEdited}}`,
@@ -404,10 +447,14 @@ test("electron full feature regression flow", async ({}, testInfo) => {
       `@{${memberAlphaEdited}} FORCE_STREAM_AGENT_MESSAGE_SEQ:abcdefghijklmnopqr|stuv|. FORCE_DELAY_MS:1800 FORCE_FINAL_REPLY:${channelStreamDedupFinalToken}`,
     );
     await page.click("#send-btn");
-    await expect(page.locator("#status")).toHaveText("Channel is working...", { timeout: 1200 });
+    await expect(page.locator("#status")).toHaveText(/Channel is working\.\.\.|작성 중\.\.\./, {
+      timeout: 1200,
+    });
+    await expect(page.locator("#typing-indicator")).toHaveClass(/show/, { timeout: 1200 });
+    await expect(page.locator("#typing-label")).toContainText(memberAlphaEdited);
     await expect(channelMessages).toHaveCount(beforeChannelStreamDedupCount + 2, { timeout: 1200 });
     await expect(channelMessages).toHaveCount(beforeChannelStreamDedupCount + 2, { timeout: 1200 });
-    await expect(page.locator("#status")).toHaveText("Channel is working...");
+    await expect(page.locator("#status")).toHaveText(/Channel is working\.\.\.|작성 중\.\.\./);
     await expect(
       page.locator("#messages .msg-agent .msg-content", {
         hasText: channelStreamDedupFinalToken,
@@ -415,6 +462,7 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     ).toHaveCount(1, { timeout: 7000 });
     await expect(channelMessages).toHaveCount(beforeChannelStreamDedupCount + 2, { timeout: 7000 });
     await expect(page.locator("#status")).toContainText("Ready", { timeout: 7000 });
+    await expect(page.locator("#typing-indicator")).not.toHaveClass(/show/, { timeout: 7000 });
 
     const alphaSenderItems = page.locator("#messages .msg-agent .msg-sender", {
       hasText: memberAlphaEdited,

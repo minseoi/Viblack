@@ -218,6 +218,39 @@
   - `tests/e2e/electron.smoke.spec.ts`의 agent 응답 검증을 일반 locator + `toContainText`에서 `hasText` 필터 + count 단정으로 변경
   - 다중 agent 메시지 존재 시 strict mode 위반으로 깨지는 케이스 제거
 
+### 71) UX 개편 진행: 슬랙 스타일 메시지 레이아웃 착수
+- 사용자 요청:
+  - 메신저 창을 슬랙처럼 프로필 아바타 + 메시지 중심 레이아웃으로 개편
+  - 작업 중 작성자(에이전트) 표시 추가
+  - 전체 UX를 슬랙과 유사한 방향으로 정리
+- 진행 중:
+  - `src/renderer/index.html`, `src/renderer/renderer.ts`, `src/renderer/channel-state.ts` 구조 검토 완료
+  - 채널 실행 상태 API(`/api/channels/:channelId/executions`)를 활용해 채널 작성 중 표시를 노출하는 방향으로 설계
+  - 메시지 카드형 버블 중심 UI를 좌측 아바타 + 메타 정보 행 기반 UI로 재구성 예정
+- 중간 구현:
+  - 메인 헤더/DM/채널 메시지/멤버 목록에 공통 아바타 렌더링 헬퍼 추가
+  - 채널 실행 job 기준 active typing agent ID 추적으로 `작성 중` 인디케이터 추가
+  - Playwright 스모크 테스트에 아바타/typing indicator 회귀 검증 추가
+  - `npm run check` 통과
+- 마무리:
+  - 렌더러 메시지 DOM을 좌측 아바타 + 발신자/시간 메타 행 구조로 재편
+  - DM/채널 헤더에 컨텍스트 아바타 추가, 입력창을 슬랙형 composer 카드로 개편
+  - DM 완료 후 typing indicator가 남는 경로를 `inflightAgentIds` 정리 직후 상태 동기화로 수정
+  - `npm run build` 통과
+  - `npm run verify` 통과
+
+### 72) UX 조정 진행: 메시지 hover 하이라이트 제거
+- 사용자 요청:
+  - 대화 버블 hover 시 하이라이트 제거
+  - 이름 옆 `HANDOFF`, `LIVE`, `RESULT` 배지 의미 확인
+- 진행 중:
+  - 메시지 row hover 스타일 제거 예정
+  - Playwright 스모크에 hover 전후 style 불변 확인 추가 예정
+- 완료:
+  - `src/renderer/index.html`의 `.msg:hover` 강조 스타일 제거
+  - `tests/e2e/electron.smoke.spec.ts`에 메시지 hover 전후 background/border/shadow 불변 회귀 추가
+  - `npm run verify` 통과
+
 ### 70) 기능 구현 착수: 멤버 시스템 프롬프트 v2 구조화
 - 사용자 요청 반영: 멤버 공통 시스템 프롬프트를 섹션형(정체성/실행/검증/안전/출력)으로 고도화 예정.
 - 적용 범위: `src/backend/server.ts`의 멤버 실행 프롬프트 조합 로직(DM/채널 공통).
@@ -953,3 +986,30 @@
 - 2026-04-06: `src/renderer/tetris-rotation.ts` 생성 — `PieceState` 기준 회전 적용, 보드 경계/충돌 검사(`canPlacePiece`), wall-kick 후보 순회 포함 `tryRotatePiece` 구현.
 
 - 2026-04-06: `src/renderer/tetris-rotation.ts`에 `applyRotation(board,state,direction)`를 추가해 회전 시도 결과(`RotationResult`)를 함께 반환하도록 확장해 블럭 회전 시스템 완결성을 높였습니다.
+
+### 108) UX 조정: 메시지 종류 배지 숨김
+- 사용자 요청:
+  - 메시지 이름 옆 `HANDOFF`, `LIVE`, `RESULT` 배지를 숨김
+- 조치 예정:
+  - 렌더러 메시지 메타에서 종류 배지 DOM 생성 제거
+  - 관련 CSS 정리
+  - Playwright 스모크에 배지 미노출 회귀 추가
+- 완료:
+  - `src/renderer/renderer.ts`에서 메시지 종류 배지 DOM 생성 제거
+  - `src/renderer/index.html`의 `.msg-kind` 스타일 제거
+  - `tests/e2e/electron.smoke.spec.ts`에 배지 미노출 회귀 추가
+  - `npm run verify` 통과
+
+### 109) UX 버그 수정 진행: 에이전트 버블 테두리 불일치
+- 사용자 이슈:
+  - 어떤 멤버 버블은 테두리가 보이고, 어떤 멤버 버블은 테두리가 안 보임
+- 원인 파악:
+  - 렌더러 CSS에서 일반 `.msg-agent`는 투명 border를 사용하고, 스트리밍 중간 메시지인 `.msg.progress`만 별도 border-color를 가짐
+- 조치 예정:
+  - 에이전트 메시지 기본 스타일을 하나로 통일
+  - 일반 응답/스트리밍 응답 border 일관성 회귀를 Playwright 스모크에 추가
+- 완료:
+  - `src/renderer/index.html`에서 `.msg-agent` 기본 background/border를 지정해 모든 에이전트 버블 스타일 통일
+  - `.msg.progress`는 별도 강한 강조를 하지 않고 동일 border 계열만 유지
+  - `tests/e2e/electron.smoke.spec.ts`에 일반 응답과 스트리밍 응답의 border 색상 일치 회귀 추가
+  - `npm run verify` 통과

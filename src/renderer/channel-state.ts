@@ -4,6 +4,7 @@ class ChannelStore {
   private activeChannelMembers: Agent[] = [];
   private inflightChannelRequestCount = 0;
   private activeChannelRunningJobCount = 0;
+  private activeChannelTypingAgentIds: string[] = [];
   private lastSeenChannelMessageId = 0;
   private isChannelDeltaSyncing = false;
   private pendingChannelDeltaSync = false;
@@ -77,6 +78,18 @@ class ChannelStore {
     this.activeChannelRunningJobCount = 0;
   }
 
+  getActiveChannelTypingAgentIds(): string[] {
+    return [...this.activeChannelTypingAgentIds];
+  }
+
+  setActiveChannelTypingAgentIds(agentIds: string[]): void {
+    this.activeChannelTypingAgentIds = [...new Set(agentIds)];
+  }
+
+  clearActiveChannelTypingAgentIds(): void {
+    this.activeChannelTypingAgentIds = [];
+  }
+
   getLastSeenChannelMessageId(): number {
     return this.lastSeenChannelMessageId;
   }
@@ -130,6 +143,7 @@ class ChannelStore {
       sender: "user",
       content: pending.content,
       createdAt: pending.createdAt,
+      messageKind: "general",
     };
   }
 
@@ -153,6 +167,7 @@ class ChannelStore {
         sender: "user",
         content: pending.content,
         createdAt: pending.createdAt,
+        messageKind: "general",
       }));
   }
 
