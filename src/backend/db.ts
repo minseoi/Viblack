@@ -598,7 +598,13 @@ export class ViblackDb {
   }
 
   private assertUniqueChannelName(name: string, excludeChannelId?: string): void {
-    const stmt = this.db.prepare(`SELECT id FROM channels WHERE name = ? COLLATE NOCASE LIMIT 1`);
+    const stmt = this.db.prepare(
+      `SELECT id
+       FROM channels
+       WHERE archived_at IS NULL
+         AND name = ? COLLATE NOCASE
+       LIMIT 1`,
+    );
     const row = stmt.get(name) as Record<string, unknown> | undefined;
     if (!row) {
       return;
@@ -623,6 +629,9 @@ export class ViblackDb {
   private ensureChannelIndexes(): void {
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_channels_created_at ON channels(created_at);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_active_name_unique
+        ON channels(name COLLATE NOCASE)
+        WHERE archived_at IS NULL;
       CREATE INDEX IF NOT EXISTS idx_channel_members_channel_id ON channel_members(channel_id);
       CREATE INDEX IF NOT EXISTS idx_channel_members_agent_id ON channel_members(agent_id);
       CREATE INDEX IF NOT EXISTS idx_channel_messages_channel_id_id ON channel_messages(channel_id, id);

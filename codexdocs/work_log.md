@@ -218,6 +218,52 @@
   - `tests/e2e/electron.smoke.spec.ts`의 agent 응답 검증을 일반 locator + `toContainText`에서 `hasText` 필터 + count 단정으로 변경
   - 다중 agent 메시지 존재 시 strict mode 위반으로 깨지는 케이스 제거
 
+## 2026-04-06 진행 로그
+
+### 71) 버그 조사: 채널 저장 중복명 오류 노출 위치 및 삭제 후 이름 재사용 불가
+- 사용자 이슈:
+  - 채널 저장 시 `채널 저장 실패: channel name already exists` 경고창이 떠서 채널 모달 바깥 UX를 깨뜨림.
+  - 채널을 삭제(아카이브)한 뒤에도 같은 이름으로 새 채널 생성이 막힘.
+- 조사:
+  - 백엔드 `channelRepository.assertUniqueChannelName`가 아카이브 여부와 무관하게 전체 `channels` 테이블에서 이름 충돌을 검사함.
+  - 렌더러 `saveChannel()`는 채널 저장 실패를 전부 `showWarning(...)`로 처리해, 채널명 충돌도 전역 경고 모달로 노출함.
+- 조치 예정:
+  - 활성 채널(`archived_at IS NULL`)끼리만 이름 충돌로 간주하도록 수정.
+  - 채널명 충돌은 채널 모달 내부 인라인 오류로만 표시하고 경고 모달은 띄우지 않도록 정리.
+  - Playwright E2E에 삭제 후 동일 이름 재생성 및 중복 인라인 오류 시나리오 추가.
+
+### 72) 버그 수정 진행: 채널 중복명 UX/아카이브 재사용 규칙 정리
+- 백엔드:
+  - `ChannelRepository`/`ViblackDb`의 채널명 중복 검사를 활성 채널 기준으로 제한.
+  - SQLite에 활성 채널명 전용 partial unique index 추가(`archived_at IS NULL` 조건).
+- 렌더러:
+  - 채널 저장 시 중복명은 `#channel-name-input` 아래 인라인 에러로만 표시하도록 변경.
+  - 채널 모달을 다시 열거나 이름을 수정하면 인라인 에러를 즉시 초기화하도록 정리.
+- 테스트:
+  - `electron.smoke.spec.ts`에 채널 중복명 인라인 오류 및 삭제 후 동일 이름 재생성 UI 시나리오 추가.
+  - `electron.channel-metadata.spec.ts`에 아카이브된 채널명 재사용 API 회귀 시나리오 추가.
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npm run verify` 통과
+  - 결과: Playwright 16 passed, real-codex 계열 2 skipped
+
+### 73) UI 조사: 멤버 아바타 배경색 일관성 이슈
+- 사용자 이슈:
+  - 멤버 프로필 이미지(아바타) 배경색이 멤버마다 달라 보여 일관성이 없음.
+- 조사:
+  - 멤버별 색상 차이 자체가 문제는 아니고, 같은 멤버가 컨텍스트별로 다른 seed를 사용해 다른 색으로 보일 수 있는 구조가 핵심 이슈였음.
+  - 멤버 목록/헤더/typing avatar는 주로 `agent.id`를 seed로 쓰지만, DM 메시지 avatar는 `senderId`가 없을 때 `senderLabel`로 fallback 되어 같은 멤버도 다른 색이 될 수 있음.
+- 조치:
+  - `agent` variant의 해시 기반 고유색은 유지.
+  - 메시지 avatar seed 계산을 분리해 `senderId -> agentId -> activeAgentId/name` 순으로 같은 멤버 identity를 우선 사용하도록 수정.
+  - Playwright 스모크에 같은 멤버의 목록 avatar와 DM/채널 메시지 avatar 색상 일치 회귀를 추가.
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npm run verify` 통과
+  - 결과: Playwright 16 passed, real-codex 계열 2 skipped
+
 ### 71) UX 개편 진행: 슬랙 스타일 메시지 레이아웃 착수
 - 사용자 요청:
   - 메신저 창을 슬랙처럼 프로필 아바타 + 메시지 중심 레이아웃으로 개편

@@ -93,7 +93,13 @@ export class ChannelRepository {
   }
 
   private assertUniqueChannelName(name: string, excludeChannelId?: string): void {
-    const stmt = this.db.prepare(`SELECT id FROM channels WHERE name = ? COLLATE NOCASE LIMIT 1`);
+    const stmt = this.db.prepare(
+      `SELECT id
+       FROM channels
+       WHERE archived_at IS NULL
+         AND name = ? COLLATE NOCASE
+       LIMIT 1`,
+    );
     const row = stmt.get(name) as Record<string, unknown> | undefined;
     if (!row) {
       return;
@@ -107,4 +113,3 @@ export class ChannelRepository {
     throw new DuplicateChannelNameError(name);
   }
 }
-

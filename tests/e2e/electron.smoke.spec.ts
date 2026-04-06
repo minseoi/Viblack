@@ -5,6 +5,7 @@ import {
   expect,
   test,
   type ElectronApplication,
+  type Locator,
   type Page,
   type TestInfo,
 } from "@playwright/test";
@@ -49,6 +50,21 @@ function memberRow(page: Page, name: string) {
 
 function channelRow(page: Page, channelName: string) {
   return page.locator("#channel-list .section-item.channel", { hasText: `# ${channelName}` });
+}
+
+async function readAvatarTone(locator: Locator): Promise<{
+  background: string;
+  color: string;
+  ring: string;
+}> {
+  return locator.evaluate((node) => {
+    const element = node as HTMLElement;
+    return {
+      background: element.style.getPropertyValue("--avatar-bg"),
+      color: element.style.getPropertyValue("--avatar-fg"),
+      ring: element.style.getPropertyValue("--avatar-ring"),
+    };
+  });
 }
 
 async function openAddMemberModal(page: Page): Promise<void> {
@@ -173,6 +189,13 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     await expect(page.locator("#messages .msg-agent .msg-avatar").first()).toBeVisible();
     await expect(page.locator("#header-avatar")).toBeVisible();
     await expect(page.locator("#messages .msg-kind")).toHaveCount(0);
+    const dmMemberAvatarTone = await readAvatarTone(
+      memberRow(page, memberAlphaEdited).locator(".member-avatar"),
+    );
+    const dmAgentAvatarTone = await readAvatarTone(
+      page.locator("#messages .msg-agent").filter({ hasText: "테스트 응답" }).first().locator(".msg-avatar"),
+    );
+    expect(dmAgentAvatarTone).toEqual(dmMemberAvatarTone);
     const dmMessageRow = page.locator("#messages .msg-agent").filter({ hasText: "테스트 응답" }).first();
     const dmAgentBaseBorderColor = await dmMessageRow.evaluate((node) =>
       window.getComputedStyle(node).borderTopColor,
@@ -353,6 +376,19 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     await expect(page.locator("#channel-modal[open]")).toHaveCount(0);
     await expect(channelRow(page, channelName)).toHaveCount(1);
 
+    await openAddChannelModal(page);
+    await page.fill("#channel-name-input", channelName);
+    await page.fill("#channel-desc-input", "duplicate channel should stay inline");
+    await page.click("#channel-submit-btn");
+    await expect(page.locator("#channel-modal[open]")).toHaveCount(1);
+    await expect(page.locator("#channel-name-input")).toHaveClass(/field-error/);
+    await expect(page.locator("#channel-name-error")).toHaveText(
+      "이미 사용 중인 채널 이름입니다. 다른 이름을 입력하세요.",
+    );
+    await expect(page.locator("#warning")).not.toContainText("채널 저장 실패");
+    await page.click("#channel-cancel-btn");
+    await expect(page.locator("#channel-modal[open]")).toHaveCount(0);
+
     await openChannelMenu(page, channelName);
     await page.click("#channel-menu-edit");
     await expect(page.locator("#channel-modal[open]")).toHaveCount(1);
@@ -420,6 +456,17 @@ test("electron full feature regression flow", async ({}, testInfo) => {
       page.locator("#messages .msg-user .msg-content", { hasText: "mention response test" }),
     ).toHaveCount(1);
     await expect(page.locator("#messages .msg-agent .msg-content", { hasText: "테스트 응답" })).toHaveCount(1);
+    const channelMemberAvatarTone = await readAvatarTone(
+      memberRow(page, memberAlphaEdited).locator(".member-avatar"),
+    );
+    const channelAgentAvatarTone = await readAvatarTone(
+      page
+        .locator("#messages .msg-agent")
+        .filter({ hasText: memberAlphaEdited })
+        .first()
+        .locator(".msg-avatar"),
+    );
+    expect(channelAgentAvatarTone).toEqual(channelMemberAvatarTone);
 
     const channelMultiCompletedFirstToken = `CHANNEL_MULTI_A_${suffix}`;
     const channelMultiCompletedSecondToken = `CHANNEL_MULTI_B_EXTENDED_${suffix}`;
@@ -559,6 +606,13 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     await page.click("#channel-menu-delete");
     await page.click("#action-confirm-btn");
     await expect(channelRow(page, editedChannelName)).toHaveCount(0);
+
+    await openAddChannelModal(page);
+    await page.fill("#channel-name-input", editedChannelName);
+    await page.fill("#channel-desc-input", "recreated after archive");
+    await page.click("#channel-submit-btn");
+    await expect(page.locator("#channel-modal[open]")).toHaveCount(0);
+    await expect(channelRow(page, editedChannelName)).toHaveCount(1);
 
     await openMemberMenu(page, memberBeta);
     await page.click("#member-menu-delete");

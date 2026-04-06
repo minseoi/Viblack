@@ -12,6 +12,7 @@ interface Agent {
 
 interface ChatMessage {
   id: number;
+  agentId?: string;
   sender: SenderType;
   senderId?: string | null;
   senderLabel?: string;
@@ -200,6 +201,22 @@ function applyAvatarStyle(
   element.style.setProperty("--avatar-bg", tone.background);
   element.style.setProperty("--avatar-fg", tone.color);
   element.style.setProperty("--avatar-ring", tone.ring);
+}
+
+function getMessageAvatarSeed(message: ChatMessage, senderLabel: string): string {
+  if (message.sender === "user") {
+    return "user";
+  }
+  if (message.sender === "system") {
+    return "system";
+  }
+  if (message.senderId) {
+    return message.senderId;
+  }
+  if (message.agentId) {
+    return message.agentId;
+  }
+  return activeAgentId ?? senderLabel;
 }
 
 function getMessageSenderLabel(message: ChatMessage, agentName = "Agent"): string {
@@ -919,7 +936,7 @@ function renderMessages(messages: ChatMessage[], agentName = "Agent"): void {
       avatar,
       senderLabel,
       getMessageAvatarVariant(message),
-      message.senderId ?? senderLabel,
+      getMessageAvatarSeed(message, senderLabel),
     );
 
     const main = document.createElement("div");
@@ -1230,8 +1247,33 @@ function setMemberNameInputError(isError: boolean, reason?: string): void {
   errorText.classList.remove("show");
 }
 
+function setChannelNameInputError(isError: boolean, reason?: string): void {
+  const nameInput = document.getElementById("channel-name-input") as HTMLInputElement | null;
+  const errorText = document.getElementById("channel-name-error") as HTMLDivElement | null;
+  if (!nameInput || !errorText) {
+    return;
+  }
+
+  if (isError) {
+    nameInput.classList.add("field-error");
+    nameInput.setAttribute("aria-invalid", "true");
+    errorText.textContent = reason ?? "이미 사용 중인 채널 이름입니다.";
+    errorText.classList.add("show");
+    return;
+  }
+
+  nameInput.classList.remove("field-error");
+  nameInput.removeAttribute("aria-invalid");
+  errorText.textContent = "";
+  errorText.classList.remove("show");
+}
+
 function isDuplicateNameErrorMessage(message: string): boolean {
   return message.toLowerCase().includes("agent display name already exists");
+}
+
+function isDuplicateChannelNameErrorMessage(message: string): boolean {
+  return message.toLowerCase().includes("channel name already exists");
 }
 
 function openMemberModal(mode: "create" | "edit", targetAgent: Agent | null): void {
@@ -1346,6 +1388,7 @@ function openChannelModal(mode: "create" | "edit", channel: Channel | null): voi
   if (modal.open) {
     modal.close();
   }
+  setChannelNameInputError(false);
   modal.showModal();
   nameInput.focus();
 }
@@ -1574,8 +1617,21 @@ function closeChannelMemberAddModal(): void {
 async function saveChannel(channelName: string, channelDescription: string): Promise<void> {
   const name = channelName.trim();
   const description = channelDescription.trim();
+  const nameInput = document.getElementById("channel-name-input") as HTMLInputElement | null;
   if (!name || !description) {
     showWarning("채널 이름과 설명을 입력하세요.");
+    return;
+  }
+
+  setChannelNameInputError(false);
+  const normalizedChannelName = name.toLowerCase();
+  const duplicateChannel = channelStore.getChannels().find(
+    (channel) =>
+      channel.id !== editingChannelId && channel.name.trim().toLowerCase() === normalizedChannelName,
+  );
+  if (duplicateChannel) {
+    setChannelNameInputError(true, "이미 사용 중인 채널 이름입니다. 다른 이름을 입력하세요.");
+    nameInput?.focus();
     return;
   }
 
@@ -1603,9 +1659,16 @@ async function saveChannel(channelName: string, channelDescription: string): Pro
       await refreshMessages();
     }
 
+    showWarning(null);
+    setChannelNameInputError(false);
     closeChannelModal();
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown error";
+    if (isDuplicateChannelNameErrorMessage(message)) {
+      setChannelNameInputError(true, "이미 사용 중인 채널 이름입니다. 다른 이름을 입력하세요.");
+      nameInput?.focus();
+      return;
+    }
     showWarning(`채널 저장 실패: ${message}`);
     setStatus(`Error: ${message}`);
   }
@@ -2112,6 +2175,10 @@ function initMemberCrudUi(): void {
 
   channelCancelBtn?.addEventListener("click", () => {
     closeChannelModal();
+  });
+
+  channelNameInput?.addEventListener("input", () => {
+    setChannelNameInputError(false);
   });
 
   channelModal?.addEventListener("close", () => {

@@ -150,6 +150,55 @@ test("channel execution retries once when codex returns an empty successful resp
   }
 });
 
+test("archived channel name can be reused by a new active channel", async ({}, testInfo) => {
+  const suffix = Date.now();
+  const channelName = `reusable-room-${suffix}`;
+
+  const { electronApp, page } = await launchIsolatedApp(testInfo);
+
+  try {
+    const firstCreate = await apiRequest<{ channel: { id: string; name: string } }>(page, "/api/channels", {
+      method: "POST",
+      body: {
+        name: channelName,
+        description: "first active channel",
+      },
+    });
+    expect(firstCreate.status).toBe(201);
+
+    const archiveResponse = await apiRequest<{ ok: boolean }>(
+      page,
+      `/api/channels/${firstCreate.data.channel.id}`,
+      { method: "DELETE" },
+    );
+    expect(archiveResponse.status).toBe(200);
+
+    const secondCreate = await apiRequest<{ channel: { id: string; name: string } }>(page, "/api/channels", {
+      method: "POST",
+      body: {
+        name: channelName,
+        description: "recreated active channel",
+      },
+    });
+    expect(secondCreate.status).toBe(201);
+    expect(secondCreate.data.channel.name).toBe(channelName);
+    expect(secondCreate.data.channel.id).not.toBe(firstCreate.data.channel.id);
+
+    const listResponse = await apiRequest<{ channels: Array<{ id: string; name: string }> }>(
+      page,
+      "/api/channels",
+    );
+    expect(listResponse.status).toBe(200);
+    expect(listResponse.data.channels).toHaveLength(1);
+    expect(listResponse.data.channels[0]).toMatchObject({
+      id: secondCreate.data.channel.id,
+      name: channelName,
+    });
+  } finally {
+    await electronApp.close();
+  }
+});
+
 test("delegated code task fails when worker replies with intent only and no artifact report", async ({}, testInfo) => {
   const suffix = Date.now();
   const leaderName = `영희${suffix}`;
