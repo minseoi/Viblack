@@ -827,9 +827,105 @@
   - `npx playwright test tests/e2e/electron.channel-delegation.spec.ts`: 통과
   - `npx playwright test tests/e2e/electron.channel-metadata.spec.ts --grep "empty successful response"`: 통과
   - `npm run verify`: 통과 (`11 passed, 2 skipped`)
+### 101) 코드 작업 worker 완료 기준 강화
+- 배경:
+  - 실제 `테트리스 개발팀` 채널에서 철수가 "아래 로직으로 구현하겠습니다"라고 답한 뒤 실행 job은 `succeeded`로 끝났지만, `report` action과 산출물 경로가 없어 coordinator 재진입이 끊김
+  - 파일은 실제로 생성됐지만 채널 오케스트레이션은 이를 완료 보고로 인식하지 못해 사용자 입장에서는 "말만 하고 안 한 것처럼" 보였음
+- 수정:
+  - `src/backend/services/member-prompt.ts`
+    - 코드/파일 산출물 task일 때는 계획만 말하지 말고 실제 파일 작업 후 `type=report + artifact_path`를 넣도록 프롬프트 강화
+  - `src/backend/services/channel-action-protocol.ts`
+    - `artifact_path` 파싱 추가
+  - `src/backend/services/channel-message-service.ts`
+    - delegated code task에서 코드 역할 worker 응답은 다음 조건을 만족해야 성공 처리:
+      - `type=report` action 존재
+      - 실제 존재하는 산출물 파일 경로 존재
+      - intent-only 문구(`구현하겠습니다` 등)만으로 끝나지 않음
+    - 위 조건을 어기면 `채널 코드 작업 미완료` 시스템 메시지와 함께 job을 `failed` 처리
+  - `tests/e2e/fixtures/fake-codex.js`
+    - `FORCE_CODE_ARTIFACT_INTENT_ONLY`, `FORCE_CODE_ARTIFACT_SUCCESS:*` 시나리오 추가
+  - `tests/e2e/electron.channel-metadata.spec.ts`
+    - delegated code task intent-only 응답 실패 회귀 추가
+    - delegated code task artifact success 회귀 추가
+- 중간 검증:
+  - `npm run check`: 통과
+  - `npm run build`: 통과
+  - `npx playwright test tests/e2e/electron.channel-metadata.spec.ts --grep "delegated code task|empty successful response"`: 통과 (`3 passed`)
+- 최종 검증:
+  - `npm run verify`: 통과 (`13 passed, 2 skipped`)
 
 ### 71) 기능 구현: 테트리스 블럭 회전 엔진 추가(회전 전용)
 - `src/renderer/tetris-rotation.ts` 신규 생성
 - 현재 블럭 상태(`PieceState`) 기준으로 CW/CCW 회전 처리 함수(`tryRotatePiece`) 구현
 - 7종 폴리오미노 좌표 기반 회전, 보드 경계/충돌 검사, 기본 wall-kick 후보 `(0,0),(-1,0),(1,0),(0,-1),(1,-1),(-1,-1)` 재시도 반영
 - 독립형 유틸 함수로 구성(`getPieceCells`, `canPlacePiece`)하여 렌더러 기존 코드와 충돌 최소화
+
+### 72) 채널 작업 착수: 테트리스 회전 엔진 파일 생성(공개 산출물)
+- `src/renderer/tetris-rotation.ts`를 독립 모듈로 생성해 `tryRotatePiece` + `canPlacePiece` + `getPieceCells` + wall-kick 후보 적용을 한 파일에 완성
+- 사용자 요청(회전 동작 최소 구현)에 맞춰 입력/랜더러 본체 의존성 없이 바로 합성 가능한 형태로 구현
+
+### 102) 채팅 누적 버그 조사 착수: 동일 멤버 다중 응답 overwrite
+- 증상:
+  - 같은 멤버가 한 턴 안에서 여러 assistant 메시지를 보낼 경우, 이전 bubble이 남지 않고 마지막 응답으로 덮이는 현상 제보
+- 1차 분석:
+  - renderer/channel-state 쪽은 메시지를 sender가 아니라 `message.id` 기준으로 merge 중
+  - 실제 overwrite 지점은 backend execution service로 추정
+  - DM/채널 모두 스트림 중간 응답을 같은 message row에 `update`하는 구조라, Codex `item.completed` 다중 메시지를 append하지 못하는 경로 확인
+- 작업 계획:
+  - fake-codex에 다중 completed agent message 시나리오 추가
+  - Playwright E2E에 DM/채널 누적 회귀 추가
+  - Codex stream event를 delta/completed 경계로 해석해 append/update 정책 수정
+
+### 103) 채팅 누적 버그 수정: completed agent message는 append로 보존
+- 구현:
+  - `src/backend/services/agent-message-stream.ts` 추가
+    - Codex stream raw payload에서 `item/completed` agent message 경계를 판별하는 유틸 분리
+  - `src/backend/services/agent-execution-service.ts`
+    - DM 실행 중 delta/snapshot은 기존 in-flight bubble을 update
+    - completed agent message는 새 bubble로 append하고, 최종 reply가 마지막 completed와 같을 때만 그 마지막 bubble을 finalize
+    - 실패 시에는 이전 agent bubble을 system으로 덮지 않고 system error를 별도 append
+  - `src/backend/services/channel-message-service.ts`
+    - 채널 실행도 동일한 append/finalize 규칙으로 정렬
+    - 한 worker가 한 턴 안에서 여러 completed agent message를 내도 이전 공개 메시지가 보존되도록 수정
+  - `tests/e2e/fixtures/fake-codex.js`
+    - `FORCE_ITEM_COMPLETED_AGENT_MESSAGE_SEQ:` 시나리오 추가
+  - `tests/e2e/electron.smoke.spec.ts`
+    - DM 다중 completed agent message 누적 회귀 추가
+    - 채널 멘션 실행에서 동일 멤버 다중 completed message 누적 회귀 추가
+- 검증:
+  - `npm run check`: 통과
+  - `npm run build`: 통과
+  - `npx playwright test tests/e2e/electron.smoke.spec.ts --grep "electron full feature regression flow"`: 통과
+
+### 104) 실사용 채널 조사 착수: `테트리스2`
+- 실사용 DB 경로 확인:
+  - `/Users/minseoi/Library/Application Support/viblack/viblack.sqlite`
+- 조사 계획:
+  - `테트리스2` 채널의 멤버/메시지/job/read-state를 함께 조회
+  - 마지막 실행이 어디서 끊겼는지와 실제 산출물 존재 여부를 분리해서 확인
+
+### 105) coordinator 단일화 및 사용자 첫 멘션 승격
+- 조사 결과:
+  - `테트리스2`에서 실제 coordinator state는 `존`이었고, 사용자가 `@영희`로 시작했어도 `영희`가 조율자로 승격되지 않음
+  - 원인 중 하나는 첫 멤버가 coordinator로 고정되고, read-state 승격도 기존 coordinator를 자동 해제하지 않던 점
+- 구현:
+  - `src/backend/services/mention-router.ts`
+    - 멘션 추출 결과를 후보 길이 순서가 아니라 본문 첫 등장 순서로 정렬
+  - `src/backend/services/channel-message-service.ts`
+    - `ensureChannelCoordinator()` / `assignChannelCoordinator()` 추가
+    - 사용자 채널 메시지에서 첫 멘션 멤버를 단일 coordinator로 승격
+    - 멘션이 없을 때 coordinator가 비어 있으면 fallback으로 첫 멤버를 보장
+    - `upsertChannelReadState(... isCoordinator=true)`도 단일 coordinator 보장을 타도록 수정
+  - `src/backend/routes/channel-routes.ts`
+    - coordinator 멤버 삭제 후 남은 멤버 중 fallback coordinator 자동 정리
+  - `tests/e2e/electron.channel-metadata.spec.ts`
+    - 수동 coordinator 승격 시 기존 coordinator 해제 회귀 추가
+    - 먼저 join한 다른 멤버가 있어도 사용자 첫 멘션 멤버가 sole coordinator가 되는 회귀 추가
+- 검증:
+  - `npm run check`: 통과
+  - `npm run build`: 통과
+  - `npx playwright test tests/e2e/electron.channel-metadata.spec.ts`: 통과 (`11 passed`)
+
+- 2026-04-06: `src/renderer/tetris-rotation.ts` 생성 — `PieceState` 기준 회전 적용, 보드 경계/충돌 검사(`canPlacePiece`), wall-kick 후보 순회 포함 `tryRotatePiece` 구현.
+
+- 2026-04-06: `src/renderer/tetris-rotation.ts`에 `applyRotation(board,state,direction)`를 추가해 회전 시도 결과(`RotationResult`)를 함께 반환하도록 확장해 블럭 회전 시스템 완결성을 높였습니다.

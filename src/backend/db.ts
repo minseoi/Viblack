@@ -52,7 +52,7 @@ export class ViblackDb {
 
   listAgents(): Agent[] {
     const stmt = this.db.prepare(
-      `SELECT id, name, role, role_profile, system_prompt, session_id, created_at
+      `SELECT id, name, role, role_profile, system_prompt, created_at
        FROM agents ORDER BY created_at ASC`,
     );
     const rows = stmt.all() as Array<Record<string, unknown>>;
@@ -61,7 +61,7 @@ export class ViblackDb {
 
   getAgent(agentId: string): Agent | null {
     const stmt = this.db.prepare(
-      `SELECT id, name, role, role_profile, system_prompt, session_id, created_at
+      `SELECT id, name, role, role_profile, system_prompt, created_at
        FROM agents WHERE id = ?`,
     );
     const row = stmt.get(agentId) as Record<string, unknown> | undefined;
@@ -242,7 +242,7 @@ export class ViblackDb {
 
   listChannelMemberAgents(channelId: string): Agent[] {
     const stmt = this.db.prepare(
-      `SELECT a.id, a.name, a.role, a.role_profile, a.system_prompt, a.session_id, a.created_at
+      `SELECT a.id, a.name, a.role, a.role_profile, a.system_prompt, a.created_at
        FROM channel_members cm
        INNER JOIN agents a ON a.id = cm.agent_id
        WHERE cm.channel_id = ?
@@ -411,6 +411,15 @@ export class ViblackDb {
         FOREIGN KEY(agent_id) REFERENCES agents(id)
       );
 
+      CREATE TABLE IF NOT EXISTS agent_runtime_sessions (
+        agent_id TEXT NOT NULL,
+        scope_key TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (agent_id, scope_key),
+        FOREIGN KEY(agent_id) REFERENCES agents(id) ON DELETE CASCADE
+      );
+
       CREATE TABLE IF NOT EXISTS channels (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -525,7 +534,6 @@ export class ViblackDb {
       role: String(row.role),
       roleProfile: row.role_profile ? String(row.role_profile) : null,
       systemPrompt: String(row.system_prompt),
-      sessionId: row.session_id ? String(row.session_id) : null,
       createdAt: String(row.created_at),
     };
   }

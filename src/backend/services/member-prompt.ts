@@ -31,10 +31,12 @@ function formatPromptTextBlock(value: string): string[] {
 export function buildChannelPrompt(input: {
   channelName: string;
   channelDescription?: string | null;
+  workspaceRoot: string;
   targetAgentName: string;
   coordinatorName?: string | null;
   targetAgentMode: "coordinator" | "worker";
   taskRequesterName?: string | null;
+  requiresArtifactReport?: boolean;
   members: ChannelPromptMemberSummary[];
   recentMessages: ChannelPromptTimelineEntry[];
   triggerMessage: ChannelPromptTimelineEntry | null;
@@ -77,6 +79,12 @@ export function buildChannelPrompt(input: {
     "허용 action type은 delegate, report, ask_user, final, noop 입니다.",
     "delegate는 다른 멤버에게 새 작업을 넘길 때만 사용합니다. report는 맡은 작업 결과를 요청자나 coordinator에게 돌려줄 때 사용합니다.",
     "ask_user는 사용자 확인이 꼭 필요할 때만 사용합니다. final은 coordinator가 사용자에게 최종 결과를 전달하고 종료할 때 사용합니다.",
+    input.requiresArtifactReport
+      ? "이번 작업은 코드/파일 산출물이 필요한 구현 작업입니다. 계획만 말하고 끝내지 말고, 실제 파일 편집/생성을 마친 뒤에만 답하세요."
+      : "",
+    input.requiresArtifactReport
+      ? `답변 본문에 실제 산출물 파일 경로를 넣고, 마지막 CHANNEL_ACTION report에도 artifact_path를 포함하세요. artifact_path는 실제로 존재하는 경로여야 합니다. workspace root: ${input.workspaceRoot}`
+      : "",
     input.targetAgentMode === "coordinator"
       ? "당신은 coordinator 입니다. 의존 관계가 있는 작업은 한 번에 한 단계씩만 위임하세요. 조사 결과가 채널에 올라오기 전에는 문서 작성처럼 다음 단계를 시작하지 마세요."
       : "당신은 worker 입니다. 다른 worker에게 다시 위임하거나 사용자를 직접 상대하지 말고, 맡은 결과를 공개 채널에 올린 뒤 requester/coordinator에게 report 하세요.",
@@ -92,6 +100,7 @@ export function buildChannelPrompt(input: {
     "[CHANNEL_ACTION]",
     "type=report",
     "target=영희",
+    "artifact_path=/absolute/or/repo-relative/path.ts",
     "[/CHANNEL_ACTION]",
     "[CHANNEL_ACTION]",
     "type=final",
@@ -153,10 +162,16 @@ export function buildMemberExecutionSystemPrompt(
       ? "8) If user clarification is required, coordinator should use type=ask_user. Workers should not ask the user directly."
       : "",
     context === "channel"
-      ? "9) Only the coordinator should use type=final after required worker results are already present in CHANNEL_RECENT_MESSAGES."
+      ? "9) If the assigned task is implementation or file delivery, do the actual file work before replying; do not answer with only intent such as '구현하겠습니다'."
       : "",
     context === "channel"
-      ? "10) When you set target=..., use an exact member display name that appears in CHANNEL_MEMBERS."
+      ? "10) Only the coordinator should use type=final after required worker results are already present in CHANNEL_RECENT_MESSAGES."
+      : "",
+    context === "channel"
+      ? "11) When you set target=..., use an exact member display name that appears in CHANNEL_MEMBERS."
+      : "",
+    context === "channel"
+      ? "12) For code/file tasks, include the produced file path in the public reply and set artifact_path=... in the report action."
       : "",
     "",
     "[VALIDATION_RULES]",

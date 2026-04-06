@@ -130,9 +130,33 @@
     - `test-results/electron.channel-delegatio-dc6fc-annel-delegation-evaluation/channel-delegation-real-report.md`
   - 실제 job 순서 재확인: `영희 -> 존 -> 영희 -> 매튜 -> 영희`
 
+### Iteration 3
+
+- 추가 관찰:
+  - 실제 `테트리스 개발팀` 채널에서는 철수가 "구현하겠습니다"라고 답한 뒤 실행 job은 `succeeded`로 끝났지만, `type=report`나 산출물 경로가 없어 coordinator 재진입이 발생하지 않았다.
+  - 파일 자체는 생겼는데도 채널 체인이 끊겨 사용자 입장에서는 "구현 안 함"처럼 보였다.
+- 원인:
+  - 현재 성공 기준이 `non-empty reply`라서 계획/의도 응답도 완료로 처리됨
+  - 코드 작업 worker에게 `report + artifact_path`를 강제하는 프롬프트/검증이 부족했음
+- 수정:
+  - `src/backend/services/member-prompt.ts`
+    - 코드/파일 산출물 작업일 때는 계획만 말하지 말고 실제 파일 작업 후 `type=report + artifact_path`로 응답하도록 프롬프트 강화
+  - `src/backend/services/channel-action-protocol.ts`
+    - `artifact_path` 파싱 추가
+  - `src/backend/services/channel-message-service.ts`
+    - 코드 역할 worker의 delegated task에 대해 `report` action과 실제 존재하는 산출물 경로를 검증
+    - `구현하겠습니다` 같은 intent-only 응답은 `채널 코드 작업 미완료`로 실패 처리
+  - `tests/e2e/fixtures/fake-codex.js`
+    - 코드 작업 intent-only / artifact success 시나리오 추가
+  - `tests/e2e/electron.channel-metadata.spec.ts`
+    - intent-only 응답은 실패 처리되는 회귀 추가
+    - existing artifact path와 report가 있어야 coordinator로 제어가 돌아가는 회귀 추가
+- 검증:
+  - `npx playwright test tests/e2e/electron.channel-metadata.spec.ts --grep "delegated code task|empty successful response"` 통과
+
 ## Final Status
 
 - fake regression: 통과
 - real Codex evaluation: `100/100`, pass
-- full verify: `11 passed, 2 skipped`
+- full verify: `13 passed, 2 skipped`
 - 현재 기준으로 목표 시나리오는 "coordinator 순차 위임 -> worker 공개 보고 -> coordinator 최종 완료 보고" 흐름으로 안정화됨

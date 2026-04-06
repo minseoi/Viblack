@@ -6,6 +6,7 @@ export interface ParsedChannelAction {
   mode: string | null;
   deliverTo: string | null;
   question: string | null;
+  artifactPath: string | null;
 }
 
 const channelActionPattern = /\[CHANNEL_ACTION\]\s*([\s\S]*?)\s*\[\/CHANNEL_ACTION\]/g;
@@ -48,6 +49,7 @@ export function parseChannelActions(content: string): ParsedChannelAction[] {
       mode: null,
       deliverTo: null,
       question: null,
+      artifactPath: null,
     };
 
     for (const rawLine of match[1].split(/\r?\n/)) {
@@ -87,6 +89,11 @@ export function parseChannelActions(content: string): ParsedChannelAction[] {
 
       if (key === "question") {
         nextAction.question = value || null;
+        continue;
+      }
+
+      if (key === "artifact_path") {
+        nextAction.artifactPath = value || null;
       }
     }
 

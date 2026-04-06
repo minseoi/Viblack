@@ -65,12 +65,12 @@ export function extractMentionedAgents(
     .filter((agent) => agent.name.length > 0)
     .sort((a, b) => b.name.length - a.name.length);
 
-  const seenAgentIds = new Set<string>();
-  const mentions: MentionedAgent[] = [];
+  const matches: Array<MentionedAgent & { firstIndex: number; nameLength: number }> = [];
 
   for (const candidate of candidates) {
     const normalizedName = candidate.name.toLowerCase();
     const mentionTokens = [`@${normalizedName}`, `@{${normalizedName}}`];
+    let firstMatchedIndex = -1;
 
     for (const token of mentionTokens) {
       let index = normalizedContent.indexOf(token);
@@ -83,19 +83,27 @@ export function extractMentionedAgents(
           isMentionBoundaryChar(before) &&
           (isMentionBoundaryChar(after) || hasAllowedMentionSuffix(normalizedContent, afterIndex))
         ) {
-          if (!seenAgentIds.has(candidate.id)) {
-            seenAgentIds.add(candidate.id);
-            mentions.push({ agentId: candidate.id, mentionName: candidate.name });
-          }
+          firstMatchedIndex = index;
           break;
         }
         index = normalizedContent.indexOf(token, index + 1);
       }
-      if (seenAgentIds.has(candidate.id)) {
+      if (firstMatchedIndex >= 0) {
         break;
       }
     }
+
+    if (firstMatchedIndex >= 0) {
+      matches.push({
+        agentId: candidate.id,
+        mentionName: candidate.name,
+        firstIndex: firstMatchedIndex,
+        nameLength: candidate.name.length,
+      });
+    }
   }
 
-  return mentions;
+  return matches
+    .sort((a, b) => a.firstIndex - b.firstIndex || b.nameLength - a.nameLength)
+    .map(({ agentId, mentionName }) => ({ agentId, mentionName }));
 }

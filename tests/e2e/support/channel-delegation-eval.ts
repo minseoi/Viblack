@@ -85,6 +85,7 @@ export interface ChannelAction {
   mode?: string;
   deliverTo?: string;
   question?: string;
+  artifactPath?: string;
 }
 
 export interface DelegationCriterion {
@@ -392,6 +393,8 @@ function parseChannelActions(content: string): ChannelAction[] {
         nextAction.deliverTo = value;
       } else if (key === "question") {
         nextAction.question = value;
+      } else if (key === "artifact_path") {
+        nextAction.artifactPath = value;
       }
     }
     if (nextAction.type) {

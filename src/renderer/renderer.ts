@@ -6,7 +6,6 @@ interface Agent {
   role: string;
   roleProfile?: string | null;
   systemPrompt: string;
-  sessionId: string | null;
 }
 
 interface ChatMessage {

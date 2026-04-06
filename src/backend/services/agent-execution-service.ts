@@ -1,5 +1,9 @@
 import { runCodex } from "../codex";
+import { DM_RUNTIME_SESSION_SCOPE } from "../runtime-session-scope";
 import { AgentRepository } from "../repositories/agent-repository";
+import {
+  isCompletedAgentMessageStreamEvent,
+} from "./agent-message-stream";
 import { buildMemberExecutionSystemPrompt, isAgentMessageStreamType } from "./member-prompt";
 import { AgentLockManager } from "./agent-lock-manager";
 import { AppSettingsService } from "./app-settings-service";
@@ -24,15 +28,18 @@ export class AgentExecutionService {
 
     return this.lockManager.withAgentLock(agentId, async () => {
       this.agentRepository.appendMessage(agentId, "user", content);
+      const runtimeSessionId = this.agentRepository.getRuntimeSession(agentId, DM_RUNTIME_SESSION_SCOPE);
 
       let lastStreamReply = "";
-      let lastStreamMessageId: number | null = null;
+      let activeStreamMessageId: number | null = null;
+      let lastCompletedStreamMessageId: number | null = null;
+      let lastCompletedStreamContent = "";
       const selectedModel = this.appSettingsService.getSelectedModel();
       const codexResult = await runCodex({
         prompt: content,
         systemPrompt: buildMemberExecutionSystemPrompt(agent, "dm"),
         model: selectedModel,
-        sessionId: agent.sessionId,
+        sessionId: runtimeSessionId,
         cwd: this.workspaceDir,
         onStream: (event) => {
           if (!isAgentMessageStreamType(event.rawType)) {
@@ -43,17 +50,31 @@ export class AgentExecutionService {
             return;
           }
           lastStreamReply = streamedContent;
-          if (lastStreamMessageId === null) {
-            const message = this.agentRepository.appendMessage(agentId, "agent", streamedContent);
-            lastStreamMessageId = message.id;
+          if (isCompletedAgentMessageStreamEvent(event.raw)) {
+            if (activeStreamMessageId !== null) {
+              this.agentRepository.updateMessage(activeStreamMessageId, streamedContent);
+              lastCompletedStreamMessageId = activeStreamMessageId;
+            } else {
+              const message = this.agentRepository.appendMessage(agentId, "agent", streamedContent);
+              lastCompletedStreamMessageId = message.id;
+            }
+            lastCompletedStreamContent = streamedContent;
+            activeStreamMessageId = null;
             return;
           }
-          this.agentRepository.updateMessage(lastStreamMessageId, streamedContent);
+
+          if (activeStreamMessageId === null) {
+            const message = this.agentRepository.appendMessage(agentId, "agent", streamedContent);
+            activeStreamMessageId = message.id;
+            return;
+          }
+
+          this.agentRepository.updateMessage(activeStreamMessageId, streamedContent);
         },
       });
 
-      if (codexResult.sessionId && codexResult.sessionId !== agent.sessionId) {
-        this.agentRepository.updateAgentSession(agentId, codexResult.sessionId);
+      if (codexResult.sessionId && codexResult.sessionId !== runtimeSessionId) {
+        this.agentRepository.upsertRuntimeSession(agentId, DM_RUNTIME_SESSION_SCOPE, codexResult.sessionId);
       }
 
       const normalizedReply = codexResult.reply.trim();
@@ -69,8 +90,14 @@ export class AgentExecutionService {
             .filter((line) => line.length > 0)
             .join("\n");
 
-      if (executionOk && lastStreamMessageId !== null) {
-        this.agentRepository.updateMessage(lastStreamMessageId, replyText);
+      if (executionOk && activeStreamMessageId !== null) {
+        this.agentRepository.updateMessage(activeStreamMessageId, replyText);
+      } else if (
+        executionOk &&
+        lastCompletedStreamMessageId !== null &&
+        replyText === lastCompletedStreamContent
+      ) {
+        this.agentRepository.updateMessage(lastCompletedStreamMessageId, replyText);
       } else {
         this.agentRepository.appendMessage(agentId, executionOk ? "agent" : "system", replyText);
       }

@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { DuplicateChannelNameError } from "../db";
 import { ChannelEventBus } from "../events/channel-event-bus";
+import { getChannelRuntimeSessionScope } from "../runtime-session-scope";
 import { AgentRepository } from "../repositories/agent-repository";
 import { ChannelMemberRepository } from "../repositories/channel-member-repository";
 import { ChannelRepository } from "../repositories/channel-repository";
@@ -150,7 +151,9 @@ export function registerChannelRoutes(app: Express, options: RegisterChannelRout
       res.status(404).json({ error: "channel member not found" });
       return;
     }
+    agentRepository.clearRuntimeSession(agentId, getChannelRuntimeSessionScope(channelId));
     channelMessageService.deleteChannelReadState(channelId, agentId);
+    channelMessageService.ensureChannelCoordinator(channelId);
     res.json({ ok: true });
   });
 

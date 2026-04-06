@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { DuplicateAgentNameError } from "../db";
+import { DM_RUNTIME_SESSION_SCOPE } from "../runtime-session-scope";
 import type { Agent, ChatMessage, SenderType } from "../types";
 
 function nowIso(): string {
@@ -13,7 +14,6 @@ function mapAgent(row: Record<string, unknown>): Agent {
     role: String(row.role),
     roleProfile: row.role_profile ? String(row.role_profile) : null,
     systemPrompt: String(row.system_prompt),
-    sessionId: row.session_id ? String(row.session_id) : null,
     createdAt: String(row.created_at),
   };
 }
@@ -23,7 +23,7 @@ export class AgentRepository {
 
   listAgents(): Agent[] {
     const stmt = this.db.prepare(
-      `SELECT id, name, role, role_profile, system_prompt, session_id, created_at
+      `SELECT id, name, role, role_profile, system_prompt, created_at
        FROM agents ORDER BY created_at ASC`,
     );
     const rows = stmt.all() as Array<Record<string, unknown>>;
@@ -32,7 +32,7 @@ export class AgentRepository {
 
   getAgent(agentId: string): Agent | null {
     const stmt = this.db.prepare(
-      `SELECT id, name, role, role_profile, system_prompt, session_id, created_at
+      `SELECT id, name, role, role_profile, system_prompt, created_at
        FROM agents WHERE id = ?`,
     );
     const row = stmt.get(agentId) as Record<string, unknown> | undefined;
@@ -59,13 +59,14 @@ export class AgentRepository {
     this.assertUniqueAgentName(name, agentId);
     const stmt = this.db.prepare(
       `UPDATE agents
-       SET name = ?, role = ?, system_prompt = ?
+       SET name = ?, role = ?, system_prompt = ?, session_id = NULL
        WHERE id = ?`,
     );
     const result = stmt.run(name, role, systemPrompt, agentId) as { changes?: number };
     if (!result.changes || result.changes < 1) {
       return null;
     }
+    this.clearAllRuntimeSessions(agentId);
     return this.getAgent(agentId);
   }
 
@@ -90,12 +91,50 @@ export class AgentRepository {
       return false;
     }
     this.db.prepare(`DELETE FROM messages WHERE agent_id = ?`).run(agentId);
+    this.clearRuntimeSession(agentId, DM_RUNTIME_SESSION_SCOPE);
     this.db.prepare(`UPDATE agents SET session_id = NULL WHERE id = ?`).run(agentId);
     return true;
   }
 
-  updateAgentSession(agentId: string, sessionId: string): void {
-    this.db.prepare(`UPDATE agents SET session_id = ? WHERE id = ?`).run(sessionId, agentId);
+  getRuntimeSession(agentId: string, scopeKey: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT session_id
+         FROM agent_runtime_sessions
+         WHERE agent_id = ? AND scope_key = ?`,
+      )
+      .get(agentId, scopeKey) as Record<string, unknown> | undefined;
+    return row?.session_id ? String(row.session_id) : null;
+  }
+
+  upsertRuntimeSession(agentId: string, scopeKey: string, sessionId: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO agent_runtime_sessions (agent_id, scope_key, session_id, updated_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(agent_id, scope_key)
+         DO UPDATE SET session_id = excluded.session_id, updated_at = excluded.updated_at`,
+      )
+      .run(agentId, scopeKey, sessionId, nowIso());
+  }
+
+  clearRuntimeSession(agentId: string, scopeKey: string): void {
+    this.db
+      .prepare(
+        `DELETE FROM agent_runtime_sessions
+         WHERE agent_id = ? AND scope_key = ?`,
+      )
+      .run(agentId, scopeKey);
+  }
+
+  clearAllRuntimeSessions(agentId: string): void {
+    this.db
+      .prepare(
+        `DELETE FROM agent_runtime_sessions
+         WHERE agent_id = ?`,
+      )
+      .run(agentId);
+    this.db.prepare(`UPDATE agents SET session_id = NULL WHERE id = ?`).run(agentId);
   }
 
   appendMessage(agentId: string, sender: SenderType, content: string): ChatMessage {

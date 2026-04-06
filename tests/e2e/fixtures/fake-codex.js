@@ -334,6 +334,67 @@ function maybeBuildDelegationScenarioReply(promptText, sessionId, sessionState =
   return "";
 }
 
+function maybeBuildCodeArtifactScenarioReply(promptText, sessionId, sessionState = {}) {
+  const isIntentOnlyScenario = promptText.includes("FORCE_CODE_ARTIFACT_INTENT_ONLY");
+  const successMatch = promptText.match(/FORCE_CODE_ARTIFACT_SUCCESS:\s*([^\s\r\n]+)/);
+  if (!isIntentOnlyScenario && !successMatch) {
+    return "";
+  }
+
+  const currentAgentName = (extractAgentName(promptText) || sessionState.agentName || "").trim();
+  const memberNames = extractChannelMemberNames(promptText);
+  const coordinatorName = memberNames.find((name) => name.startsWith("영희")) || "영희";
+  const workerName = memberNames.find((name) => name.startsWith("철수")) || "철수";
+  if (!currentAgentName) {
+    return "";
+  }
+
+  if (currentAgentName === coordinatorName) {
+    if (promptText.includes("구현 완료 보고:")) {
+      const artifactPathMatches = [...promptText.matchAll(/artifact_path=([^\s\r\n]+)/g)];
+      const artifactPathMatch = artifactPathMatches[artifactPathMatches.length - 1] ?? null;
+      return [
+        `최종 보고: 철수가 구현 파일을 전달했습니다.${artifactPathMatch ? ` ${artifactPathMatch[1]}` : ""}`,
+        buildChannelActionBlock(["type=final"]),
+      ].join("\n\n");
+    }
+
+    return [
+      "철수에게 구현 작업을 넘깁니다. 실제 구현 파일 경로까지 보고받아야 합니다.",
+      `@${workerName} 블럭 회전 로직을 구현하고 완료되면 파일 경로를 포함해 보고해줘.`,
+      buildChannelActionBlock(["type=delegate", `target=${workerName}`, "mode=blocking"]),
+    ].join("\n\n");
+  }
+
+  if (currentAgentName !== workerName) {
+    return "";
+  }
+
+  if (isIntentOnlyScenario) {
+    return [
+      "아래 로직으로 구현하겠습니다.",
+      "- 회전 방향(CW/CCW) 처리",
+      "- 보드 경계/충돌 검사",
+      "- 최소 wall kick 적용",
+    ].join("\n");
+  }
+
+  const artifactPath = path.join(
+    os.tmpdir(),
+    `viblack-fake-code-artifact-${sanitizeMarkerPart(successMatch[1])}.ts`,
+  );
+  fs.writeFileSync(
+    artifactPath,
+    "export function rotateBlock() { return 'ok'; }\n",
+    "utf8",
+  );
+  return [
+    "구현 완료 보고: 블럭 회전 로직 구현을 마쳤습니다.",
+    `산출물: ${artifactPath}`,
+    buildChannelActionBlock(["type=report", `target=${coordinatorName}`, `artifact_path=${artifactPath}`]),
+  ].join("\n\n");
+}
+
 function parseForcedStreamMessage(promptText) {
   const match = promptText.match(/FORCE_STREAM_AGENT_MESSAGE:\s*([^\s\r\n]+)/);
   if (!match) {
@@ -371,6 +432,17 @@ function parseForcedItemCompletedMessage(promptText) {
     return "";
   }
   return match[1].trim();
+}
+
+function parseForcedItemCompletedMessageSequence(promptText) {
+  const match = promptText.match(/FORCE_ITEM_COMPLETED_AGENT_MESSAGE_SEQ:\s*([^\s\r\n]+)/);
+  if (!match) {
+    return [];
+  }
+  return match[1]
+    .split("|")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
 }
 
 function parseTransientFailOnceKey(promptText) {
@@ -497,6 +569,10 @@ function buildReply(
   );
   if (deterministicDelegationScenarioReply) {
     return deterministicDelegationScenarioReply;
+  }
+  const codeArtifactScenarioReply = maybeBuildCodeArtifactScenarioReply(promptText, sessionId, sessionState);
+  if (codeArtifactScenarioReply) {
+    return codeArtifactScenarioReply;
   }
   const delegatedReply = maybeBuildDelegationReply(promptText, controlPromptText, sessionState);
   if (delegatedReply) {
@@ -805,6 +881,7 @@ async function runAppServer() {
         const forceTurnFailed = shouldForceTurnFailed(controlPromptText);
         const forceEmptySuccessOnce = shouldReturnEmptySuccessOnce(controlPromptText);
         const forceItemCompletedMessage = parseForcedItemCompletedMessage(controlPromptText);
+        const forceItemCompletedMessageSequence = parseForcedItemCompletedMessageSequence(controlPromptText);
         const streamMessage = parseForcedStreamMessage(controlPromptText);
         const streamSequence = parseForcedStreamSequence(controlPromptText);
         const forcedDelayMs = parseForcedDelayMs(controlPromptText);
@@ -850,15 +927,29 @@ async function runAppServer() {
           forceItemCompletedMessage ||
           buildReply(promptText, "app-server", null, controlPromptText, threadId);
 
-        notify("item/completed", {
-          threadId,
-          turnId,
-          item: {
-            id: `item-message-${turnId}`,
-            type: "agentMessage",
-            text: forceEmptySuccessOnce ? "" : reply,
-          },
-        });
+        if (forceItemCompletedMessageSequence.length > 0) {
+          forceItemCompletedMessageSequence.forEach((messageText, index) => {
+            notify("item/completed", {
+              threadId,
+              turnId,
+              item: {
+                id: `item-message-${turnId}-${index + 1}`,
+                type: "agentMessage",
+                text: messageText,
+              },
+            });
+          });
+        } else {
+          notify("item/completed", {
+            threadId,
+            turnId,
+            item: {
+              id: `item-message-${turnId}`,
+              type: "agentMessage",
+              text: forceEmptySuccessOnce ? "" : reply,
+            },
+          });
+        }
 
         notify("turn/completed", {
           threadId,
@@ -898,6 +989,7 @@ async function runExec(args) {
   const forceTransientFailOnce = shouldTransientFailOnce(controlPromptText);
   const forceEmptySuccessOnce = shouldReturnEmptySuccessOnce(controlPromptText);
   const forceItemCompletedMessage = parseForcedItemCompletedMessage(controlPromptText);
+  const forceItemCompletedMessageSequence = parseForcedItemCompletedMessageSequence(controlPromptText);
   const streamMessage = parseForcedStreamMessage(controlPromptText);
   const streamSequence = parseForcedStreamSequence(controlPromptText);
   const forcedDelayMs = parseForcedDelayMs(controlPromptText);
@@ -942,6 +1034,30 @@ async function runExec(args) {
     );
     process.stdout.write(
       `${JSON.stringify({ type: "turn.completed", usage: { output_tokens: 1 } })}\n`,
+    );
+    process.exit(0);
+  }
+
+  if (forceItemCompletedMessageSequence.length > 0) {
+    forceItemCompletedMessageSequence.forEach((messageText, index) => {
+      process.stdout.write(
+        `${JSON.stringify({
+          type: "item.completed",
+          item: {
+            id: `item_${index + 1}`,
+            type: "agent_message",
+            text: messageText,
+          },
+        })}\n`,
+      );
+    });
+    process.stdout.write(
+      `${JSON.stringify({
+        type: "response.completed",
+        output_text: forceEmptySuccessOnce
+          ? ""
+          : forceItemCompletedMessageSequence[forceItemCompletedMessageSequence.length - 1],
+      })}\n`,
     );
     process.exit(0);
   }

@@ -88,6 +88,8 @@ test("electron full feature regression flow", async ({}, testInfo) => {
   const dmRetryKey = `RETRY_${suffix}`;
   const dmRetryFinalToken = `RETRY_OK_${suffix}`;
   const dmItemCompletedToken = `ITEM_${suffix}`;
+  const dmMultiCompletedFirstToken = `DM_MULTI_A_${suffix}`;
+  const dmMultiCompletedSecondToken = `DM_MULTI_B_EXTENDED_${suffix}`;
   const dmStreamToken = `STREAM_${suffix}`;
   const dmFinalToken = `FINAL_${suffix}`;
   const dmStreamDedupFinalToken = `STREAM_DEDUP_${suffix}`;
@@ -178,6 +180,26 @@ test("electron full feature regression flow", async ({}, testInfo) => {
         hasText: dmItemCompletedToken,
       }),
     ).toHaveCount(1);
+    const dmAgentMessagesAfterSingleCompleted = page.locator("#messages .msg-agent .msg-content");
+    const beforeDmMultiCompletedCount = await dmAgentMessagesAfterSingleCompleted.count();
+    await page.fill(
+      "#chat-input",
+      `FORCE_ITEM_COMPLETED_AGENT_MESSAGE_SEQ:${dmMultiCompletedFirstToken}|${dmMultiCompletedSecondToken}`,
+    );
+    await page.click("#send-btn");
+    await expect(
+      page.locator("#messages .msg-agent .msg-content", {
+        hasText: dmMultiCompletedFirstToken,
+      }),
+    ).toHaveCount(1, { timeout: 7000 });
+    await expect(
+      page.locator("#messages .msg-agent .msg-content", {
+        hasText: dmMultiCompletedSecondToken,
+      }),
+    ).toHaveCount(1, { timeout: 7000 });
+    await expect(dmAgentMessagesAfterSingleCompleted).toHaveCount(beforeDmMultiCompletedCount + 2, {
+      timeout: 7000,
+    });
     await page.fill("#chat-input", "FORCE_TURN_FAILED");
     await page.click("#send-btn");
     await expect(
@@ -355,6 +377,26 @@ test("electron full feature regression flow", async ({}, testInfo) => {
       page.locator("#messages .msg-user .msg-content", { hasText: "mention response test" }),
     ).toHaveCount(1);
     await expect(page.locator("#messages .msg-agent .msg-content", { hasText: "테스트 응답" })).toHaveCount(1);
+
+    const channelMultiCompletedFirstToken = `CHANNEL_MULTI_A_${suffix}`;
+    const channelMultiCompletedSecondToken = `CHANNEL_MULTI_B_EXTENDED_${suffix}`;
+    const beforeChannelMultiCompletedCount = await channelMessages.count();
+    await page.fill(
+      "#chat-input",
+      `@{${memberAlphaEdited}} FORCE_ITEM_COMPLETED_AGENT_MESSAGE_SEQ:${channelMultiCompletedFirstToken}|${channelMultiCompletedSecondToken}`,
+    );
+    await page.click("#send-btn");
+    await expect(
+      page.locator("#messages .msg-agent .msg-content", {
+        hasText: channelMultiCompletedFirstToken,
+      }),
+    ).toHaveCount(1, { timeout: 7000 });
+    await expect(
+      page.locator("#messages .msg-agent .msg-content", {
+        hasText: channelMultiCompletedSecondToken,
+      }),
+    ).toHaveCount(1, { timeout: 7000 });
+    await expect(channelMessages).toHaveCount(beforeChannelMultiCompletedCount + 3, { timeout: 7000 });
 
     const beforeChannelStreamDedupCount = await channelMessages.count();
     await page.fill(

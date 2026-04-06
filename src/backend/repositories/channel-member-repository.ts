@@ -12,7 +12,6 @@ function mapAgent(row: Record<string, unknown>): Agent {
     role: String(row.role),
     roleProfile: row.role_profile ? String(row.role_profile) : null,
     systemPrompt: String(row.system_prompt),
-    sessionId: row.session_id ? String(row.session_id) : null,
     createdAt: String(row.created_at),
   };
 }
@@ -37,7 +36,7 @@ export class ChannelMemberRepository {
 
   listChannelMemberAgents(channelId: string): Agent[] {
     const stmt = this.db.prepare(
-      `SELECT a.id, a.name, a.role, a.role_profile, a.system_prompt, a.session_id, a.created_at
+      `SELECT a.id, a.name, a.role, a.role_profile, a.system_prompt, a.created_at
        FROM channel_members cm
        INNER JOIN agents a ON a.id = cm.agent_id
        WHERE cm.channel_id = ?
@@ -83,4 +82,3 @@ export class ChannelMemberRepository {
     return Boolean(result.changes && result.changes > 0);
   }
 }
-
