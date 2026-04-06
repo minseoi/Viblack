@@ -6,7 +6,13 @@ export interface ParsedChannelAction {
   artifactPath: string | null;
 }
 
-const channelActionPattern = /\[CHANNEL_ACTION\]\s*([\s\S]*?)\s*\[\/CHANNEL_ACTION\]/g;
+export const CHANNEL_ACTION_BLOCK_BEGIN = "CHANNEL_ACTION_BEGIN";
+export const CHANNEL_ACTION_BLOCK_END = "CHANNEL_ACTION_END";
+
+const channelActionPatterns = [
+  new RegExp(`${CHANNEL_ACTION_BLOCK_BEGIN}\\s*([\\s\\S]*?)\\s*${CHANNEL_ACTION_BLOCK_END}`, "g"),
+  /\[CHANNEL_ACTION\]\s*([\s\S]*?)\s*(?:\[\/CHANNEL_ACTION\]|\[\/CHANNEL_ACTION>|<\/CHANNEL_ACTION>)/g,
+];
 
 function normalizeActionType(value: string): ChannelActionType | null {
   switch (value.trim().toLowerCase()) {
@@ -39,44 +45,46 @@ function normalizeTargetName(value: string): string {
 export function parseChannelActions(content: string): ParsedChannelAction[] {
   const actions: ParsedChannelAction[] = [];
 
-  for (const match of content.matchAll(channelActionPattern)) {
-    const nextAction: ParsedChannelAction = {
-      type: "noop",
-      targetName: null,
-      artifactPath: null,
-    };
+  for (const pattern of channelActionPatterns) {
+    for (const match of content.matchAll(pattern)) {
+      const nextAction: ParsedChannelAction = {
+        type: "noop",
+        targetName: null,
+        artifactPath: null,
+      };
 
-    for (const rawLine of match[1].split(/\r?\n/)) {
-      const line = rawLine.trim();
-      if (!line) {
-        continue;
-      }
-      const separatorIndex = line.indexOf("=");
-      if (separatorIndex < 0) {
-        continue;
-      }
-      const key = line.slice(0, separatorIndex).trim().toLowerCase();
-      const value = line.slice(separatorIndex + 1).trim();
-
-      if (key === "type") {
-        const normalizedType = normalizeActionType(value);
-        if (normalizedType) {
-          nextAction.type = normalizedType;
+      for (const rawLine of match[1].split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line) {
+          continue;
         }
-        continue;
+        const separatorIndex = line.indexOf("=");
+        if (separatorIndex < 0) {
+          continue;
+        }
+        const key = line.slice(0, separatorIndex).trim().toLowerCase();
+        const value = line.slice(separatorIndex + 1).trim();
+
+        if (key === "type") {
+          const normalizedType = normalizeActionType(value);
+          if (normalizedType) {
+            nextAction.type = normalizedType;
+          }
+          continue;
+        }
+
+        if (key === "target") {
+          nextAction.targetName = normalizeTargetName(value) || null;
+          continue;
+        }
+
+        if (key === "artifact_path") {
+          nextAction.artifactPath = value || null;
+        }
       }
 
-      if (key === "target") {
-        nextAction.targetName = normalizeTargetName(value) || null;
-        continue;
-      }
-
-      if (key === "artifact_path") {
-        nextAction.artifactPath = value || null;
-      }
+      actions.push(nextAction);
     }
-
-    actions.push(nextAction);
   }
 
   return actions;

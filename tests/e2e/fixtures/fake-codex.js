@@ -274,7 +274,7 @@ function maybeBuildDelegationReply(promptText, controlPromptText, sessionState =
 }
 
 function buildChannelActionBlock(lines) {
-  return ["[CHANNEL_ACTION]", ...lines, "[/CHANNEL_ACTION]"].join("\n");
+  return ["CHANNEL_ACTION_BEGIN", ...lines, "CHANNEL_ACTION_END"].join("\n");
 }
 
 function maybeBuildDelegationScenarioReply(promptText, sessionId, sessionState = {}) {

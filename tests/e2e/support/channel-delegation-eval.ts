@@ -365,31 +365,36 @@ export async function waitForChannelToSettle(
 
 function parseChannelActions(content: string): ChannelAction[] {
   const actions: ChannelAction[] = [];
-  const pattern = /\[CHANNEL_ACTION\]\s*([\s\S]*?)\s*\[\/CHANNEL_ACTION\]/g;
-  for (const match of content.matchAll(pattern)) {
-    const block = match[1];
-    const nextAction: ChannelAction = { type: "" };
-    for (const rawLine of block.split(/\r?\n/)) {
-      const line = rawLine.trim();
-      if (!line) {
-        continue;
+  const patterns = [
+    /CHANNEL_ACTION_BEGIN\s*([\s\S]*?)\s*CHANNEL_ACTION_END/g,
+    /\[CHANNEL_ACTION\]\s*([\s\S]*?)\s*(?:\[\/CHANNEL_ACTION\]|\[\/CHANNEL_ACTION>|<\/CHANNEL_ACTION>)/g,
+  ];
+  for (const pattern of patterns) {
+    for (const match of content.matchAll(pattern)) {
+      const block = match[1];
+      const nextAction: ChannelAction = { type: "" };
+      for (const rawLine of block.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line) {
+          continue;
+        }
+        const separatorIndex = line.indexOf("=");
+        if (separatorIndex < 0) {
+          continue;
+        }
+        const key = line.slice(0, separatorIndex).trim();
+        const value = line.slice(separatorIndex + 1).trim();
+        if (key === "type") {
+          nextAction.type = value;
+        } else if (key === "target") {
+          nextAction.target = value;
+        } else if (key === "artifact_path") {
+          nextAction.artifactPath = value;
+        }
       }
-      const separatorIndex = line.indexOf("=");
-      if (separatorIndex < 0) {
-        continue;
+      if (nextAction.type) {
+        actions.push(nextAction);
       }
-      const key = line.slice(0, separatorIndex).trim();
-      const value = line.slice(separatorIndex + 1).trim();
-      if (key === "type") {
-        nextAction.type = value;
-      } else if (key === "target") {
-        nextAction.target = value;
-      } else if (key === "artifact_path") {
-        nextAction.artifactPath = value;
-      }
-    }
-    if (nextAction.type) {
-      actions.push(nextAction);
     }
   }
   return actions;

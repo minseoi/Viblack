@@ -1059,3 +1059,25 @@
   - `.msg.progress`는 별도 강한 강조를 하지 않고 동일 border 계열만 유지
   - `tests/e2e/electron.smoke.spec.ts`에 일반 응답과 스트리밍 응답의 border 색상 일치 회귀 추가
   - `npm run verify` 통과
+
+### 112) 채널 액션 프로토콜 안정화 착수: bracket block -> BEGIN/END sentinel
+- 사용자 요청:
+  - 가장 안정적인 방식으로 channel action 구분자를 교체
+  - 파서와 디버그 모드 표시 옵션 문구도 함께 수정
+- 조치 계획:
+  - `CHANNEL_ACTION_BEGIN` / `CHANNEL_ACTION_END` 센티널로 프롬프트/fixture/테스트를 교체
+  - 런타임 파서는 신규 형식을 우선 지원하고 기존 `[CHANNEL_ACTION]` 형식도 호환 처리
+  - 렌더러 디버그 옵션 문구와 숨김 regex도 새 블록 명칭 기준으로 수정
+- 진행 업데이트:
+  - `member-prompt`의 채널 액션 예시와 규칙 문구를 `CHANNEL_ACTION_BEGIN/END` 기준으로 교체
+  - `channel-action-protocol` 파서를 신규 센티널 우선 + legacy bracket 호환 형태로 확장
+  - fake codex fixture와 delegation evaluation parser를 신규 형식에 맞게 수정
+  - 렌더러 디버그 모드 안내 문구를 `액션 블록` 표현으로 정리하고 숨김 regex를 신규/legacy 겸용으로 변경
+  - 설정 E2E 기대값을 `CHANNEL_ACTION_BEGIN` 기준으로 갱신
+- 중간 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npx playwright test tests/e2e/electron.settings.spec.ts` 통과
+- 최종 검증:
+  - `npm run verify` 통과
+  - 결과: Playwright 15 passed, real-codex 계열 2 skipped

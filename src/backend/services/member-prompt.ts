@@ -75,7 +75,7 @@ export function buildChannelPrompt(input: {
     `현재 응답 모드: ${input.targetAgentMode}`,
     "이 채널은 공개 협업 공간입니다. 멤버 목록과 최근 공개 대화를 먼저 읽고 응답하세요.",
     "후속 자동 실행은 답변 마지막의 CHANNEL_ACTION 블록만 해석됩니다. 본문에 @mention이 있어도 실행 신호로 간주되지 않을 수 있습니다.",
-    "반드시 답변 마지막에 정확히 하나의 [CHANNEL_ACTION] ... [/CHANNEL_ACTION] 블록을 넣으세요.",
+    "반드시 답변 마지막에 정확히 하나의 CHANNEL_ACTION_BEGIN ... CHANNEL_ACTION_END 블록을 넣으세요.",
     "허용 action type은 delegate, report, ask_user, final, noop 입니다.",
     "delegate는 다른 멤버에게 새 작업을 넘길 때만 사용합니다. report는 맡은 작업 결과를 요청자나 coordinator에게 돌려줄 때 사용합니다.",
     "ask_user는 사용자 확인이 꼭 필요할 때만 사용합니다. final은 coordinator가 사용자에게 최종 결과를 전달하고 종료할 때 사용합니다.",
@@ -92,18 +92,18 @@ export function buildChannelPrompt(input: {
       ? `현재 작업을 직접 넘긴 멤버: ${input.taskRequesterName}`
       : "현재 작업을 직접 넘긴 멤버: User",
     "action block 예시:",
-    "[CHANNEL_ACTION]",
+    "CHANNEL_ACTION_BEGIN",
     "type=delegate",
     "target=존",
-    "[/CHANNEL_ACTION]",
-    "[CHANNEL_ACTION]",
+    "CHANNEL_ACTION_END",
+    "CHANNEL_ACTION_BEGIN",
     "type=report",
     "target=영희",
     "artifact_path=/absolute/or/repo-relative/path.ts",
-    "[/CHANNEL_ACTION]",
-    "[CHANNEL_ACTION]",
+    "CHANNEL_ACTION_END",
+    "CHANNEL_ACTION_BEGIN",
     "type=final",
-    "[/CHANNEL_ACTION]",
+    "CHANNEL_ACTION_END",
     "",
     "[ACTIVE_TASK_REQUESTER_BEGIN]",
     input.taskRequesterName || "(none)",
@@ -149,7 +149,7 @@ export function buildMemberExecutionSystemPrompt(
       ? "4) In channel collaboration, read CHANNEL_MEMBERS and CHANNEL_RECENT_MESSAGES before replying."
       : "",
     context === "channel"
-      ? "5) In channel collaboration, every reply must end with exactly one CHANNEL_ACTION block."
+      ? "5) In channel collaboration, every reply must end with exactly one CHANNEL_ACTION block delimited by CHANNEL_ACTION_BEGIN and CHANNEL_ACTION_END."
       : "",
     context === "channel"
       ? "6) Use type=delegate only when you are intentionally handing work to another member."
