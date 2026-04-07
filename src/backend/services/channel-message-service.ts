@@ -1,5 +1,3 @@
-import fs from "node:fs";
-import path from "node:path";
 import { runCodex } from "../codex";
 import { ChannelEventBus } from "../events/channel-event-bus";
 import { getChannelRuntimeSessionScope } from "../runtime-session-scope";
@@ -22,6 +20,7 @@ import {
   type ChannelPromptTimelineEntry,
 } from "./member-prompt";
 import { parseChannelActions } from "./channel-action-protocol";
+import { ChannelWorkspaceService } from "./channel-workspace-service";
 import { extractMentionedAgents, type MentionedAgent } from "./mention-router";
 
 interface ChannelExecutionResult {
@@ -68,7 +67,7 @@ export class ChannelMessageService {
     private readonly channelMessageRepository: ChannelMessageRepository,
     private readonly channelExecutionRepository: ChannelExecutionRepository,
     private readonly appSettingsService: AppSettingsService,
-    private readonly workspaceDir: string,
+    private readonly channelWorkspaceService: ChannelWorkspaceService,
     private readonly lockManager: AgentLockManager,
     private readonly eventBus: ChannelEventBus,
   ) {}
@@ -324,6 +323,7 @@ export class ChannelMessageService {
               channelId,
               channel.name,
               channel.description,
+              channel.workspacePath,
               targetAgent,
               members,
               task.sourceAgentId,
@@ -508,6 +508,7 @@ export class ChannelMessageService {
     channelId: string,
     channelName: string,
     channelDescription: string,
+    channelWorkspacePath: string,
     targetAgent: Agent,
     members: Agent[],
     sourceAgentId: string | null,
@@ -525,6 +526,7 @@ export class ChannelMessageService {
           channelId,
           channelName,
           channelDescription,
+          channelWorkspacePath,
           targetAgent,
           members,
           sourceAgentId,
@@ -540,7 +542,7 @@ export class ChannelMessageService {
           systemPrompt: buildMemberExecutionSystemPrompt(targetAgent, "channel"),
           model: selectedModel,
           sessionId: runtimeSessionId,
-          cwd: this.workspaceDir,
+          cwd: channelWorkspacePath,
           timeoutMs: 120_000,
           onStream: (event) => {
             if (!isAgentMessageStreamType(event.rawType)) {
@@ -617,6 +619,7 @@ export class ChannelMessageService {
         const completionValidation = initialExecutionOk
           ? this.validateChannelCompletionReply({
               channelId,
+              channelWorkspacePath,
               targetAgent,
               members,
               sourceAgentId,
@@ -708,6 +711,7 @@ export class ChannelMessageService {
     channelId: string;
     channelName: string;
     channelDescription: string;
+    channelWorkspacePath: string;
     targetAgent: Agent;
     members: Agent[];
     sourceAgentId: string | null;
@@ -749,7 +753,7 @@ export class ChannelMessageService {
     return buildChannelPrompt({
       channelName: input.channelName,
       channelDescription: input.channelDescription,
-      workspaceRoot: this.workspaceDir,
+      workspaceRoot: input.channelWorkspacePath,
       targetAgentName: input.targetAgent.name,
       coordinatorName: coordinator?.name ?? null,
       targetAgentMode: coordinator?.id === input.targetAgent.id ? "coordinator" : "worker",
@@ -767,6 +771,7 @@ export class ChannelMessageService {
 
   private validateChannelCompletionReply(input: {
     channelId: string;
+    channelWorkspacePath: string;
     targetAgent: Agent;
     members: Agent[];
     sourceAgentId: string | null;
@@ -785,23 +790,25 @@ export class ChannelMessageService {
 
     const actions = parseChannelActions(input.replyText);
     const reportAction = actions.find((action) => action.type === "report");
-    const artifactPaths = this.collectArtifactPaths({
-      replyText: input.replyText,
-      actions,
-    });
-    const existingArtifactPath = artifactPaths.find((candidatePath) =>
-      this.artifactPathExists(candidatePath),
-    );
+    const artifactCheck = reportAction?.artifactPath
+      ? this.channelWorkspaceService.resolveArtifactPath(input.channelWorkspacePath, reportAction.artifactPath)
+      : null;
     const intentOnly = this.isIntentOnlyImplementationReply(input.replyText);
     const problems: string[] = [];
 
     if (input.sourceAgentId && !reportAction) {
       problems.push("코드 작업 worker 응답에는 type=report action이 필요합니다.");
     }
-    if (!existingArtifactPath) {
-      problems.push("실제로 존재하는 산출물 파일 경로가 필요합니다.");
+    if (input.sourceAgentId && reportAction && !reportAction.artifactPath?.trim()) {
+      problems.push("type=report action에는 artifact_path가 필요합니다.");
     }
-    if (intentOnly && !existingArtifactPath) {
+    if (artifactCheck && !artifactCheck.insideWorkspace) {
+      problems.push(`artifact_path는 채널 워크스페이스 내부여야 합니다. workspace: ${artifactCheck.workspacePath}`);
+    }
+    if (artifactCheck && artifactCheck.insideWorkspace && !artifactCheck.exists) {
+      problems.push("artifact_path가 가리키는 실제 산출물 파일이 필요합니다.");
+    }
+    if (intentOnly && (!artifactCheck || !artifactCheck.exists)) {
       problems.push("구현 의도만 말하고 실제 완료 보고를 하지 않았습니다.");
     }
 
@@ -833,49 +840,6 @@ export class ChannelMessageService {
       (needle) => roleText.includes(needle.toLowerCase()),
     );
     return roleLooksCodeRelated;
-  }
-
-  private collectArtifactPaths(input: {
-    replyText: string;
-    actions: ReturnType<typeof parseChannelActions>;
-  }): string[] {
-    const candidates = new Set<string>();
-
-    for (const action of input.actions) {
-      if (action.artifactPath?.trim()) {
-        candidates.add(action.artifactPath.trim());
-      }
-    }
-
-    const absolutePathMatches =
-      input.replyText.match(/(?:[A-Za-z]:\\|\/)[^\s`"'<>]+/g) ?? [];
-    for (const candidate of absolutePathMatches) {
-      candidates.add(candidate.replace(/[),.:;!?]+$/g, ""));
-    }
-
-    const relativePathMatches =
-      input.replyText.match(/\b(?:src|tests|codexdocs|dist|tmp|temp|scripts)\/[^\s`"'<>]+\.[A-Za-z0-9]+\b/g) ?? [];
-    for (const candidate of relativePathMatches) {
-      candidates.add(candidate.replace(/[),.:;!?]+$/g, ""));
-    }
-
-    return [...candidates];
-  }
-
-  private artifactPathExists(candidatePath: string): boolean {
-    const trimmed = candidatePath.trim();
-    if (!trimmed) {
-      return false;
-    }
-
-    const resolvedPath = path.isAbsolute(trimmed)
-      ? trimmed
-      : path.resolve(this.workspaceDir, trimmed);
-    try {
-      return fs.existsSync(resolvedPath);
-    } catch {
-      return false;
-    }
   }
 
   private isIntentOnlyImplementationReply(replyText: string): boolean {

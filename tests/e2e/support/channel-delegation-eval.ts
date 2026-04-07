@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import {
   _electron as electron,
@@ -176,6 +177,11 @@ export async function apiRequest<T>(
   };
 }
 
+function createWorkspaceDir(label: string): string {
+  const safeLabel = label.replace(/[^a-z0-9_.-]+/gi, "-");
+  return fs.mkdtempSync(path.join(os.tmpdir(), `viblack-channel-workspace-${safeLabel}-`));
+}
+
 export async function createDelegationScenario(backendBaseUrl: string): Promise<DelegationScenario> {
   const coordinatorCreate = await apiRequest<{ agent: { id: string; name: string; role: string } }>(
     backendBaseUrl,
@@ -244,11 +250,13 @@ export async function createDelegationScenario(backendBaseUrl: string): Promise<
   expect(writerCreate.status).toBe(201);
 
   const channelName = `delegation-eval-${Date.now()}`;
+  const workspacePath = createWorkspaceDir(channelName);
   const channelCreate = await apiRequest<{ channel: { id: string; name: string } }>(backendBaseUrl, "/api/channels", {
     method: "POST",
     body: {
       name: channelName,
       description: "channel delegation evaluation loop",
+      workspacePath,
     },
   });
   expect(channelCreate.status).toBe(201);

@@ -1,11 +1,15 @@
 import type { Express } from "express";
-import { DuplicateChannelNameError } from "../db";
+import { DuplicateChannelNameError, DuplicateChannelWorkspaceError } from "../db";
 import { ChannelEventBus } from "../events/channel-event-bus";
 import { getChannelRuntimeSessionScope } from "../runtime-session-scope";
 import { AgentRepository } from "../repositories/agent-repository";
 import { ChannelMemberRepository } from "../repositories/channel-member-repository";
 import { ChannelRepository } from "../repositories/channel-repository";
 import { ChannelMessageService } from "../services/channel-message-service";
+import {
+  ChannelWorkspaceService,
+  InvalidChannelWorkspacePathError,
+} from "../services/channel-workspace-service";
 import { sanitizeChannelMessageKind, sanitizeText } from "../services/text-utils";
 
 interface RegisterChannelRoutesOptions {
@@ -14,6 +18,7 @@ interface RegisterChannelRoutesOptions {
   channelMemberRepository: ChannelMemberRepository;
   channelEventBus: ChannelEventBus;
   channelMessageService: ChannelMessageService;
+  channelWorkspaceService: ChannelWorkspaceService;
 }
 
 export function registerChannelRoutes(app: Express, options: RegisterChannelRoutesOptions): void {
@@ -23,6 +28,7 @@ export function registerChannelRoutes(app: Express, options: RegisterChannelRout
     channelMemberRepository,
     channelEventBus,
     channelMessageService,
+    channelWorkspaceService,
   } = options;
 
   app.get("/api/channels", (_req, res) => {
@@ -37,17 +43,27 @@ export function registerChannelRoutes(app: Express, options: RegisterChannelRout
   app.post("/api/channels", (req, res) => {
     const name = sanitizeText(req.body?.name);
     const description = sanitizeText(req.body?.description);
-    if (!name || !description) {
-      res.status(400).json({ error: "name and description are required" });
+    const rawWorkspacePath = sanitizeText(req.body?.workspacePath);
+    if (!name || !description || !rawWorkspacePath) {
+      res.status(400).json({ error: "name, description, and workspacePath are required" });
       return;
     }
 
     try {
-      const channel = channelRepository.createChannel(name, description);
+      const workspacePath = channelWorkspaceService.normalizeWorkspacePath(rawWorkspacePath);
+      const channel = channelRepository.createChannel(name, description, workspacePath);
       res.status(201).json({ channel });
     } catch (err) {
       if (err instanceof DuplicateChannelNameError) {
         res.status(409).json({ error: "channel name already exists" });
+        return;
+      }
+      if (err instanceof DuplicateChannelWorkspaceError) {
+        res.status(409).json({ error: "channel workspace already in use" });
+        return;
+      }
+      if (err instanceof InvalidChannelWorkspacePathError) {
+        res.status(400).json({ error: err.message });
         return;
       }
       const message = err instanceof Error ? err.message : "unknown error";
@@ -59,13 +75,15 @@ export function registerChannelRoutes(app: Express, options: RegisterChannelRout
     const { channelId } = req.params;
     const name = sanitizeText(req.body?.name);
     const description = sanitizeText(req.body?.description);
-    if (!name || !description) {
-      res.status(400).json({ error: "name and description are required" });
+    const rawWorkspacePath = sanitizeText(req.body?.workspacePath);
+    if (!name || !description || !rawWorkspacePath) {
+      res.status(400).json({ error: "name, description, and workspacePath are required" });
       return;
     }
 
     try {
-      const channel = channelRepository.updateChannel(channelId, name, description);
+      const workspacePath = channelWorkspaceService.normalizeWorkspacePath(rawWorkspacePath);
+      const channel = channelRepository.updateChannel(channelId, name, description, workspacePath);
       if (!channel) {
         res.status(404).json({ error: "channel not found" });
         return;
@@ -74,6 +92,14 @@ export function registerChannelRoutes(app: Express, options: RegisterChannelRout
     } catch (err) {
       if (err instanceof DuplicateChannelNameError) {
         res.status(409).json({ error: "channel name already exists" });
+        return;
+      }
+      if (err instanceof DuplicateChannelWorkspaceError) {
+        res.status(409).json({ error: "channel workspace already in use" });
+        return;
+      }
+      if (err instanceof InvalidChannelWorkspacePathError) {
+        res.status(400).json({ error: err.message });
         return;
       }
       const message = err instanceof Error ? err.message : "unknown error";

@@ -334,7 +334,7 @@ function maybeBuildDelegationScenarioReply(promptText, sessionId, sessionState =
   return "";
 }
 
-function maybeBuildCodeArtifactScenarioReply(promptText, sessionId, sessionState = {}) {
+function maybeBuildCodeArtifactScenarioReply(promptText, cwd, sessionId, sessionState = {}) {
   const isIntentOnlyScenario = promptText.includes("FORCE_CODE_ARTIFACT_INTENT_ONLY");
   const successMatch = promptText.match(/FORCE_CODE_ARTIFACT_SUCCESS:\s*([^\s\r\n]+)/);
   if (!isIntentOnlyScenario && !successMatch) {
@@ -380,7 +380,7 @@ function maybeBuildCodeArtifactScenarioReply(promptText, sessionId, sessionState
   }
 
   const artifactPath = path.join(
-    os.tmpdir(),
+    cwd,
     `viblack-fake-code-artifact-${sanitizeMarkerPart(successMatch[1])}.ts`,
   );
   fs.writeFileSync(
@@ -393,6 +393,25 @@ function maybeBuildCodeArtifactScenarioReply(promptText, sessionId, sessionState
     `산출물: ${artifactPath}`,
     buildChannelActionBlock(["type=report", `target=${coordinatorName}`, `artifact_path=${artifactPath}`]),
   ].join("\n\n");
+}
+
+function maybeHandleChannelWorkspaceFile(cwd, controlPromptText) {
+  const writeMatch = controlPromptText.match(/FORCE_CHANNEL_FILE_WRITE:\s*([^\s\r\n]+)/);
+  if (writeMatch) {
+    const token = writeMatch[1].trim();
+    const filePath = path.join(cwd, `channel-file-${sanitizeMarkerPart(token)}.txt`);
+    fs.writeFileSync(filePath, token, "utf8");
+    return `채널 파일 기록:${filePath}`;
+  }
+
+  const readMatch = controlPromptText.match(/FORCE_CHANNEL_FILE_READ:\s*([^\s\r\n]+)/);
+  if (readMatch) {
+    const token = readMatch[1].trim();
+    const filePath = path.join(cwd, `channel-file-${sanitizeMarkerPart(token)}.txt`);
+    return fs.existsSync(filePath) ? `채널 파일 존재:${token}` : `채널 파일 없음:${token}`;
+  }
+
+  return "";
 }
 
 function parseForcedStreamMessage(promptText) {
@@ -536,6 +555,7 @@ function buildReply(
   requestedModel = null,
   controlPromptText = promptText,
   sessionId = "",
+  cwd = process.cwd(),
 ) {
   const persistedAgentName = extractAgentName(promptText);
   const hasDelegationRules = hasExactMentionDelegationRules(promptText);
@@ -562,6 +582,10 @@ function buildReply(
     const token = sessionMemoryReadMatch[1].trim();
     return hasSessionMemory(sessionId, token) ? `세션 메모리 존재:${token}` : `세션 메모리 없음:${token}`;
   }
+  const channelWorkspaceReply = maybeHandleChannelWorkspaceFile(cwd, controlPromptText);
+  if (channelWorkspaceReply) {
+    return channelWorkspaceReply;
+  }
   const deterministicDelegationScenarioReply = maybeBuildDelegationScenarioReply(
     promptText,
     sessionId,
@@ -570,7 +594,7 @@ function buildReply(
   if (deterministicDelegationScenarioReply) {
     return deterministicDelegationScenarioReply;
   }
-  const codeArtifactScenarioReply = maybeBuildCodeArtifactScenarioReply(promptText, sessionId, sessionState);
+  const codeArtifactScenarioReply = maybeBuildCodeArtifactScenarioReply(promptText, cwd, sessionId, sessionState);
   if (codeArtifactScenarioReply) {
     return codeArtifactScenarioReply;
   }
@@ -876,6 +900,7 @@ async function runAppServer() {
             ? params.threadId
             : `fake-thread-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
         const turnId = `fake-turn-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        const cwd = typeof params.cwd === "string" && params.cwd ? params.cwd : process.cwd();
         const promptText = extractTurnInputText(params.input);
         const controlPromptText = getControlPromptText(promptText);
         const forceTurnFailed = shouldForceTurnFailed(controlPromptText);
@@ -925,7 +950,7 @@ async function runAppServer() {
 
         const reply =
           forceItemCompletedMessage ||
-          buildReply(promptText, "app-server", null, controlPromptText, threadId);
+          buildReply(promptText, "app-server", null, controlPromptText, threadId, cwd);
 
         if (forceItemCompletedMessageSequence.length > 0) {
           forceItemCompletedMessageSequence.forEach((messageText, index) => {
@@ -994,7 +1019,14 @@ async function runExec(args) {
   const streamSequence = parseForcedStreamSequence(controlPromptText);
   const forcedDelayMs = parseForcedDelayMs(controlPromptText);
   const effectiveSessionId = sessionId || `fake-session-${Date.now()}`;
-  const reply = buildReply(promptText, "exec", requestedModel, controlPromptText, effectiveSessionId);
+  const reply = buildReply(
+    promptText,
+    "exec",
+    requestedModel,
+    controlPromptText,
+    effectiveSessionId,
+    process.cwd(),
+  );
 
   if (outputPath) {
     fs.writeFileSync(outputPath, reply, "utf8");

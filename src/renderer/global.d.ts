@@ -5,6 +5,7 @@ declare global {
     viblackApi: {
       getBackendBaseUrl: () => Promise<string>;
       getBootCodexStatus: () => Promise<CodexStatus>;
+      pickDirectory: (defaultPath?: string) => Promise<string | null>;
     };
   }
 }

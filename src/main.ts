@@ -1,6 +1,6 @@
 import path from "node:path";
 import fs from "node:fs";
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import { checkCodexAvailability, shutdownCodexProcesses } from "./backend/codex";
 import { startServer, type StartedServer } from "./backend/server";
 import type { CodexStatus } from "./backend/types";
@@ -66,6 +66,14 @@ async function boot(): Promise<void> {
 
 ipcMain.handle("viblack:getBackendBaseUrl", async () => backendBaseUrl);
 ipcMain.handle("viblack:getBootCodexStatus", async () => bootCodexStatus);
+ipcMain.handle("viblack:pickDirectory", async (_event, defaultPath?: string) => {
+  const focusedWindow = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null;
+  const result = await dialog.showOpenDialog(focusedWindow ?? undefined, {
+    properties: ["openDirectory", "createDirectory"],
+    defaultPath: typeof defaultPath === "string" && defaultPath.trim() ? defaultPath : undefined,
+  });
+  return result.canceled ? null : (result.filePaths[0] ?? null);
+});
 
 async function shutdownApp(): Promise<void> {
   if (shutdownInProgress) {

@@ -22,6 +22,7 @@ export interface Channel {
   id: string;
   name: string;
   description: string;
+  workspacePath: string;
   archivedAt: string | null;
   createdAt: string;
 }

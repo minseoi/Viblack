@@ -74,6 +74,8 @@ export function buildChannelPrompt(input: {
     input.coordinatorName ? `채널 coordinator: ${input.coordinatorName}` : "",
     `현재 응답 모드: ${input.targetAgentMode}`,
     "이 채널은 공개 협업 공간입니다. 멤버 목록과 최근 공개 대화를 먼저 읽고 응답하세요.",
+    `채널 워크스페이스: ${input.workspaceRoot}`,
+    "채널에서 파일을 읽거나 쓸 때는 반드시 위 워크스페이스 내부만 사용하세요. 상위 디렉토리, 다른 채널 워크스페이스, 앱 루트는 접근하지 마세요.",
     "후속 자동 실행은 답변 마지막의 CHANNEL_ACTION 블록만 해석됩니다. 본문에 @mention이 있어도 실행 신호로 간주되지 않을 수 있습니다.",
     "반드시 답변 마지막에 정확히 하나의 CHANNEL_ACTION_BEGIN ... CHANNEL_ACTION_END 블록을 넣으세요.",
     "허용 action type은 delegate, report, ask_user, final, noop 입니다.",
@@ -83,7 +85,7 @@ export function buildChannelPrompt(input: {
       ? "이번 작업은 코드/파일 산출물이 필요한 구현 작업입니다. 계획만 말하고 끝내지 말고, 실제 파일 편집/생성을 마친 뒤에만 답하세요."
       : "",
     input.requiresArtifactReport
-      ? `답변 본문에 실제 산출물 파일 경로를 넣고, 마지막 CHANNEL_ACTION report에도 artifact_path를 포함하세요. artifact_path는 실제로 존재하는 경로여야 합니다. workspace root: ${input.workspaceRoot}`
+      ? `답변 본문에 실제 산출물 파일 경로를 넣고, 마지막 CHANNEL_ACTION report에도 artifact_path를 포함하세요. artifact_path는 실제로 존재하는 경로여야 하며 반드시 채널 워크스페이스 내부여야 합니다. workspace root: ${input.workspaceRoot}`
       : "",
     input.targetAgentMode === "coordinator"
       ? "당신은 coordinator 입니다. 의존 관계가 있는 작업은 한 번에 한 단계씩만 위임하세요. 조사 결과가 채널에 올라오기 전에는 문서 작성처럼 다음 단계를 시작하지 마세요."
@@ -171,6 +173,9 @@ export function buildMemberExecutionSystemPrompt(
       : "",
     context === "channel"
       ? "12) For code/file tasks, include the produced file path in the public reply and set artifact_path=... in the report action."
+      : "",
+    context === "channel"
+      ? "13) In channel collaboration, read and write files only inside the channel workspace directory provided in the prompt."
       : "",
     "",
     "[VALIDATION_RULES]",

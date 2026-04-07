@@ -17,6 +17,7 @@ import { AgentExecutionService } from "./services/agent-execution-service";
 import { AgentLockManager } from "./services/agent-lock-manager";
 import { AppSettingsService } from "./services/app-settings-service";
 import { ChannelMessageService } from "./services/channel-message-service";
+import { ChannelWorkspaceService } from "./services/channel-workspace-service";
 
 interface StartServerOptions {
   dbPath: string;
@@ -42,6 +43,7 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
   const appSettingsService = new AppSettingsService(appSettingsRepository);
   const lockManager = new AgentLockManager();
   const channelEventBus = new ChannelEventBus();
+  const channelWorkspaceService = new ChannelWorkspaceService();
   const agentExecutionService = new AgentExecutionService(
     agentRepository,
     appSettingsService,
@@ -56,7 +58,7 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
     channelMessageRepository,
     channelExecutionRepository,
     appSettingsService,
-    options.workspaceDir,
+    channelWorkspaceService,
     lockManager,
     channelEventBus,
   );
@@ -75,6 +77,7 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
     channelMemberRepository,
     channelEventBus,
     channelMessageService,
+    channelWorkspaceService,
   });
 
   const server = http.createServer(app);

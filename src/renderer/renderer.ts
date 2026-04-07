@@ -26,6 +26,7 @@ interface Channel {
   id: string;
   name: string;
   description: string;
+  workspacePath: string;
   archivedAt: string | null;
   createdAt: string;
 }
@@ -1340,12 +1341,64 @@ function setChannelNameInputError(isError: boolean, reason?: string): void {
   errorText.classList.remove("show");
 }
 
+function setChannelWorkspaceInputError(isError: boolean, reason?: string): void {
+  const workspaceInput = document.getElementById("channel-workspace-input") as HTMLInputElement | null;
+  const errorText = document.getElementById("channel-workspace-error") as HTMLDivElement | null;
+  if (!workspaceInput || !errorText) {
+    return;
+  }
+
+  if (isError) {
+    workspaceInput.classList.add("field-error");
+    workspaceInput.setAttribute("aria-invalid", "true");
+    errorText.textContent = reason ?? "유효한 워크스페이스 경로를 입력하세요.";
+    errorText.classList.add("show");
+    return;
+  }
+
+  workspaceInput.classList.remove("field-error");
+  workspaceInput.removeAttribute("aria-invalid");
+  errorText.textContent = "";
+  errorText.classList.remove("show");
+}
+
 function isDuplicateNameErrorMessage(message: string): boolean {
   return message.toLowerCase().includes("agent display name already exists");
 }
 
 function isDuplicateChannelNameErrorMessage(message: string): boolean {
   return message.toLowerCase().includes("channel name already exists");
+}
+
+function isDuplicateChannelWorkspaceErrorMessage(message: string): boolean {
+  return message.toLowerCase().includes("channel workspace already in use");
+}
+
+function isInvalidChannelWorkspaceErrorMessage(message: string): boolean {
+  return message.toLowerCase().includes("workspace path");
+}
+
+function toChannelWorkspaceErrorMessage(message: string): string {
+  const normalized = message.toLowerCase();
+  if (normalized.includes("workspace path is required")) {
+    return "채널 워크스페이스 경로는 필수입니다.";
+  }
+  if (normalized.includes("workspace path must be an absolute path")) {
+    return "워크스페이스 경로는 절대 경로여야 합니다.";
+  }
+  if (normalized.includes("workspace path does not exist")) {
+    return "지정한 워크스페이스 폴더가 존재하지 않습니다.";
+  }
+  if (normalized.includes("workspace path must point to a directory")) {
+    return "워크스페이스 경로는 폴더여야 합니다.";
+  }
+  if (normalized.includes("workspace path must be readable and writable")) {
+    return "워크스페이스 폴더는 읽기/쓰기가 가능해야 합니다.";
+  }
+  if (normalized.includes("workspace path could not be resolved")) {
+    return "워크스페이스 경로를 확인할 수 없습니다.";
+  }
+  return "유효한 워크스페이스 경로를 입력하세요.";
 }
 
 function openMemberModal(mode: "create" | "edit", targetAgent: Agent | null): void {
@@ -1438,7 +1491,8 @@ function openChannelModal(mode: "create" | "edit", channel: Channel | null): voi
   const submitBtn = document.getElementById("channel-submit-btn");
   const nameInput = document.getElementById("channel-name-input") as HTMLInputElement | null;
   const descInput = document.getElementById("channel-desc-input") as HTMLInputElement | null;
-  if (!modal || !titleEl || !submitBtn || !nameInput || !descInput) {
+  const workspaceInput = document.getElementById("channel-workspace-input") as HTMLInputElement | null;
+  if (!modal || !titleEl || !submitBtn || !nameInput || !descInput || !workspaceInput) {
     return;
   }
 
@@ -1450,17 +1504,20 @@ function openChannelModal(mode: "create" | "edit", channel: Channel | null): voi
     submitBtn.textContent = "저장";
     nameInput.value = channel.name;
     descInput.value = channel.description;
+    workspaceInput.value = channel.workspacePath;
   } else {
     titleEl.textContent = "채널 추가";
     submitBtn.textContent = "만들기";
     nameInput.value = "";
     descInput.value = "";
+    workspaceInput.value = "";
   }
 
   if (modal.open) {
     modal.close();
   }
   setChannelNameInputError(false);
+  setChannelWorkspaceInputError(false);
   modal.showModal();
   nameInput.focus();
 }
@@ -1686,16 +1743,48 @@ function closeChannelMemberAddModal(): void {
   restoreInputFocus();
 }
 
-async function saveChannel(channelName: string, channelDescription: string): Promise<void> {
+async function chooseChannelWorkspaceDirectory(): Promise<void> {
+  const workspaceInput = document.getElementById("channel-workspace-input") as HTMLInputElement | null;
+  if (!workspaceInput) {
+    return;
+  }
+
+  try {
+    const selectedPath = await window.viblackApi.pickDirectory(workspaceInput.value || undefined);
+    if (!selectedPath) {
+      return;
+    }
+    workspaceInput.value = selectedPath;
+    setChannelWorkspaceInputError(false);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "unknown error";
+    showWarning(`워크스페이스 폴더 선택 실패: ${message}`);
+    setStatus(`Error: ${message}`);
+  }
+}
+
+async function saveChannel(
+  channelName: string,
+  channelDescription: string,
+  channelWorkspacePath: string,
+): Promise<void> {
   const name = channelName.trim();
   const description = channelDescription.trim();
+  const workspacePath = channelWorkspacePath.trim();
   const nameInput = document.getElementById("channel-name-input") as HTMLInputElement | null;
+  const workspaceInput = document.getElementById("channel-workspace-input") as HTMLInputElement | null;
   if (!name || !description) {
     showWarning("채널 이름과 설명을 입력하세요.");
     return;
   }
+  if (!workspacePath) {
+    setChannelWorkspaceInputError(true, "채널 워크스페이스 경로는 필수입니다.");
+    workspaceInput?.focus();
+    return;
+  }
 
   setChannelNameInputError(false);
+  setChannelWorkspaceInputError(false);
   const normalizedChannelName = name.toLowerCase();
   const duplicateChannel = channelStore.getChannels().find(
     (channel) =>
@@ -1712,7 +1801,7 @@ async function saveChannel(channelName: string, channelDescription: string): Pro
       await fetchJson<{ channel: Channel }>(`${backendBaseUrl}/api/channels/${editingChannelId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, description }),
+        body: JSON.stringify({ name, description, workspacePath }),
       });
       await refreshChannels(editingChannelId);
       if (channelStore.getActiveChannelId() === editingChannelId) {
@@ -1723,7 +1812,7 @@ async function saveChannel(channelName: string, channelDescription: string): Pro
       const created = await fetchJson<{ channel: Channel }>(`${backendBaseUrl}/api/channels`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, description }),
+        body: JSON.stringify({ name, description, workspacePath }),
       });
       channelStore.setActiveChannelId(created.channel.id);
       activeAgentId = null;
@@ -1733,12 +1822,23 @@ async function saveChannel(channelName: string, channelDescription: string): Pro
 
     showWarning(null);
     setChannelNameInputError(false);
+    setChannelWorkspaceInputError(false);
     closeChannelModal();
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown error";
     if (isDuplicateChannelNameErrorMessage(message)) {
       setChannelNameInputError(true, "이미 사용 중인 채널 이름입니다. 다른 이름을 입력하세요.");
       nameInput?.focus();
+      return;
+    }
+    if (isDuplicateChannelWorkspaceErrorMessage(message)) {
+      setChannelWorkspaceInputError(true, "이미 다른 활성 채널이 사용 중인 워크스페이스입니다.");
+      workspaceInput?.focus();
+      return;
+    }
+    if (isInvalidChannelWorkspaceErrorMessage(message)) {
+      setChannelWorkspaceInputError(true, toChannelWorkspaceErrorMessage(message));
+      workspaceInput?.focus();
       return;
     }
     showWarning(`채널 저장 실패: ${message}`);
@@ -2176,6 +2276,8 @@ function initMemberCrudUi(): void {
   const channelCancelBtn = document.getElementById("channel-cancel-btn");
   const channelNameInput = document.getElementById("channel-name-input") as HTMLInputElement | null;
   const channelDescInput = document.getElementById("channel-desc-input") as HTMLInputElement | null;
+  const channelWorkspaceInput = document.getElementById("channel-workspace-input") as HTMLInputElement | null;
+  const channelWorkspaceBrowseBtn = document.getElementById("channel-workspace-browse-btn");
   const channelMembersBtn = document.getElementById("channel-members-btn");
   const channelMembersModal = document.getElementById("channel-members-modal") as HTMLDialogElement | null;
   const channelMembersSearchInput = document.getElementById(
@@ -2249,10 +2351,10 @@ function initMemberCrudUi(): void {
 
   channelForm?.addEventListener("submit", (event) => {
     event.preventDefault();
-    if (!channelNameInput || !channelDescInput) {
+    if (!channelNameInput || !channelDescInput || !channelWorkspaceInput) {
       return;
     }
-    void saveChannel(channelNameInput.value, channelDescInput.value);
+    void saveChannel(channelNameInput.value, channelDescInput.value, channelWorkspaceInput.value);
   });
 
   channelCancelBtn?.addEventListener("click", () => {
@@ -2261,6 +2363,14 @@ function initMemberCrudUi(): void {
 
   channelNameInput?.addEventListener("input", () => {
     setChannelNameInputError(false);
+  });
+
+  channelWorkspaceInput?.addEventListener("input", () => {
+    setChannelWorkspaceInputError(false);
+  });
+
+  channelWorkspaceBrowseBtn?.addEventListener("click", () => {
+    void chooseChannelWorkspaceDirectory();
   });
 
   channelModal?.addEventListener("close", () => {

@@ -1122,3 +1122,50 @@
 - 최종 검증:
   - `npm run verify` 통과
   - 결과: Playwright 15 passed, real-codex 계열 2 skipped
+
+### 113) 채널 전용 작업 디렉토리 도입 착수
+- 사용자 요청:
+  - 채널마다 독립적인 전용 디렉토리를 부여
+  - 채널 작업은 해당 디렉토리 내부에서만 읽고 쓰도록 제한
+- 조치 계획:
+  - 채널별 workspace root를 앱 데이터 기준 `channel-workspaces/<channelId>`로 고정
+  - 채널 실행 `cwd`와 prompt의 workspace 안내를 채널 전용 디렉토리로 전환
+  - `artifact_path` 검증도 채널 디렉토리 내부 경로만 통과하게 강화
+  - fake codex / Playwright 회귀로 채널 간 파일 격리 확인
+- 진행 업데이트:
+  - `ChannelWorkspaceService`를 추가해 채널별 디렉토리 생성/경로 검증을 공통화
+  - 채널 생성 시 전용 디렉토리를 보장하고, 채널 멘션 실행은 해당 디렉토리를 `cwd`로 사용하도록 변경
+  - worker `report`의 `artifact_path`는 채널 전용 디렉토리 내부의 실제 파일일 때만 유효하게 조정
+  - channel prompt/system prompt에 채널 디렉토리 내부만 읽기/쓰기 하라는 규칙을 추가
+  - fake codex가 채널 실행 시 현재 `cwd` 내부에 산출물을 쓰도록 수정하고, 채널별 파일 격리 시나리오를 추가
+- 중간 검증:
+  - `npm run check` 통과
+  - `npx playwright test tests/e2e/electron.channel-metadata.spec.ts --grep "delegated code task continues only after worker reports an existing artifact path"` 통과
+- 최종 검증:
+  - `npm run verify` 통과
+  - 결과: Playwright 17 passed, real-codex 계열 2 skipped
+
+### 114) 채널별 사용자 지정 워크스페이스 필수화로 설계 전환
+- 사용자 요청:
+  - 채널 생성 시 워크스페이스를 직접 지정하게 변경
+  - 워크스페이스 미지정이면 채널 생성 불가
+  - 활성 채널끼리는 같은 워크스페이스를 공유하지 않도록 제한
+- 조치 계획:
+  - 채널 스키마/타입에 `workspace_path`를 정식 필드로 반영
+  - 생성/수정 라우트에서 절대경로, 디렉토리, read/write 가능 여부, realpath 중복을 검증
+  - 채널 모달에 워크스페이스 입력과 폴더 선택 버튼을 추가하고 인라인 오류로만 안내
+  - Playwright/E2E를 새 필수 필드와 중복 워크스페이스 정책에 맞게 갱신
+- 진행 업데이트:
+  - `ChannelWorkspaceService`를 realpath 정규화/접근권한 검증 중심으로 재작성
+  - 채널 repository/db에 `workspace_path` 저장과 활성 채널 기준 unique 검증을 추가
+  - 채널 실행 `cwd`와 artifact 검증을 저장된 `workspacePath` 기준으로 연결
+  - Electron main/preload/renderer에 디렉토리 picker IPC와 채널 모달 워크스페이스 입력 UI를 추가
+  - `electron.smoke`, `electron.settings`, `electron.channel-metadata`, delegation eval helper를 새 workspace 필수 규칙에 맞춰 수정 중
+  - 채널 모달은 브라우저 기본 `required` 팝업 대신 기존 인라인 오류를 쓰도록 `channel-form`을 `novalidate`로 전환
+- 최종 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npx playwright test tests/e2e/electron.channel-metadata.spec.ts` 통과
+  - `npx playwright test tests/e2e/electron.smoke.spec.ts` 통과
+  - `npm run verify` 통과
+  - 결과: Playwright 17 passed, real-codex 계열 2 skipped

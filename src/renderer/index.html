@@ -888,6 +888,15 @@
         resize: vertical;
         min-height: 100px;
       }
+      .modal-input-row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .modal-input-row input {
+        flex: 1;
+        min-width: 0;
+      }
       .field-error-text {
         display: none;
         color: #c93d3d;
@@ -1429,7 +1438,7 @@
     </dialog>
 
     <dialog id="channel-modal">
-      <form id="channel-form" method="dialog" class="modal-inner">
+      <form id="channel-form" method="dialog" class="modal-inner" novalidate>
         <h3 id="channel-modal-title" class="modal-title">채널 추가</h3>
         <div class="modal-field">
           <label for="channel-name-input">채널 이름</label>
@@ -1439,6 +1448,19 @@
         <div class="modal-field">
           <label for="channel-desc-input">채널 설명</label>
           <input id="channel-desc-input" name="description" maxlength="120" required />
+        </div>
+        <div class="modal-field">
+          <label for="channel-workspace-input">워크스페이스 경로</label>
+          <div class="modal-input-row">
+            <input
+              id="channel-workspace-input"
+              name="workspacePath"
+              placeholder="/absolute/path/to/workspace"
+              required
+            />
+            <button id="channel-workspace-browse-btn" class="btn" type="button">선택</button>
+          </div>
+          <div id="channel-workspace-error" class="field-error-text" role="alert" aria-live="polite"></div>
         </div>
         <div class="modal-actions">
           <button id="channel-cancel-btn" class="btn" type="button">취소</button>

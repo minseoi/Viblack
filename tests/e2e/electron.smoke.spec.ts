@@ -44,6 +44,13 @@ async function launchIsolatedApp(
   return { electronApp, page };
 }
 
+function createWorkspaceDir(testInfo: TestInfo, label: string): string {
+  const safeLabel = label.replace(/[^a-z0-9_.-]+/gi, "-");
+  const workspacePath = testInfo.outputPath(`workspace-${safeLabel}`);
+  fs.mkdirSync(workspacePath, { recursive: true });
+  return workspacePath;
+}
+
 function memberRow(page: Page, name: string) {
   return page.locator("#member-list .member-item", { hasText: name });
 }
@@ -111,7 +118,10 @@ test("electron full feature regression flow", async ({}, testInfo) => {
   const dmStreamDedupFinalToken = `STREAM_DEDUP_${suffix}`;
   const dmAppServerRuntimeToken = "APP_SERVER_RUNTIME_OK";
   const channelName = `qa-room-${suffix}`;
+  const duplicateWorkspaceChannelName = `qa-room-clone-${suffix}`;
   const editedChannelName = `qa-room-updated-${suffix}`;
+  const channelWorkspacePath = createWorkspaceDir(testInfo, channelName);
+  const editedChannelWorkspacePath = createWorkspaceDir(testInfo, editedChannelName);
   const channelStreamDedupFinalToken = `CHANNEL_STREAM_DEDUP_${suffix}`;
 
   const { electronApp, page } = await launchIsolatedApp(testInfo);
@@ -373,12 +383,18 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     await page.fill("#channel-name-input", channelName);
     await page.fill("#channel-desc-input", "Playwright full feature regression");
     await page.click("#channel-submit-btn");
+    await expect(page.locator("#channel-modal[open]")).toHaveCount(1);
+    await expect(page.locator("#channel-workspace-input")).toHaveClass(/field-error/);
+    await expect(page.locator("#channel-workspace-error")).toHaveText("채널 워크스페이스 경로는 필수입니다.");
+    await page.fill("#channel-workspace-input", channelWorkspacePath);
+    await page.click("#channel-submit-btn");
     await expect(page.locator("#channel-modal[open]")).toHaveCount(0);
     await expect(channelRow(page, channelName)).toHaveCount(1);
 
     await openAddChannelModal(page);
     await page.fill("#channel-name-input", channelName);
     await page.fill("#channel-desc-input", "duplicate channel should stay inline");
+    await page.fill("#channel-workspace-input", createWorkspaceDir(testInfo, `${channelName}-duplicate-name`));
     await page.click("#channel-submit-btn");
     await expect(page.locator("#channel-modal[open]")).toHaveCount(1);
     await expect(page.locator("#channel-name-input")).toHaveClass(/field-error/);
@@ -389,11 +405,26 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     await page.click("#channel-cancel-btn");
     await expect(page.locator("#channel-modal[open]")).toHaveCount(0);
 
+    await openAddChannelModal(page);
+    await page.fill("#channel-name-input", duplicateWorkspaceChannelName);
+    await page.fill("#channel-desc-input", "duplicate workspace should stay inline");
+    await page.fill("#channel-workspace-input", channelWorkspacePath);
+    await page.click("#channel-submit-btn");
+    await expect(page.locator("#channel-modal[open]")).toHaveCount(1);
+    await expect(page.locator("#channel-workspace-input")).toHaveClass(/field-error/);
+    await expect(page.locator("#channel-workspace-error")).toHaveText(
+      "이미 다른 활성 채널이 사용 중인 워크스페이스입니다.",
+    );
+    await expect(page.locator("#warning")).not.toContainText("채널 저장 실패");
+    await page.click("#channel-cancel-btn");
+    await expect(page.locator("#channel-modal[open]")).toHaveCount(0);
+
     await openChannelMenu(page, channelName);
     await page.click("#channel-menu-edit");
     await expect(page.locator("#channel-modal[open]")).toHaveCount(1);
     await page.fill("#channel-name-input", editedChannelName);
     await page.fill("#channel-desc-input", "updated by e2e");
+    await page.fill("#channel-workspace-input", editedChannelWorkspacePath);
     await page.click("#channel-submit-btn");
     await expect(page.locator("#channel-modal[open]")).toHaveCount(0);
     await expect(channelRow(page, editedChannelName)).toHaveCount(1);
@@ -610,6 +641,7 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     await openAddChannelModal(page);
     await page.fill("#channel-name-input", editedChannelName);
     await page.fill("#channel-desc-input", "recreated after archive");
+    await page.fill("#channel-workspace-input", editedChannelWorkspacePath);
     await page.click("#channel-submit-btn");
     await expect(page.locator("#channel-modal[open]")).toHaveCount(0);
     await expect(channelRow(page, editedChannelName)).toHaveCount(1);

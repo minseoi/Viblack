@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import { DuplicateChannelNameError } from "../db";
+import { DuplicateChannelNameError, DuplicateChannelWorkspaceError } from "../db";
 import type { Channel } from "../types";
 
 function nowIso(): string {
@@ -11,6 +11,7 @@ function mapChannel(row: Record<string, unknown>): Channel {
     id: String(row.id),
     name: String(row.name),
     description: String(row.description),
+    workspacePath: String(row.workspace_path ?? ""),
     archivedAt: row.archived_at ? String(row.archived_at) : null,
     createdAt: String(row.created_at),
   };
@@ -21,7 +22,7 @@ export class ChannelRepository {
 
   listChannels(includeArchived = false): Channel[] {
     const stmt = this.db.prepare(
-      `SELECT id, name, description, archived_at, created_at
+      `SELECT id, name, description, workspace_path, archived_at, created_at
        FROM channels
        WHERE (? = 1 OR archived_at IS NULL)
        ORDER BY created_at ASC`,
@@ -32,22 +33,23 @@ export class ChannelRepository {
 
   getChannel(channelId: string): Channel | null {
     const stmt = this.db.prepare(
-      `SELECT id, name, description, archived_at, created_at
+      `SELECT id, name, description, workspace_path, archived_at, created_at
        FROM channels WHERE id = ?`,
     );
     const row = stmt.get(channelId) as Record<string, unknown> | undefined;
     return row ? mapChannel(row) : null;
   }
 
-  createChannel(name: string, description: string): Channel {
+  createChannel(name: string, description: string, workspacePath: string): Channel {
     this.assertUniqueChannelName(name);
+    this.assertUniqueChannelWorkspacePath(workspacePath);
     const id = this.generateChannelId(name);
     const createdAt = nowIso();
     const stmt = this.db.prepare(
-      `INSERT INTO channels (id, name, description, archived_at, created_at)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO channels (id, name, description, workspace_path, archived_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
     );
-    stmt.run(id, name, description, null, createdAt);
+    stmt.run(id, name, description, workspacePath, null, createdAt);
     const channel = this.getChannel(id);
     if (!channel) {
       throw new Error("failed to create channel");
@@ -55,14 +57,15 @@ export class ChannelRepository {
     return channel;
   }
 
-  updateChannel(channelId: string, name: string, description: string): Channel | null {
+  updateChannel(channelId: string, name: string, description: string, workspacePath: string): Channel | null {
     this.assertUniqueChannelName(name, channelId);
+    this.assertUniqueChannelWorkspacePath(workspacePath, channelId);
     const stmt = this.db.prepare(
       `UPDATE channels
-       SET name = ?, description = ?
+       SET name = ?, description = ?, workspace_path = ?
        WHERE id = ?`,
     );
-    const result = stmt.run(name, description, channelId) as { changes?: number };
+    const result = stmt.run(name, description, workspacePath, channelId) as { changes?: number };
     if (!result.changes || result.changes < 1) {
       return null;
     }
@@ -111,5 +114,26 @@ export class ChannelRepository {
     }
 
     throw new DuplicateChannelNameError(name);
+  }
+
+  private assertUniqueChannelWorkspacePath(workspacePath: string, excludeChannelId?: string): void {
+    const stmt = this.db.prepare(
+      `SELECT id
+       FROM channels
+       WHERE archived_at IS NULL
+         AND workspace_path = ?
+       LIMIT 1`,
+    );
+    const row = stmt.get(workspacePath) as Record<string, unknown> | undefined;
+    if (!row) {
+      return;
+    }
+
+    const existingId = String(row.id);
+    if (excludeChannelId && existingId === excludeChannelId) {
+      return;
+    }
+
+    throw new DuplicateChannelWorkspaceError(workspacePath);
   }
 }

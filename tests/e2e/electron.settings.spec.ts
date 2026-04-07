@@ -72,6 +72,13 @@ async function apiRequest<T>(
   ) as Promise<{ status: number; data: T }>;
 }
 
+function createWorkspaceDir(testInfo: TestInfo, label: string): string {
+  const safeLabel = label.replace(/[^a-z0-9_.-]+/gi, "-");
+  const workspacePath = testInfo.outputPath(`workspace-${safeLabel}`);
+  fs.mkdirSync(workspacePath, { recursive: true });
+  return workspacePath;
+}
+
 async function openAddMemberModal(page: Page): Promise<void> {
   await page.locator('[data-section="members"] .section-header').hover();
   await page.locator("#add-member-btn").click({ force: true });
@@ -149,6 +156,7 @@ test("channel action blocks are visible only when debug mode is enabled", async 
   const leaderName = `영희${suffix}`;
   const researcherName = `존${suffix}`;
   const channelName = `debug-room-${suffix}`;
+  const workspacePath = createWorkspaceDir(testInfo, channelName);
   const { electronApp, page } = await launchIsolatedApp(testInfo);
 
   try {
@@ -177,6 +185,7 @@ test("channel action blocks are visible only when debug mode is enabled", async 
       body: {
         name: channelName,
         description: "debug mode channel action block visibility verification",
+        workspacePath,
       },
     });
     expect(channelCreate.status).toBe(201);

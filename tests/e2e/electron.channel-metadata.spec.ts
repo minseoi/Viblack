@@ -66,6 +66,36 @@ async function apiRequest<T>(
   ) as Promise<{ status: number; data: T }>;
 }
 
+function createWorkspaceDir(testInfo: TestInfo, label: string): string {
+  const safeLabel = label.replace(/[^a-z0-9_.-]+/gi, "-");
+  const workspacePath = testInfo.outputPath(`workspace-${safeLabel}`);
+  fs.mkdirSync(workspacePath, { recursive: true });
+  return workspacePath;
+}
+
+async function createChannelViaApi(
+  page: Page,
+  testInfo: TestInfo,
+  name: string,
+  description: string,
+): Promise<{ id: string; name: string; workspacePath: string }> {
+  const workspacePath = createWorkspaceDir(testInfo, name);
+  const channelCreate = await apiRequest<{ channel: { id: string; name: string; workspacePath: string } }>(
+    page,
+    "/api/channels",
+    {
+      method: "POST",
+      body: {
+        name,
+        description,
+        workspacePath,
+      },
+    },
+  );
+  expect(channelCreate.status).toBe(201);
+  return channelCreate.data.channel;
+}
+
 test("channel execution retries once when codex returns an empty successful response", async ({}, testInfo) => {
   const suffix = Date.now();
   const alphaName = `RetryAlpha${suffix}`;
@@ -86,16 +116,8 @@ test("channel execution retries once when codex returns an empty successful resp
     });
     expect(alphaCreate.status).toBe(201);
 
-    const channelCreate = await apiRequest<{ channel: { id: string } }>(page, "/api/channels", {
-      method: "POST",
-      body: {
-        name: channelName,
-        description: "channel empty response retry verification",
-      },
-    });
-    expect(channelCreate.status).toBe(201);
-
-    const channelId = channelCreate.data.channel.id;
+    const channel = await createChannelViaApi(page, testInfo, channelName, "channel empty response retry verification");
+    const channelId = channel.id;
     const alphaId = alphaCreate.data.agent.id;
 
     expect(
@@ -157,32 +179,18 @@ test("archived channel name can be reused by a new active channel", async ({}, t
   const { electronApp, page } = await launchIsolatedApp(testInfo);
 
   try {
-    const firstCreate = await apiRequest<{ channel: { id: string; name: string } }>(page, "/api/channels", {
-      method: "POST",
-      body: {
-        name: channelName,
-        description: "first active channel",
-      },
-    });
-    expect(firstCreate.status).toBe(201);
+    const firstCreate = await createChannelViaApi(page, testInfo, channelName, "first active channel");
 
     const archiveResponse = await apiRequest<{ ok: boolean }>(
       page,
-      `/api/channels/${firstCreate.data.channel.id}`,
+      `/api/channels/${firstCreate.id}`,
       { method: "DELETE" },
     );
     expect(archiveResponse.status).toBe(200);
 
-    const secondCreate = await apiRequest<{ channel: { id: string; name: string } }>(page, "/api/channels", {
-      method: "POST",
-      body: {
-        name: channelName,
-        description: "recreated active channel",
-      },
-    });
-    expect(secondCreate.status).toBe(201);
-    expect(secondCreate.data.channel.name).toBe(channelName);
-    expect(secondCreate.data.channel.id).not.toBe(firstCreate.data.channel.id);
+    const secondCreate = await createChannelViaApi(page, testInfo, channelName, "recreated active channel");
+    expect(secondCreate.name).toBe(channelName);
+    expect(secondCreate.id).not.toBe(firstCreate.id);
 
     const listResponse = await apiRequest<{ channels: Array<{ id: string; name: string }> }>(
       page,
@@ -191,7 +199,7 @@ test("archived channel name can be reused by a new active channel", async ({}, t
     expect(listResponse.status).toBe(200);
     expect(listResponse.data.channels).toHaveLength(1);
     expect(listResponse.data.channels[0]).toMatchObject({
-      id: secondCreate.data.channel.id,
+      id: secondCreate.id,
       name: channelName,
     });
   } finally {
@@ -228,16 +236,8 @@ test("delegated code task fails when worker replies with intent only and no arti
     });
     expect(workerCreate.status).toBe(201);
 
-    const channelCreate = await apiRequest<{ channel: { id: string } }>(page, "/api/channels", {
-      method: "POST",
-      body: {
-        name: channelName,
-        description: "code artifact intent-only validation",
-      },
-    });
-    expect(channelCreate.status).toBe(201);
-
-    const channelId = channelCreate.data.channel.id;
+    const channel = await createChannelViaApi(page, testInfo, channelName, "code artifact intent-only validation");
+    const channelId = channel.id;
     const leaderId = leaderCreate.data.agent.id;
     const workerId = workerCreate.data.agent.id;
 
@@ -333,16 +333,8 @@ test("delegated code task continues only after worker reports an existing artifa
     });
     expect(workerCreate.status).toBe(201);
 
-    const channelCreate = await apiRequest<{ channel: { id: string } }>(page, "/api/channels", {
-      method: "POST",
-      body: {
-        name: channelName,
-        description: "code artifact success validation",
-      },
-    });
-    expect(channelCreate.status).toBe(201);
-
-    const channelId = channelCreate.data.channel.id;
+    const channel = await createChannelViaApi(page, testInfo, channelName, "code artifact success validation");
+    const channelId = channel.id;
     const leaderId = leaderCreate.data.agent.id;
     const workerId = workerCreate.data.agent.id;
 
@@ -394,12 +386,131 @@ test("delegated code task continues only after worker reports an existing artifa
     }>(page, `/api/channels/${channelId}/messages`);
     expect(messagesResponse.status).toBe(200);
     const workerMessage = messagesResponse.data.messages.find((message) => message.senderId === workerId);
+    const expectedChannelWorkspaceDir = channel.workspacePath;
     expect(workerMessage?.content).toContain("viblack-fake-code-artifact-");
     expect(workerMessage?.content).toContain("artifact_path=");
+    expect(workerMessage?.content).toContain(expectedChannelWorkspaceDir);
     expect(messagesResponse.data.messages[messagesResponse.data.messages.length - 1]?.senderId).toBe(leaderId);
     expect(messagesResponse.data.messages[messagesResponse.data.messages.length - 1]?.content).toContain(
       "viblack-fake-code-artifact-",
     );
+    expect(messagesResponse.data.messages[messagesResponse.data.messages.length - 1]?.content).toContain(
+      expectedChannelWorkspaceDir,
+    );
+    expect(fs.existsSync(expectedChannelWorkspaceDir)).toBe(true);
+  } finally {
+    await electronApp.close();
+  }
+});
+
+test("channel workspaces are isolated per channel directory", async ({}, testInfo) => {
+  const suffix = Date.now();
+  const memberName = `ScopedWorker${suffix}`;
+  const firstChannelName = `scoped-a-${suffix}`;
+  const secondChannelName = `scoped-b-${suffix}`;
+  const fileToken = `channel-file-${suffix}`;
+
+  const { electronApp, page } = await launchIsolatedApp(testInfo);
+
+  try {
+    const memberCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+      method: "POST",
+      body: {
+        name: memberName,
+        role: "Programmer",
+        systemPrompt: "You are a scoped worker. Reply in concise Korean.",
+      },
+    });
+    expect(memberCreate.status).toBe(201);
+
+    const firstChannelCreate = await createChannelViaApi(page, testInfo, firstChannelName, "first isolated workspace");
+    const secondChannelCreate = await createChannelViaApi(
+      page,
+      testInfo,
+      secondChannelName,
+      "second isolated workspace",
+    );
+
+    const memberId = memberCreate.data.agent.id;
+    const firstChannelId = firstChannelCreate.id;
+    const secondChannelId = secondChannelCreate.id;
+    const firstWorkspacePath = firstChannelCreate.workspacePath;
+    const secondWorkspacePath = secondChannelCreate.workspacePath;
+
+    expect(fs.existsSync(firstWorkspacePath)).toBe(true);
+    expect(fs.existsSync(secondWorkspacePath)).toBe(true);
+    expect(firstWorkspacePath).not.toBe(secondWorkspacePath);
+
+    expect(
+      (
+        await apiRequest(page, `/api/channels/${firstChannelId}/members`, {
+          method: "POST",
+          body: { agentId: memberId },
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await apiRequest(page, `/api/channels/${secondChannelId}/members`, {
+          method: "POST",
+          body: { agentId: memberId },
+        })
+      ).status,
+    ).toBe(201);
+
+    const firstWrite = await apiRequest(page, `/api/channels/${firstChannelId}/messages`, {
+      method: "POST",
+      body: {
+        content: `@{${memberName}} FORCE_CHANNEL_FILE_WRITE:${fileToken}`,
+        messageKind: "general",
+      },
+    });
+    expect(firstWrite.status).toBe(200);
+
+    await expect
+      .poll(async () => {
+        const response = await apiRequest<{
+          messages: Array<{ senderId: string | null; content: string }>;
+        }>(page, `/api/channels/${firstChannelId}/messages`);
+        return response.data.messages.find((message) => message.senderId === memberId)?.content ?? "";
+      })
+      .toContain(`채널 파일 기록:${firstWorkspacePath}`);
+
+    const firstRead = await apiRequest(page, `/api/channels/${firstChannelId}/messages`, {
+      method: "POST",
+      body: {
+        content: `@{${memberName}} FORCE_CHANNEL_FILE_READ:${fileToken}`,
+        messageKind: "general",
+      },
+    });
+    expect(firstRead.status).toBe(200);
+
+    await expect
+      .poll(async () => {
+        const response = await apiRequest<{
+          messages: Array<{ senderId: string | null; content: string }>;
+        }>(page, `/api/channels/${firstChannelId}/messages`);
+        return response.data.messages.some((message) => message.content.includes(`채널 파일 존재:${fileToken}`));
+      })
+      .toBe(true);
+
+    const secondRead = await apiRequest(page, `/api/channels/${secondChannelId}/messages`, {
+      method: "POST",
+      body: {
+        content: `@{${memberName}} FORCE_CHANNEL_FILE_READ:${fileToken}`,
+        messageKind: "general",
+      },
+    });
+    expect(secondRead.status).toBe(200);
+
+    await expect
+      .poll(async () => {
+        const response = await apiRequest<{
+          messages: Array<{ senderId: string | null; content: string }>;
+        }>(page, `/api/channels/${secondChannelId}/messages`);
+        return response.data.messages.some((message) => message.content.includes(`채널 파일 없음:${fileToken}`));
+      })
+      .toBe(true);
   } finally {
     await electronApp.close();
   }
@@ -434,16 +545,8 @@ test("channel execution jobs and member state metadata", async ({}, testInfo) =>
     });
     expect(betaCreate.status).toBe(201);
 
-    const channelCreate = await apiRequest<{ channel: { id: string } }>(page, "/api/channels", {
-      method: "POST",
-      body: {
-        name: channelName,
-        description: "channel metadata verification",
-      },
-    });
-    expect(channelCreate.status).toBe(201);
-
-    const channelId = channelCreate.data.channel.id;
+    const channel = await createChannelViaApi(page, testInfo, channelName, "channel metadata verification");
+    const channelId = channel.id;
     const alphaId = alphaCreate.data.agent.id;
     const betaId = betaCreate.data.agent.id;
 
@@ -596,16 +699,8 @@ test("channel execution prompt includes member roster and recent public history"
     });
     expect(betaCreate.status).toBe(201);
 
-    const channelCreate = await apiRequest<{ channel: { id: string } }>(page, "/api/channels", {
-      method: "POST",
-      body: {
-        name: channelName,
-        description: "channel prompt context verification",
-      },
-    });
-    expect(channelCreate.status).toBe(201);
-
-    const channelId = channelCreate.data.channel.id;
+    const channel = await createChannelViaApi(page, testInfo, channelName, "channel prompt context verification");
+    const channelId = channel.id;
     const alphaId = alphaCreate.data.agent.id;
     const betaId = betaCreate.data.agent.id;
 
@@ -674,17 +769,9 @@ test("dm and channel use isolated runtime sessions for the same agent", async ({
     });
     expect(memberCreate.status).toBe(201);
 
-    const channelCreate = await apiRequest<{ channel: { id: string } }>(page, "/api/channels", {
-      method: "POST",
-      body: {
-        name: channelName,
-        description: "runtime session scope verification",
-      },
-    });
-    expect(channelCreate.status).toBe(201);
-
     const memberId = memberCreate.data.agent.id;
-    const channelId = channelCreate.data.channel.id;
+    const channel = await createChannelViaApi(page, testInfo, channelName, "runtime session scope verification");
+    const channelId = channel.id;
 
     expect(
       (
@@ -791,16 +878,8 @@ test("natural language delegation request becomes channel mention chain", async 
     });
     expect(delegateCreate.status).toBe(201);
 
-    const channelCreate = await apiRequest<{ channel: { id: string } }>(page, "/api/channels", {
-      method: "POST",
-      body: {
-        name: channelName,
-        description: "delegation mention chain verification",
-      },
-    });
-    expect(channelCreate.status).toBe(201);
-
-    const channelId = channelCreate.data.channel.id;
+    const channel = await createChannelViaApi(page, testInfo, channelName, "delegation mention chain verification");
+    const channelId = channel.id;
     const leaderId = leaderCreate.data.agent.id;
     const delegateId = delegateCreate.data.agent.id;
 
@@ -910,16 +989,8 @@ test("user-mentioned member becomes sole coordinator even when another member jo
     });
     expect(delegateCreate.status).toBe(201);
 
-    const channelCreate = await apiRequest<{ channel: { id: string } }>(page, "/api/channels", {
-      method: "POST",
-      body: {
-        name: channelName,
-        description: "first mention should become sole coordinator",
-      },
-    });
-    expect(channelCreate.status).toBe(201);
-
-    const channelId = channelCreate.data.channel.id;
+    const channel = await createChannelViaApi(page, testInfo, channelName, "first mention should become sole coordinator");
+    const channelId = channel.id;
     const leaderId = leaderCreate.data.agent.id;
     const delegateId = delegateCreate.data.agent.id;
 
@@ -1021,16 +1092,8 @@ test("ambiguous delegated task triggers clarification mention back to requester"
     });
     expect(workerCreate.status).toBe(201);
 
-    const channelCreate = await apiRequest<{ channel: { id: string } }>(page, "/api/channels", {
-      method: "POST",
-      body: {
-        name: channelName,
-        description: "clarification mention verification",
-      },
-    });
-    expect(channelCreate.status).toBe(201);
-
-    const channelId = channelCreate.data.channel.id;
+    const channel = await createChannelViaApi(page, testInfo, channelName, "clarification mention verification");
+    const channelId = channel.id;
     const leaderId = leaderCreate.data.agent.id;
     const workerId = workerCreate.data.agent.id;
 
@@ -1129,16 +1192,8 @@ test("channel mention chain continues beyond the former depth cap", async ({}, t
     });
     expect(betaCreate.status).toBe(201);
 
-    const channelCreate = await apiRequest<{ channel: { id: string } }>(page, "/api/channels", {
-      method: "POST",
-      body: {
-        name: channelName,
-        description: "deep mention chain verification",
-      },
-    });
-    expect(channelCreate.status).toBe(201);
-
-    const channelId = channelCreate.data.channel.id;
+    const channel = await createChannelViaApi(page, testInfo, channelName, "deep mention chain verification");
+    const channelId = channel.id;
     const alphaId = alphaCreate.data.agent.id;
     const betaId = betaCreate.data.agent.id;
 
@@ -1239,16 +1294,8 @@ test("mention execution budget exhaustion skips remaining queued jobs", async ({
     });
     expect(betaCreate.status).toBe(201);
 
-    const channelCreate = await apiRequest<{ channel: { id: string } }>(page, "/api/channels", {
-      method: "POST",
-      body: {
-        name: channelName,
-        description: "mention execution budget verification",
-      },
-    });
-    expect(channelCreate.status).toBe(201);
-
-    const channelId = channelCreate.data.channel.id;
+    const channel = await createChannelViaApi(page, testInfo, channelName, "mention execution budget verification");
+    const channelId = channel.id;
     const alphaId = alphaCreate.data.agent.id;
     const betaId = betaCreate.data.agent.id;
 

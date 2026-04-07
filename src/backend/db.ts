@@ -28,14 +28,23 @@ export class DuplicateChannelNameError extends Error {
   }
 }
 
+export class DuplicateChannelWorkspaceError extends Error {
+  constructor(workspacePath: string) {
+    super(`channel workspace already in use: ${workspacePath}`);
+    this.name = "DuplicateChannelWorkspaceError";
+  }
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
 
 export class ViblackDb {
   private readonly db: DatabaseSync;
+  private readonly dbPath: string;
 
   constructor(dbPath: string) {
+    this.dbPath = dbPath;
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
     this.db = new DatabaseSync(dbPath);
     this.db.exec("PRAGMA foreign_keys = ON;");
@@ -168,7 +177,7 @@ export class ViblackDb {
 
   listChannels(includeArchived = false): Channel[] {
     const stmt = this.db.prepare(
-      `SELECT id, name, description, archived_at, created_at
+      `SELECT id, name, description, workspace_path, archived_at, created_at
        FROM channels
        WHERE (? = 1 OR archived_at IS NULL)
        ORDER BY created_at ASC`,
@@ -179,7 +188,7 @@ export class ViblackDb {
 
   getChannel(channelId: string): Channel | null {
     const stmt = this.db.prepare(
-      `SELECT id, name, description, archived_at, created_at
+      `SELECT id, name, description, workspace_path, archived_at, created_at
        FROM channels WHERE id = ?`,
     );
     const row = stmt.get(channelId) as Record<string, unknown> | undefined;
@@ -189,15 +198,16 @@ export class ViblackDb {
     return this.mapChannel(row);
   }
 
-  createChannel(name: string, description: string): Channel {
+  createChannel(name: string, description: string, workspacePath: string): Channel {
     this.assertUniqueChannelName(name);
+    this.assertUniqueChannelWorkspacePath(workspacePath);
     const id = this.generateChannelId(name);
     const createdAt = nowIso();
     const stmt = this.db.prepare(
-      `INSERT INTO channels (id, name, description, archived_at, created_at)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO channels (id, name, description, workspace_path, archived_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
     );
-    stmt.run(id, name, description, null, createdAt);
+    stmt.run(id, name, description, workspacePath, null, createdAt);
     const channel = this.getChannel(id);
     if (!channel) {
       throw new Error("failed to create channel");
@@ -205,14 +215,15 @@ export class ViblackDb {
     return channel;
   }
 
-  updateChannel(channelId: string, name: string, description: string): Channel | null {
+  updateChannel(channelId: string, name: string, description: string, workspacePath: string): Channel | null {
     this.assertUniqueChannelName(name, channelId);
+    this.assertUniqueChannelWorkspacePath(workspacePath, channelId);
     const stmt = this.db.prepare(
       `UPDATE channels
-       SET name = ?, description = ?
+       SET name = ?, description = ?, workspace_path = ?
        WHERE id = ?`,
     );
-    const result = stmt.run(name, description, channelId) as { changes?: number };
+    const result = stmt.run(name, description, workspacePath, channelId) as { changes?: number };
     if (!result.changes || result.changes < 1) {
       return null;
     }
@@ -424,6 +435,7 @@ export class ViblackDb {
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         description TEXT NOT NULL,
+        workspace_path TEXT,
         archived_at TEXT,
         created_at TEXT NOT NULL
       );
@@ -500,6 +512,7 @@ export class ViblackDb {
     `);
 
     this.ensureAgentRoleProfileColumn();
+    this.ensureChannelWorkspacePathColumn();
     this.ensureChannelIndexes();
 
     const existsStmt = this.db.prepare(`SELECT id FROM agents WHERE id = ?`);
@@ -543,6 +556,7 @@ export class ViblackDb {
       id: String(row.id),
       name: String(row.name),
       description: String(row.description),
+      workspacePath: String(row.workspace_path ?? ""),
       archivedAt: row.archived_at ? String(row.archived_at) : null,
       createdAt: String(row.created_at),
     };
@@ -618,6 +632,27 @@ export class ViblackDb {
     throw new DuplicateChannelNameError(name);
   }
 
+  private assertUniqueChannelWorkspacePath(workspacePath: string, excludeChannelId?: string): void {
+    const stmt = this.db.prepare(
+      `SELECT id
+       FROM channels
+       WHERE archived_at IS NULL
+         AND workspace_path = ?
+       LIMIT 1`,
+    );
+    const row = stmt.get(workspacePath) as Record<string, unknown> | undefined;
+    if (!row) {
+      return;
+    }
+
+    const existingId = String(row.id);
+    if (excludeChannelId && existingId === excludeChannelId) {
+      return;
+    }
+
+    throw new DuplicateChannelWorkspaceError(workspacePath);
+  }
+
   private ensureAgentRoleProfileColumn(): void {
     const columns = this.db.prepare(`PRAGMA table_info(agents)`).all() as Array<Record<string, unknown>>;
     const hasRoleProfile = columns.some((column) => String(column.name) === "role_profile");
@@ -626,11 +661,34 @@ export class ViblackDb {
     }
   }
 
+  private ensureChannelWorkspacePathColumn(): void {
+    const columns = this.db.prepare(`PRAGMA table_info(channels)`).all() as Array<Record<string, unknown>>;
+    const hasWorkspacePath = columns.some((column) => String(column.name) === "workspace_path");
+    if (!hasWorkspacePath) {
+      this.db.exec(`ALTER TABLE channels ADD COLUMN workspace_path TEXT`);
+    }
+
+    const legacyRoot = path.join(path.dirname(this.dbPath), "channel-workspaces");
+    const rows = this.db.prepare(`SELECT id, workspace_path FROM channels`).all() as Array<Record<string, unknown>>;
+    const updateStmt = this.db.prepare(`UPDATE channels SET workspace_path = ? WHERE id = ?`);
+    for (const row of rows) {
+      const currentPath = typeof row.workspace_path === "string" ? row.workspace_path.trim() : "";
+      if (currentPath) {
+        continue;
+      }
+      const channelId = String(row.id);
+      updateStmt.run(path.join(legacyRoot, channelId), channelId);
+    }
+  }
+
   private ensureChannelIndexes(): void {
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_channels_created_at ON channels(created_at);
       CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_active_name_unique
         ON channels(name COLLATE NOCASE)
+        WHERE archived_at IS NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_active_workspace_path_unique
+        ON channels(workspace_path)
         WHERE archived_at IS NULL;
       CREATE INDEX IF NOT EXISTS idx_channel_members_channel_id ON channel_members(channel_id);
       CREATE INDEX IF NOT EXISTS idx_channel_members_agent_id ON channel_members(agent_id);
