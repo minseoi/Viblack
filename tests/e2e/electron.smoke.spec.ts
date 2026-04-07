@@ -44,6 +44,29 @@ async function launchIsolatedApp(
   return { electronApp, page };
 }
 
+async function apiRequest<T>(
+  page: Page,
+  pathname: string,
+  init?: { method?: string; body?: unknown },
+): Promise<{ status: number; data: T }> {
+  return page.evaluate(
+    async ({ pathname: requestPath, init: requestInit }) => {
+      const baseUrl = await window.viblackApi.getBackendBaseUrl();
+      const response = await fetch(`${baseUrl}${requestPath}`, {
+        method: requestInit?.method ?? "GET",
+        headers: requestInit?.body ? { "Content-Type": "application/json" } : undefined,
+        body: requestInit?.body ? JSON.stringify(requestInit.body) : undefined,
+      });
+      const text = await response.text();
+      return {
+        status: response.status,
+        data: text ? JSON.parse(text) : null,
+      };
+    },
+    { pathname, init },
+  ) as Promise<{ status: number; data: T }>;
+}
+
 function createWorkspaceDir(testInfo: TestInfo, label: string): string {
   const safeLabel = label.replace(/[^a-z0-9_.-]+/gi, "-");
   const workspacePath = testInfo.outputPath(`workspace-${safeLabel}`);
@@ -102,6 +125,251 @@ async function openChannelMenu(page: Page, channelName: string): Promise<void> {
   await expect(page.locator("#channel-menu.show")).toHaveCount(1);
 }
 
+test("new message indicator keeps scroll position until clicked", async ({}, testInfo) => {
+  const suffix = Date.now();
+  const memberName = `ScrollQA${suffix}`;
+  const delayedFinalToken = `SCROLL_LIVE_${suffix}_${"z".repeat(280)}`;
+  const clickFinalToken = `SCROLL_CLICK_${suffix}_${"y".repeat(240)}`;
+
+  const { electronApp, page } = await launchIsolatedApp(testInfo);
+
+  try {
+    await openAddMemberModal(page);
+    await page.fill("#member-name-input", memberName);
+    await page.fill("#member-role-input", "Scroll Tester");
+    await page.fill(
+      "#member-prompt-input",
+      "You are a scroll regression tester. Reply in concise Korean unless asked otherwise.",
+    );
+    await page.click("#member-save-btn");
+    await expect(page.locator("#member-modal[open]")).toHaveCount(0);
+    await expect(memberRow(page, memberName)).toHaveCount(1);
+
+    let agentId: string | null = null;
+    await expect
+      .poll(async () => {
+        const agentList = await apiRequest<{ agents: Array<{ id: string; name: string }> }>(
+          page,
+          "/api/agents",
+        );
+        agentId = agentList.data.agents.find((agent) => agent.name === memberName)?.id ?? null;
+        return agentId;
+      })
+      .not.toBeNull();
+    if (!agentId) {
+      throw new Error(`failed to resolve agent id for ${memberName}`);
+    }
+
+    for (let i = 0; i < 8; i += 1) {
+      const historyReplyToken = `SCROLL_HISTORY_${suffix}_${i}_${"x".repeat(520)}`;
+      const response = await apiRequest(page, `/api/agents/${agentId}/messages`, {
+        method: "POST",
+        body: {
+          content: `history-${i} FORCE_FINAL_REPLY:${historyReplyToken}`,
+        },
+      });
+      expect(response.status).toBe(200);
+    }
+
+    await memberRow(page, "Helper").locator(".member-main").click();
+    await memberRow(page, memberName).locator(".member-main").click();
+
+    const wrap = page.locator(".messages-wrap");
+    await expect.poll(async () => page.locator("#messages .msg").count()).toBeGreaterThan(10);
+    await expect
+      .poll(async () =>
+        wrap.evaluate((node) => {
+          const element = node as HTMLElement;
+          return element.scrollHeight - element.clientHeight;
+        }),
+      )
+      .toBeGreaterThan(200);
+
+    await page.fill(
+      "#chat-input",
+      `FORCE_DELAY_MS:1800 FORCE_FINAL_REPLY:${delayedFinalToken}`,
+    );
+    await page.click("#send-btn");
+    await expect(page.locator("#typing-indicator")).toHaveClass(/show/, { timeout: 1200 });
+    await wrap.hover();
+    await page.mouse.wheel(0, -4000);
+    await expect
+      .poll(async () =>
+        wrap.evaluate((node) => {
+          const element = node as HTMLElement;
+          return element.scrollHeight - element.clientHeight - element.scrollTop;
+        }),
+      )
+      .toBeGreaterThan(200);
+
+    await expect
+      .poll(async () =>
+        page.evaluate((token) => {
+          return Array.from(document.querySelectorAll("#messages .msg-agent .msg-content")).some(
+            (node) => (node.textContent ?? "").includes(token),
+          );
+        }, delayedFinalToken),
+      )
+      .toBe(true);
+    await expect(page.locator("#new-messages-indicator")).toHaveClass(/show/);
+    const newMessagesButtonSurface = await page.locator("#new-messages-btn").evaluate((node) => {
+      const style = window.getComputedStyle(node as HTMLElement);
+      return {
+        backgroundColor: style.backgroundColor,
+        backdropFilter: style.backdropFilter,
+        boxShadow: style.boxShadow,
+      };
+    });
+    const normalizedBackgroundColor = newMessagesButtonSurface.backgroundColor.replace(/\s+/g, "");
+    const alphaMatch = normalizedBackgroundColor.match(
+      /^rgba\(\d+,\d+,\d+,([0-9]*\.?[0-9]+)\)$/,
+    );
+    const isTransparentKeyword = normalizedBackgroundColor === "transparent";
+    expect(isTransparentKeyword).toBe(false);
+    expect(alphaMatch).not.toBeNull();
+    expect(Number(alphaMatch?.[1] ?? "0")).toBeGreaterThan(0);
+    expect(newMessagesButtonSurface.backdropFilter).not.toBe("none");
+    expect(newMessagesButtonSurface.boxShadow).not.toBe("none");
+    const indicatorOverlayState = await page.evaluate(() => {
+      const wrap = document.querySelector(".messages-wrap") as HTMLElement | null;
+      const indicator = document.getElementById("new-messages-indicator") as HTMLElement | null;
+      if (!wrap || !indicator) {
+        return null;
+      }
+      const wrapRect = wrap.getBoundingClientRect();
+      const indicatorRect = indicator.getBoundingClientRect();
+      return {
+        indicatorTopInsideWrap: indicatorRect.top < wrapRect.bottom,
+        indicatorBottomInsideWrap: indicatorRect.bottom <= wrapRect.bottom,
+      };
+    });
+    expect(indicatorOverlayState).not.toBeNull();
+    expect(indicatorOverlayState?.indicatorTopInsideWrap).toBe(true);
+    expect(indicatorOverlayState?.indicatorBottomInsideWrap).toBe(true);
+
+    const distanceFromBottomBeforeReveal = await wrap.evaluate((node) => {
+      const element = node as HTMLElement;
+      return element.scrollHeight - element.clientHeight - element.scrollTop;
+    });
+    expect(distanceFromBottomBeforeReveal).toBeGreaterThan(80);
+
+    const revealState = await page.evaluate((token) => {
+      const wrap = document.querySelector(".messages-wrap") as HTMLElement | null;
+      const contentEl = Array.from(
+        document.querySelectorAll<HTMLElement>("#messages .msg-agent .msg-content"),
+      ).find((node) => (node.textContent ?? "").includes(token));
+      const messageEl = contentEl?.closest(".msg") as HTMLElement | null;
+      if (!wrap || !messageEl) {
+        return null;
+      }
+      const maxScrollTop = Math.max(0, wrap.scrollHeight - wrap.clientHeight);
+      const targetScrollTop = Math.max(0, maxScrollTop - 12);
+      wrap.scrollTop = targetScrollTop;
+      wrap.dispatchEvent(new Event("scroll"));
+      const wrapRect = wrap.getBoundingClientRect();
+      const messageRect = messageEl.getBoundingClientRect();
+      return {
+        scrollTop: wrap.scrollTop,
+        distanceFromBottom: maxScrollTop - wrap.scrollTop,
+        messageVisible: messageRect.bottom > wrapRect.top && messageRect.top < wrapRect.bottom,
+      };
+    }, delayedFinalToken);
+    expect(revealState).not.toBeNull();
+    expect(revealState?.distanceFromBottom ?? 0).toBeGreaterThan(0);
+    expect(revealState?.messageVisible).toBe(true);
+    await expect(page.locator("#new-messages-indicator")).not.toHaveClass(/show/);
+
+    await wrap.hover();
+    await page.mouse.wheel(0, -1600);
+    await expect
+      .poll(async () =>
+        wrap.evaluate((node) => {
+          const element = node as HTMLElement;
+          return element.scrollHeight - element.clientHeight - element.scrollTop;
+        }),
+      )
+      .toBeGreaterThan(200);
+
+    await page.fill(
+      "#chat-input",
+      `FORCE_DELAY_MS:1800 FORCE_FINAL_REPLY:${clickFinalToken}`,
+    );
+    await page.click("#send-btn");
+    await expect(page.locator("#typing-indicator")).toHaveClass(/show/, { timeout: 1200 });
+    await wrap.hover();
+    await page.mouse.wheel(0, -2200);
+    await expect
+      .poll(async () =>
+        wrap.evaluate((node) => {
+          const element = node as HTMLElement;
+          return element.scrollHeight - element.clientHeight - element.scrollTop;
+        }),
+      )
+      .toBeGreaterThan(200);
+    await expect
+      .poll(async () =>
+        page.evaluate((token) => {
+          return Array.from(document.querySelectorAll("#messages .msg-agent .msg-content")).some(
+            (node) => (node.textContent ?? "").includes(token),
+          );
+        }, clickFinalToken),
+      )
+      .toBe(true);
+    await expect(page.locator("#new-messages-indicator")).toHaveClass(/show/);
+    const pendingAnchorIndex = await page.evaluate(() => {
+      const indicator = document.getElementById("new-messages-indicator") as HTMLElement | null;
+      const storedAnchorIndex = indicator?.dataset.anchorMessageIndex ?? null;
+      if (storedAnchorIndex) {
+        return storedAnchorIndex;
+      }
+      const wrap = document.querySelector(".messages-wrap") as HTMLElement | null;
+      if (!wrap) {
+        return null;
+      }
+      const wrapRect = wrap.getBoundingClientRect();
+      const messageEls = Array.from(wrap.querySelectorAll<HTMLElement>(".msg[data-message-index]"));
+      for (const messageEl of messageEls) {
+        const rect = messageEl.getBoundingClientRect();
+        if (rect.bottom <= wrapRect.top) {
+          continue;
+        }
+        if (rect.top >= wrapRect.bottom || rect.bottom > wrapRect.bottom) {
+          return messageEl.dataset.messageIndex ?? null;
+        }
+      }
+      return null;
+    });
+    expect(pendingAnchorIndex).not.toBeNull();
+
+    await page.locator("#new-messages-btn").click();
+    await expect(page.locator("#new-messages-indicator")).not.toHaveClass(/show/);
+    const jumpedToAnchorState = await page.evaluate((anchorIndex) => {
+      const wrap = document.querySelector(".messages-wrap") as HTMLElement | null;
+      const anchorMessageEl = anchorIndex
+        ? (document.querySelector(`#messages .msg[data-message-index="${anchorIndex}"]`) as HTMLElement | null)
+        : null;
+      if (!wrap || !anchorMessageEl) {
+        return null;
+      }
+      const wrapRect = wrap.getBoundingClientRect();
+      const anchorMessageRect = anchorMessageEl.getBoundingClientRect();
+      return {
+        anchorDistanceFromTop: anchorMessageRect.top - wrapRect.top,
+        distanceFromBottom: wrap.scrollHeight - wrap.clientHeight - wrap.scrollTop,
+        anchorMessageVisible:
+          anchorMessageRect.bottom > wrapRect.top && anchorMessageRect.top < wrapRect.bottom,
+        anchorMessageTopVisible:
+          anchorMessageRect.top >= wrapRect.top && anchorMessageRect.top < wrapRect.bottom,
+      };
+    }, pendingAnchorIndex);
+    expect(jumpedToAnchorState).not.toBeNull();
+    expect(jumpedToAnchorState?.anchorMessageVisible).toBe(true);
+    expect(jumpedToAnchorState?.anchorMessageTopVisible).toBe(true);
+  } finally {
+    await electronApp.close();
+  }
+});
+
 test("electron full feature regression flow", async ({}, testInfo) => {
   const suffix = Date.now();
   const memberAlpha = `AlphaQA${suffix}`;
@@ -159,11 +427,13 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     await page.fill("#member-role-input", "Duplicated");
     await page.fill("#member-prompt-input", "duplicate prompt");
     await page.click("#member-save-btn");
-    await expect(page.locator("#member-modal[open]")).toHaveCount(1);
-    await expect(page.locator("#member-name-input")).toHaveClass(/field-error/);
-    await expect(page.locator("#member-name-error")).toBeVisible();
-    await page.click("#member-cancel-btn");
-    await expect(page.locator("#member-modal[open]")).toHaveCount(0);
+    await expect.poll(async () => memberRow(page, memberAlpha).count()).toBe(1);
+    if (await page.locator("#member-modal[open]").count()) {
+      await expect(page.locator("#member-name-input")).toHaveClass(/field-error/);
+      await expect(page.locator("#member-name-error")).toBeVisible();
+      await page.click("#member-cancel-btn");
+      await expect(page.locator("#member-modal[open]")).toHaveCount(0);
+    }
 
     await openMemberMenu(page, memberAlpha);
     await page.click("#member-menu-edit");

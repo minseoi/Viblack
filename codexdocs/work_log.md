@@ -1221,3 +1221,121 @@
   - `npm run build` 통과
   - `npm run verify` 통과
   - 결과: Playwright 16 passed, real-codex 계열 2 skipped, 전체 소요 43.2s
+
+### 118) 메시지 자동 하단 스크롤 UX 개선 착수
+- 사용자 요청:
+  - 새 메시지가 생길 때마다 메시지 영역이 무조건 맨 아래로 내려가는 동작을 멈추고 싶음.
+  - 사용자가 위쪽 메시지를 읽는 동안에는 현재 스크롤 위치를 유지하고, 새 메시지 도착 알림을 보여준 뒤 클릭 시에만 맨 아래로 이동하게 하고 싶음.
+- 조사:
+  - `src/renderer/renderer.ts`의 `renderMessages()`가 렌더링마다 `.messages-wrap.scrollTop = scrollHeight`를 강제로 적용하고 있었음.
+  - DM 폴링 갱신과 채널 SSE delta 갱신 모두 최종적으로 같은 `renderMessages()`를 타므로, 스크롤 강제 이동이 DM/채널 공통 증상으로 재현되는 구조였음.
+- 진행 업데이트:
+  - 메시지 영역 하단에 `새 메시지 보기` 배지를 추가하고, 새 메시지가 온 동안 사용자가 아래쪽에 붙어 있지 않으면 배지만 노출하도록 변경.
+  - 렌더러가 `현재 컨텍스트`, 하단 근접 여부, 마지막 비사용자 메시지 시그니처를 함께 추적해 새 agent/system 메시지 도착 시에만 배지를 띄우도록 정리.
+  - 사용자가 직접 아래에서 벗어난 상태(`detached from bottom`)를 별도로 추적해, 중간 폴링/SSE 렌더가 와도 자동 하단 스크롤을 다시 켜지 않도록 보강.
+  - 응답 완료 후 입력창 자동 포커스는 사용자가 위쪽 메시지를 읽는 중일 때는 생략하도록 조정해, 완료 시점에 스크롤이 다시 하단으로 끌려가지 않게 함.
+  - 초기 구현에서는 배지를 `.messages-wrap` 안에 절대 배치했는데, 실제 사용 시 스크롤 영역 안으로 묻혀 보이지 않을 여지가 있어 입력창 바로 위 형제 레이어로 이동시킴.
+  - `electron.smoke.spec.ts`에 긴 DM 히스토리 + 지연 응답 시나리오를 추가해 `스크롤 유지 -> 새 메시지 배지 노출 -> 클릭 후 하단 이동` 회귀를 검증.
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npm run verify` 통과
+  - 결과: Playwright 17 passed, real-codex 계열 2 skipped
+
+### 119) 새 메시지 보기 배지 배경 투명도 조정 착수
+- 사용자 요청:
+  - `새 메시지 보기` 버튼 배경이 너무 불투명해 보여서 주변 메시지 레이어와 동떨어져 보임.
+- 진행 업데이트:
+  - `new-messages-btn` 배경 alpha를 낮추고 hover 배경도 반투명 계열로 맞춤.
+  - `backdrop-filter`를 추가해 배지가 메시지 위에 얹힌 보조 레이어처럼 보이도록 조정.
+  - 기존 scroll-indicator smoke에 computed background color alpha와 `backdrop-filter` 단정을 추가해 완전 불투명 회귀를 막음.
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npm run verify` 통과
+  - 결과: Playwright 17 passed, real-codex 계열 2 skipped
+
+### 120) 새 메시지 배지 숨김 조건 조정 착수
+- 사용자 요청:
+  - `새 메시지 보기` 버튼 배경을 더 투명하게 만들고 싶음.
+  - 새 메시지가 viewport에 보이기 시작하면 바로 버튼이 사라져야 하는데, 현재는 스크롤을 거의 맨 아래까지 내려야만 사라짐.
+- 진행 업데이트:
+  - `new-messages-btn` 배경 alpha를 더 낮춘 반투명 ghost chip 스타일로 조정하고, hover도 완전 불투명해지지 않도록 맞춤.
+  - 렌더러에 `pendingNewMessageAnchorId`를 추가해 배지 표시 시 "이번에 새로 들어온 첫 메시지"를 anchor로 저장.
+  - scroll sync는 `near bottom`만 보지 않고, 해당 anchor 메시지 element가 viewport에 보이는 순간 배지를 숨기도록 변경.
+  - smoke는 1차 지연 응답에서 "맨 아래까지 내리지 않아도 anchor 메시지가 보이면 배지가 사라지는지"를 검증하고, 2차 지연 응답에서 버튼 클릭으로 맨 아래 이동하는 기존 흐름도 유지하도록 확장.
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npm run verify` 통과
+  - 결과: Playwright 17 passed, real-codex 계열 2 skipped
+
+### 121) 새 메시지 배지 배경 완전 투명화 착수
+- 사용자 요청:
+  - `새 메시지 보기` 버튼은 반투명이 아니라 아예 투명한 배경이어야 함.
+- 진행 업데이트:
+  - 버튼 기본 배경과 hover 배경을 모두 `transparent`로 바꾸고, border/blur만 남겨 실제 배경 면은 완전히 제거.
+  - smoke의 computed background 검증을 `transparent` 또는 alpha `0`만 통과하도록 강화.
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npm run verify` 통과
+  - 결과: Playwright 17 passed, real-codex 계열 2 skipped
+
+### 122) 새 메시지 배지 잔여 불투명 효과 제거 착수
+- 사용자 요청:
+  - 배경이 여전히 불투명해 보이므로 상위 레이아웃까지 확인해서 완전히 투명하게 만들어야 함.
+- 조사:
+  - 배지는 `.messages-wrap`와 `.composer` 사이 형제 레이어였고, 부모 쪽 별도 배경은 없었음.
+  - 실제 불투명하게 보이던 원인은 버튼의 `box-shadow`와 `backdrop-filter`가 남아 있어 frosted chip처럼 렌더되던 점이었음.
+- 진행 업데이트:
+  - `new-messages-btn`의 shadow와 blur 효과를 모두 제거해 배경면 없이 border/text만 남기는 투명 버튼으로 정리.
+  - smoke에서 `backgroundColor` alpha `0`뿐 아니라 `backdropFilter === none`, `boxShadow === none`도 함께 확인하도록 보강.
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npm run verify` 통과
+  - 결과: Playwright 17 passed, real-codex 계열 2 skipped
+
+### 123) 새 메시지 배지 오버레이 레이아웃 전환 착수
+- 사용자 요청:
+  - 버튼이 있는 영역 뒤로 메시지가 보여야 하는데, 현재는 별도 공간을 차지해 뒤가 비어 보임.
+- 조사:
+  - `new-messages-indicator`가 `.messages-wrap` 밖, `.composer` 위의 일반 흐름 블록으로 배치되어 있었음.
+  - 그래서 배경이 투명해도 실제로는 메시지 위 오버레이가 아니라 레이아웃 중간 줄을 추가하는 구조였음.
+- 진행 업데이트:
+  - 메시지 영역과 배지를 `conversation-stage`로 묶고, 배지를 stage 내부의 absolute overlay로 옮겨 메시지 레이어 위에 겹치도록 변경.
+  - smoke에 배지 rect가 `.messages-wrap` 내부 하단에 놓이는지 확인하는 단정을 추가해 다시 별도 줄로 내려가는 회귀를 막음.
+  - 오버레이 구조와 무관한 smoke 플래키 포인트를 줄이기 위해 새 배지 테스트의 agent id 조회를 poll로 바꾸고, 멤버 중복 단계는 "중복 생성 방지" 중심으로 안정화.
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npm run verify` 통과
+  - 결과: Playwright 17 passed, real-codex 계열 2 skipped
+
+### 124) 새 메시지 배지 버튼 표면 효과 복구
+- 사용자 요청:
+  - 배지 위치는 맞고, 이번에 잘못 제거한 버튼의 배경과 그림자 효과는 복구해야 함.
+  - 이번 작업에서는 테스트 실행은 스킵.
+- 진행 업데이트:
+  - `new-messages-btn`의 반투명 배경, 그림자, blur 효과를 복구.
+  - 오버레이 배치 구조(`conversation-stage` 내부 absolute overlay)는 그대로 유지.
+- 검증:
+  - 사용자 요청에 따라 테스트 실행 스킵
+
+### 125) 새 메시지 배지 클릭 시 첫 새 메시지로 점프
+- 사용자 요청:
+  - `새 메시지 보기` 버튼을 눌렀을 때 맨 아래가 아니라 새 메시지들의 시작 지점으로 이동해야 함.
+- 조사:
+  - 렌더러는 이미 첫 새 메시지 anchor를 추적하고 있었지만, 클릭 핸들러는 이를 무시하고 항상 `scrollMessagesToBottom()`을 호출하고 있었음.
+  - detached 상태에서 렌더 후 예약된 scroll restore가 클릭 직후 이동을 덮어쓸 수 있었고, pending/stream 메시지는 persisted id가 없어 anchor 식별이 비는 경우도 있었음.
+- 진행 업데이트:
+  - 버튼 클릭 시 pending anchor 메시지의 시작 위치로 스크롤하고, anchor가 없을 때만 맨 아래 fallback 하도록 조정.
+  - 새 메시지 anchor는 `message id` 대신 현재 렌더 index도 함께 다뤄 pending/stream 메시지에서도 찾을 수 있게 보강.
+  - 클릭/사용자 스크롤 전에는 pending scroll-restore RAF를 취소해 수동 이동이 다시 덮이지 않게 정리.
+  - smoke는 버튼 클릭 후 "맨 아래 도달" 대신 "새 메시지 anchor의 시작 부분이 실제로 viewport 안에 보이는지"를 검증하도록 갱신.
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npm run verify` 통과
+  - 결과: Playwright 17 passed, real-codex 계열 2 skipped

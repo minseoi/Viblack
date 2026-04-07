@@ -73,6 +73,10 @@ interface AppSettingsResponse {
   debugMode: boolean;
 }
 
+interface RenderMessagesOptions {
+  forceScrollToBottom?: boolean;
+}
+
 let backendBaseUrl = "";
 let activeAgentId: string | null = null;
 let renderedMessages: ChatMessage[] = [];
@@ -99,8 +103,17 @@ let activeSettingsTab: SettingsTab = "model";
 const channelStore = new ChannelStore();
 let channelSyncController: ChannelSyncController | null = null;
 const DM_INFLIGHT_SYNC_INTERVAL_MS = 350;
+const MESSAGE_AUTO_SCROLL_THRESHOLD_PX = 40;
+const NEW_MESSAGE_SCROLL_REVEAL_OFFSET_PX = 12;
 const CHANNEL_ACTION_BLOCK_PATTERN =
   /(?:CHANNEL_ACTION_BEGIN\s*[\s\S]*?\s*CHANNEL_ACTION_END|\[CHANNEL_ACTION\]\s*[\s\S]*?\s*(?:\[\/CHANNEL_ACTION\]|\[\/CHANNEL_ACTION>|<\/CHANNEL_ACTION>))/g;
+let lastRenderedMessageContextKey = "none";
+let lastRenderedPersistedMessageCount = 0;
+let lastRenderedMaxPersistedMessageId = 0;
+let lastRenderedNonUserMessageSignature = "";
+let isMessagesDetachedFromBottom = false;
+let pendingNewMessageAnchorIndex: number | null = null;
+let pendingMessagesScrollRestoreFrameId: number | null = null;
 
 function escapeHtml(value: string): string {
   return value
@@ -352,6 +365,222 @@ function renderTypingIndicator(): void {
       : `${visibleNames.join(", ")} 작성 중`;
 }
 
+function getMessagesWrap(): HTMLElement | null {
+  return document.querySelector(".messages-wrap") as HTMLElement | null;
+}
+
+function getActiveMessageContextKey(): string {
+  const activeChannelId = channelStore.getActiveChannelId();
+  if (activeChannelId) {
+    return `channel:${activeChannelId}`;
+  }
+  if (activeAgentId) {
+    return `agent:${activeAgentId}`;
+  }
+  return "none";
+}
+
+function getMessagesDistanceFromBottom(element: HTMLElement): number {
+  return Math.max(0, element.scrollHeight - element.clientHeight - element.scrollTop);
+}
+
+function isMessagesWrapNearBottom(element: HTMLElement): boolean {
+  return getMessagesDistanceFromBottom(element) <= MESSAGE_AUTO_SCROLL_THRESHOLD_PX;
+}
+
+function setNewMessagesIndicatorVisible(visible: boolean): void {
+  const indicator = document.getElementById("new-messages-indicator");
+  if (!indicator) {
+    return;
+  }
+  indicator.classList.toggle("show", visible);
+  indicator.setAttribute("aria-hidden", String(!visible));
+}
+
+function setPendingNewMessageAnchor(messageIndex: number | null): void {
+  pendingNewMessageAnchorIndex = messageIndex;
+  const indicator = document.getElementById("new-messages-indicator");
+  if (!indicator) {
+    return;
+  }
+  if (messageIndex === null) {
+    delete indicator.dataset.anchorMessageIndex;
+    return;
+  }
+  indicator.dataset.anchorMessageIndex = String(messageIndex);
+}
+
+function clearNewMessagesIndicator(): void {
+  setPendingNewMessageAnchor(null);
+  setNewMessagesIndicatorVisible(false);
+}
+
+function cancelPendingMessagesScrollRestore(): void {
+  if (pendingMessagesScrollRestoreFrameId === null) {
+    return;
+  }
+  window.cancelAnimationFrame(pendingMessagesScrollRestoreFrameId);
+  pendingMessagesScrollRestoreFrameId = null;
+}
+
+function scrollMessagesToBottom(): void {
+  const wrap = getMessagesWrap();
+  if (!wrap) {
+    return;
+  }
+  cancelPendingMessagesScrollRestore();
+  wrap.scrollTop = wrap.scrollHeight;
+  isMessagesDetachedFromBottom = false;
+  clearNewMessagesIndicator();
+}
+
+function scrollToMessageStart(messageIndex: number): boolean {
+  const wrap = getMessagesWrap();
+  if (!wrap) {
+    return false;
+  }
+  const messageEl = wrap.querySelector<HTMLElement>(`.msg[data-message-index="${messageIndex}"]`);
+  if (!messageEl) {
+    return false;
+  }
+
+  cancelPendingMessagesScrollRestore();
+  const wrapRect = wrap.getBoundingClientRect();
+  const messageRect = messageEl.getBoundingClientRect();
+  const targetScrollTop = Math.max(
+    0,
+    wrap.scrollTop + (messageRect.top - wrapRect.top) - NEW_MESSAGE_SCROLL_REVEAL_OFFSET_PX,
+  );
+  wrap.scrollTop = targetScrollTop;
+  clearNewMessagesIndicator();
+  isMessagesDetachedFromBottom = !isMessagesWrapNearBottom(wrap);
+  return true;
+}
+
+function getFirstMessageIndexBelowViewport(): number | null {
+  const wrap = getMessagesWrap();
+  if (!wrap) {
+    return null;
+  }
+  const wrapRect = wrap.getBoundingClientRect();
+  const messageEls = Array.from(wrap.querySelectorAll<HTMLElement>(".msg[data-message-index]"));
+  for (const messageEl of messageEls) {
+    const rect = messageEl.getBoundingClientRect();
+    if (rect.bottom <= wrapRect.top) {
+      continue;
+    }
+    if (rect.top >= wrapRect.bottom || rect.bottom > wrapRect.bottom) {
+      const parsedIndex = Number(messageEl.dataset.messageIndex ?? "");
+      if (Number.isFinite(parsedIndex)) {
+        return parsedIndex;
+      }
+    }
+  }
+  return null;
+}
+
+function scrollToNewMessagesAnchorOrBottom(): void {
+  const anchorIndex = pendingNewMessageAnchorIndex ?? getFirstMessageIndexBelowViewport();
+  if (anchorIndex !== null && scrollToMessageStart(anchorIndex)) {
+    return;
+  }
+  scrollMessagesToBottom();
+}
+
+function isMessageVisibleInsideWrap(messageIndex: number): boolean {
+  const wrap = getMessagesWrap();
+  if (!wrap) {
+    return false;
+  }
+
+  const messageEl = wrap.querySelector<HTMLElement>(`.msg[data-message-index="${messageIndex}"]`);
+  if (!messageEl) {
+    return false;
+  }
+
+  const wrapRect = wrap.getBoundingClientRect();
+  const messageRect = messageEl.getBoundingClientRect();
+  return messageRect.bottom > wrapRect.top && messageRect.top < wrapRect.bottom;
+}
+
+function syncNewMessagesIndicatorForScrollPosition(): void {
+  const wrap = getMessagesWrap();
+  if (!wrap) {
+    return;
+  }
+  if (
+    pendingNewMessageAnchorIndex !== null &&
+    isMessageVisibleInsideWrap(pendingNewMessageAnchorIndex)
+  ) {
+    clearNewMessagesIndicator();
+    isMessagesDetachedFromBottom = !isMessagesWrapNearBottom(wrap);
+    return;
+  }
+  if (isMessagesWrapNearBottom(wrap)) {
+    isMessagesDetachedFromBottom = false;
+    clearNewMessagesIndicator();
+    return;
+  }
+  isMessagesDetachedFromBottom = true;
+}
+
+function getPersistedMessageStats(messages: ChatMessage[]): { count: number; maxId: number } {
+  let count = 0;
+  let maxId = 0;
+  for (const message of messages) {
+    if (message.id <= 0) {
+      continue;
+    }
+    count += 1;
+    maxId = Math.max(maxId, message.id);
+  }
+  return { count, maxId };
+}
+
+function getLatestNonUserMessageSignature(messages: ChatMessage[]): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.sender === "user" || message.id <= 0) {
+      continue;
+    }
+    return `${message.id}:${message.sender}:${message.createdAt}:${message.content}`;
+  }
+  return "";
+}
+
+function getFirstNewPersistedMessageIndex(
+  messages: ChatMessage[],
+  previousMaxMessageId: number,
+): number | null {
+  let earliestNewIndex: number | null = null;
+  for (const [index, message] of messages.entries()) {
+    if (message.id <= previousMaxMessageId || message.id <= 0) {
+      continue;
+    }
+    if (earliestNewIndex === null) {
+      earliestNewIndex = index;
+    }
+  }
+  return earliestNewIndex;
+}
+
+function getLatestNonUserMessageIndex(messages: ChatMessage[]): number | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.sender === "user" || message.id <= 0) {
+      if (message.sender === "user") {
+        continue;
+      }
+      if (message.id <= 0) {
+        return index;
+      }
+      continue;
+    }
+    return index;
+  }
+  return null;
+}
+
 function highlightInlineMentions(text: string): string {
   return text
     .replace(
@@ -513,7 +742,7 @@ function getRenderableMessageText(message: ChatMessage): string {
 
 function focusInput(): void {
   const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
-  if (!input) {
+  if (!input || isMessagesDetachedFromBottom) {
     return;
   }
   setTimeout(() => {
@@ -977,12 +1206,36 @@ function renderChannelList(): void {
   }
 }
 
-function renderMessages(messages: ChatMessage[], agentName = "Agent"): void {
+function renderMessages(
+  messages: ChatMessage[],
+  agentName = "Agent",
+  options: RenderMessagesOptions = {},
+): void {
   const list = document.getElementById("messages");
-  const wrap = document.querySelector(".messages-wrap") as HTMLElement | null;
+  const wrap = getMessagesWrap();
   if (!list) {
     return;
   }
+
+  const nextContextKey = getActiveMessageContextKey();
+  const sameContext = nextContextKey === lastRenderedMessageContextKey;
+  const previousScrollTop = wrap ? wrap.scrollTop : 0;
+  const wasNearBottom = !wrap || isMessagesWrapNearBottom(wrap);
+  const nextPersistedStats = getPersistedMessageStats(messages);
+  const nextNonUserMessageSignature = getLatestNonUserMessageSignature(messages);
+  const firstNewPersistedMessageIndex = getFirstNewPersistedMessageIndex(
+    messages,
+    lastRenderedMaxPersistedMessageId,
+  );
+  const latestNonUserMessageIndex = getLatestNonUserMessageIndex(messages);
+  const hasNewPersistedMessages =
+    sameContext &&
+    (nextPersistedStats.maxId > lastRenderedMaxPersistedMessageId ||
+      nextPersistedStats.count > lastRenderedPersistedMessageCount);
+  const hasNewRemoteMessage =
+    sameContext &&
+    nextNonUserMessageSignature.length > 0 &&
+    nextNonUserMessageSignature !== lastRenderedNonUserMessageSignature;
 
   list.innerHTML = "";
   if (messages.length === 0) {
@@ -992,9 +1245,11 @@ function renderMessages(messages: ChatMessage[], agentName = "Agent"): void {
     list.appendChild(empty);
   }
 
-  for (const message of messages) {
+  for (const [index, message] of messages.entries()) {
     const item = document.createElement("li");
     item.className = `msg msg-${message.sender}`;
+    item.dataset.messageId = String(message.id);
+    item.dataset.messageIndex = String(index);
     if (message.messageKind && message.messageKind !== "general") {
       item.classList.add(message.messageKind);
     }
@@ -1038,9 +1293,56 @@ function renderMessages(messages: ChatMessage[], agentName = "Agent"): void {
   }
 
   if (wrap) {
-    wrap.scrollTop = wrap.scrollHeight;
+    cancelPendingMessagesScrollRestore();
+    const shouldScrollToBottom =
+      options.forceScrollToBottom ||
+      !sameContext ||
+      (!isMessagesDetachedFromBottom && wasNearBottom);
+    if (shouldScrollToBottom) {
+      scrollMessagesToBottom();
+    } else {
+      wrap.scrollTop = previousScrollTop;
+      pendingMessagesScrollRestoreFrameId = window.requestAnimationFrame(() => {
+        pendingMessagesScrollRestoreFrameId = null;
+        if (!isMessagesDetachedFromBottom || getActiveMessageContextKey() !== nextContextKey) {
+          return;
+        }
+        wrap.scrollTop = previousScrollTop;
+      });
+    }
   }
+
+  if (!sameContext || messages.length === 0) {
+    if (!sameContext) {
+      isMessagesDetachedFromBottom = false;
+    }
+    clearNewMessagesIndicator();
+  } else if (
+    (hasNewPersistedMessages || hasNewRemoteMessage) &&
+    !(options.forceScrollToBottom || wasNearBottom)
+  ) {
+    setPendingNewMessageAnchor(firstNewPersistedMessageIndex ?? latestNonUserMessageIndex);
+    setNewMessagesIndicatorVisible(true);
+  }
+
   renderedMessages = messages;
+  lastRenderedMessageContextKey = nextContextKey;
+  lastRenderedPersistedMessageCount = nextPersistedStats.count;
+  lastRenderedMaxPersistedMessageId = nextPersistedStats.maxId;
+  lastRenderedNonUserMessageSignature = nextNonUserMessageSignature;
+  syncNewMessagesIndicatorForScrollPosition();
+}
+
+function initMessagesViewportUi(): void {
+  const wrap = getMessagesWrap();
+  const newMessagesBtn = document.getElementById("new-messages-btn") as HTMLButtonElement | null;
+  wrap?.addEventListener("scroll", () => {
+    cancelPendingMessagesScrollRestore();
+    syncNewMessagesIndicatorForScrollPosition();
+  }, { passive: true });
+  newMessagesBtn?.addEventListener("click", () => {
+    scrollToNewMessagesAnchorOrBottom();
+  });
 }
 
 function closeMemberMenu(): void {
@@ -2629,7 +2931,9 @@ async function sendMessage(): Promise<void> {
     setStatus("Channel is working...");
 
     const optimisticUser = createPendingChannelUserMessage(channelId, content);
-    renderMessages([...renderedMessages, optimisticUser]);
+    renderMessages([...renderedMessages, optimisticUser], "Agent", {
+      forceScrollToBottom: true,
+    });
 
     try {
       await fetchJson(`${backendBaseUrl}/api/channels/${channelId}/messages`, {
@@ -2679,7 +2983,9 @@ async function sendMessage(): Promise<void> {
     createdAt: nowIso,
     messageKind: "general",
   };
-  renderMessages([...renderedMessages, optimisticUser]);
+  renderMessages([...renderedMessages, optimisticUser], activeAgent?.name ?? "Agent", {
+    forceScrollToBottom: true,
+  });
 
   const dmInflightSyncTimer = window.setInterval(() => {
     void refreshMessagesByAgent(targetAgentId, { preserveWorkingStatus: true }).catch(() => {
@@ -2720,6 +3026,7 @@ async function sendMessage(): Promise<void> {
 }
 
 window.addEventListener("DOMContentLoaded", () => {
+  initMessagesViewportUi();
   initSidebarSections();
   initMemberCrudUi();
   window.addEventListener("beforeunload", () => {
