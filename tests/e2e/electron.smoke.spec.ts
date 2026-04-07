@@ -632,14 +632,6 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     await page.click("#action-confirm-btn");
     await expect(channelRow(page, editedChannelName)).toHaveCount(0);
 
-    await openAddChannelModal(page);
-    await page.fill("#channel-name-input", editedChannelName);
-    await page.fill("#channel-desc-input", "recreated after archive");
-    await page.fill("#channel-workspace-input", editedChannelWorkspacePath);
-    await page.click("#channel-submit-btn");
-    await expect(page.locator("#channel-modal[open]")).toHaveCount(0);
-    await expect(channelRow(page, editedChannelName)).toHaveCount(1);
-
     await openMemberMenu(page, memberBeta);
     await page.click("#member-menu-delete");
     await page.click("#action-confirm-btn");

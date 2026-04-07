@@ -1,13 +1,13 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { expect, type TestInfo } from "@playwright/test";
 import {
-  _electron as electron,
-  expect,
-  type ElectronApplication,
-  type Page,
-  type TestInfo,
-} from "@playwright/test";
+  apiRequest,
+  launchBackendHarness,
+  resolveFakeCodexPath,
+  type BackendHarness,
+} from "./backend-harness";
 
 export interface DelegationScenarioAgent {
   id: string;
@@ -117,64 +117,25 @@ export interface DelegationEvaluationReport {
 }
 
 function resolveCodexPath(kind: "real" | "fake"): string {
-  if (kind === "real") {
-    return "codex";
-  }
-  if (process.platform === "win32") {
-    return path.resolve(__dirname, "..", "fixtures", "fake-codex.cmd");
-  }
-  const unixPath = path.resolve(__dirname, "..", "fixtures", "fake-codex");
-  try {
-    fs.chmodSync(unixPath, 0o755);
-  } catch {
-    // Best-effort only.
-  }
-  return unixPath;
+  return kind === "real" ? "codex" : resolveFakeCodexPath();
 }
 
-export async function launchDelegationEvalApp(
+export async function launchDelegationEvalServer(
   testInfo: TestInfo,
   options: {
     codexKind: "real" | "fake";
     dbFileName: string;
     extraEnv?: Record<string, string | undefined>;
   },
-): Promise<{ electronApp: ElectronApplication; page: Page; backendBaseUrl: string }> {
-  const dbPath = testInfo.outputPath(options.dbFileName);
-  const electronApp = await electron.launch({
-    args: ["."],
+): Promise<BackendHarness> {
+  return launchBackendHarness(testInfo, {
+    dbFileName: options.dbFileName,
+    workspaceDirName: `${options.dbFileName}.workspace`,
     env: {
-      ...process.env,
       ...options.extraEnv,
-      VIBLACK_DB_PATH: dbPath,
       VIBLACK_CODEX_PATH: resolveCodexPath(options.codexKind),
-      VIBLACK_KEEP_ALIVE_WITHOUT_WINDOW: "1",
     },
   });
-
-  const page = await electronApp.firstWindow();
-  await page.waitForLoadState("domcontentloaded");
-  await expect(page).toHaveTitle("Viblack");
-  await expect(page.locator("#member-list .member-item").first()).toBeVisible();
-  const backendBaseUrl = await page.evaluate(async () => window.viblackApi.getBackendBaseUrl());
-  return { electronApp, page, backendBaseUrl };
-}
-
-export async function apiRequest<T>(
-  backendBaseUrl: string,
-  pathname: string,
-  init?: { method?: string; body?: unknown },
-): Promise<{ status: number; data: T }> {
-  const response = await fetch(`${backendBaseUrl}${pathname}`, {
-    method: init?.method ?? "GET",
-    headers: init?.body ? { "Content-Type": "application/json" } : undefined,
-    body: init?.body ? JSON.stringify(init.body) : undefined,
-  });
-  const text = await response.text();
-  return {
-    status: response.status,
-    data: text ? (JSON.parse(text) as T) : (null as T),
-  };
 }
 
 function createWorkspaceDir(label: string): string {

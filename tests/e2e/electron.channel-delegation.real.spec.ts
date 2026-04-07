@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import {
   collectDelegationReport,
   createDelegationScenario,
-  launchDelegationEvalApp,
+  launchDelegationEvalServer,
   runDelegationScenario,
   waitForChannelToSettle,
   writeDelegationArtifacts,
@@ -17,7 +17,7 @@ test("real codex channel delegation evaluation", async ({}, testInfo) => {
   const timeoutRaw = process.env.VIBLACK_E2E_REAL_CODEX_TIMEOUT_MS?.trim();
   const settleTimeoutMs = timeoutRaw ? Number.parseInt(timeoutRaw, 10) : 6 * 60 * 1000;
 
-  const { electronApp, backendBaseUrl } = await launchDelegationEvalApp(testInfo, {
+  const server = await launchDelegationEvalServer(testInfo, {
     codexKind: "real",
     dbFileName: "viblack.channel-delegation.real.sqlite",
     extraEnv: {
@@ -26,16 +26,16 @@ test("real codex channel delegation evaluation", async ({}, testInfo) => {
   });
 
   try {
-    const scenario = await createDelegationScenario(backendBaseUrl);
-    await runDelegationScenario(backendBaseUrl, scenario);
-    await waitForChannelToSettle(backendBaseUrl, scenario.channelId, {
+    const scenario = await createDelegationScenario(server.backendBaseUrl);
+    await runDelegationScenario(server.backendBaseUrl, scenario);
+    await waitForChannelToSettle(server.backendBaseUrl, scenario.channelId, {
       timeoutMs: Number.isFinite(settleTimeoutMs) ? settleTimeoutMs : 6 * 60 * 1000,
       quietMs: 6_000,
       pollMs: 1_000,
       maxRunningMs: 150_000,
     });
 
-    const report = await collectDelegationReport(backendBaseUrl, scenario);
+    const report = await collectDelegationReport(server.backendBaseUrl, scenario);
     writeDelegationArtifacts(testInfo, report, "channel-delegation-real-report");
     testInfo.annotations.push({ type: "delegation-score", description: `${report.score}/${report.maxScore}` });
     testInfo.annotations.push({ type: "delegation-summary", description: report.summary });
@@ -44,6 +44,6 @@ test("real codex channel delegation evaluation", async ({}, testInfo) => {
       expect(report.score).toBeGreaterThanOrEqual(minScore);
     }
   } finally {
-    await electronApp.close();
+    await server.close();
   }
 });

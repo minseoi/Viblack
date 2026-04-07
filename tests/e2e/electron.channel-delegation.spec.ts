@@ -2,14 +2,14 @@ import { expect, test } from "@playwright/test";
 import {
   collectDelegationReport,
   createDelegationScenario,
-  launchDelegationEvalApp,
+  launchDelegationEvalServer,
   runDelegationScenario,
   waitForChannelToSettle,
   writeDelegationArtifacts,
 } from "./support/channel-delegation-eval";
 
 test("channel delegation flow completes in coordinator -> researcher -> writer -> coordinator order", async ({}, testInfo) => {
-  const { electronApp, backendBaseUrl } = await launchDelegationEvalApp(testInfo, {
+  const server = await launchDelegationEvalServer(testInfo, {
     codexKind: "fake",
     dbFileName: "viblack.channel-delegation.e2e.sqlite",
     extraEnv: {
@@ -18,15 +18,15 @@ test("channel delegation flow completes in coordinator -> researcher -> writer -
   });
 
   try {
-    const scenario = await createDelegationScenario(backendBaseUrl);
-    await runDelegationScenario(backendBaseUrl, scenario);
-    await waitForChannelToSettle(backendBaseUrl, scenario.channelId, {
+    const scenario = await createDelegationScenario(server.backendBaseUrl);
+    await runDelegationScenario(server.backendBaseUrl, scenario);
+    await waitForChannelToSettle(server.backendBaseUrl, scenario.channelId, {
       timeoutMs: 30_000,
       quietMs: 1_500,
       pollMs: 300,
     });
 
-    const report = await collectDelegationReport(backendBaseUrl, scenario);
+    const report = await collectDelegationReport(server.backendBaseUrl, scenario);
     writeDelegationArtifacts(testInfo, report, "channel-delegation-fake-report");
 
     expect(report.score).toBeGreaterThanOrEqual(95);
@@ -37,6 +37,6 @@ test("channel delegation flow completes in coordinator -> researcher -> writer -
       true,
     );
   } finally {
-    await electronApp.close();
+    await server.close();
   }
 });

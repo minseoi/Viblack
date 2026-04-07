@@ -1,87 +1,31 @@
 import fs from "node:fs";
-import path from "node:path";
+import { expect, test, type TestInfo } from "@playwright/test";
 import {
-  _electron as electron,
-  expect,
-  test,
-  type ElectronApplication,
-  type Page,
-  type TestInfo,
-} from "@playwright/test";
+  apiRequest,
+  createWorkspaceDir,
+  launchBackendHarness,
+  resolveFakeCodexPath,
+} from "./support/backend-harness";
 
-function resolveFakeCodexPath(): string {
-  if (process.platform === "win32") {
-    return path.resolve(__dirname, "fixtures", "fake-codex.cmd");
-  }
-  const unixPath = path.resolve(__dirname, "fixtures", "fake-codex");
-  try {
-    fs.chmodSync(unixPath, 0o755);
-  } catch {
-    // Best-effort for non-Windows environments.
-  }
-  return unixPath;
-}
-
-async function launchIsolatedApp(
-  testInfo: TestInfo,
-): Promise<{ electronApp: ElectronApplication; page: Page }> {
-  const dbPath = testInfo.outputPath("viblack.channel-metadata.e2e.sqlite");
-  const fakeCodexPath = resolveFakeCodexPath();
-  const electronApp = await electron.launch({
-    args: ["."],
+async function launchIsolatedBackend(testInfo: TestInfo) {
+  return launchBackendHarness(testInfo, {
+    dbFileName: "viblack.channel-metadata.e2e.sqlite",
+    workspaceDirName: "channel-metadata-backend-workspace",
     env: {
-      ...process.env,
-      VIBLACK_DB_PATH: dbPath,
-      VIBLACK_CODEX_PATH: fakeCodexPath,
+      VIBLACK_CODEX_PATH: resolveFakeCodexPath(),
     },
   });
-
-  const page = await electronApp.firstWindow();
-  await page.waitForLoadState("domcontentloaded");
-  await expect(page).toHaveTitle("Viblack");
-  await expect(page.locator("#member-list .member-item").first()).toBeVisible();
-  return { electronApp, page };
-}
-
-async function apiRequest<T>(
-  page: Page,
-  pathname: string,
-  init?: { method?: string; body?: unknown },
-): Promise<{ status: number; data: T }> {
-  return page.evaluate(
-    async ({ pathname: requestPath, init: requestInit }) => {
-      const baseUrl = await window.viblackApi.getBackendBaseUrl();
-      const response = await fetch(`${baseUrl}${requestPath}`, {
-        method: requestInit?.method ?? "GET",
-        headers: requestInit?.body ? { "Content-Type": "application/json" } : undefined,
-        body: requestInit?.body ? JSON.stringify(requestInit.body) : undefined,
-      });
-      const text = await response.text();
-      return {
-        status: response.status,
-        data: text ? JSON.parse(text) : null,
-      };
-    },
-    { pathname, init },
-  ) as Promise<{ status: number; data: T }>;
-}
-
-function createWorkspaceDir(testInfo: TestInfo, label: string): string {
-  const safeLabel = label.replace(/[^a-z0-9_.-]+/gi, "-");
-  const workspacePath = testInfo.outputPath(`workspace-${safeLabel}`);
-  fs.mkdirSync(workspacePath, { recursive: true });
-  return workspacePath;
 }
 
 async function createChannelViaApi(
-  page: Page,
+  backendBaseUrl: string,
   testInfo: TestInfo,
   name: string,
   description: string,
 ): Promise<{ id: string; name: string; workspacePath: string }> {
   const workspacePath = createWorkspaceDir(testInfo, name);
   const channelCreate = await apiRequest<{ channel: { id: string; name: string; workspacePath: string } }>(
-    page,
+    backendBaseUrl,
     "/api/channels",
     {
       method: "POST",
@@ -103,10 +47,10 @@ test("channel execution retries once when codex returns an empty successful resp
   const retryKey = `channel-empty-retry-${suffix}`;
   const finalToken = `channel-empty-retry-ok-${suffix}`;
 
-  const { electronApp, page } = await launchIsolatedApp(testInfo);
+  const server = await launchIsolatedBackend(testInfo);
 
   try {
-    const alphaCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+    const alphaCreate = await apiRequest<{ agent: { id: string } }>(server.backendBaseUrl, "/api/agents", {
       method: "POST",
       body: {
         name: alphaName,
@@ -116,20 +60,20 @@ test("channel execution retries once when codex returns an empty successful resp
     });
     expect(alphaCreate.status).toBe(201);
 
-    const channel = await createChannelViaApi(page, testInfo, channelName, "channel empty response retry verification");
+    const channel = await createChannelViaApi(server.backendBaseUrl, testInfo, channelName, "channel empty response retry verification");
     const channelId = channel.id;
     const alphaId = alphaCreate.data.agent.id;
 
     expect(
       (
-        await apiRequest(page, `/api/channels/${channelId}/members`, {
+        await apiRequest(server.backendBaseUrl, `/api/channels/${channelId}/members`, {
           method: "POST",
           body: { agentId: alphaId },
         })
       ).status,
     ).toBe(201);
 
-    const sendMessage = await apiRequest<{ message: { id: number } }>(page, `/api/channels/${channelId}/messages`, {
+    const sendMessage = await apiRequest<{ message: { id: number } }>(server.backendBaseUrl, `/api/channels/${channelId}/messages`, {
       method: "POST",
       body: {
         content: `@{${alphaName}} FORCE_EMPTY_SUCCESS_ONCE:${retryKey} FORCE_FINAL_REPLY:${finalToken}`,
@@ -145,7 +89,7 @@ test("channel execution retries once when codex returns an empty successful resp
             targetAgentId: string;
             status: string;
           }>;
-        }>(page, `/api/channels/${channelId}/executions`);
+        }>(server.backendBaseUrl, `/api/channels/${channelId}/executions`);
         return response.data.jobs.map((job) => `${job.targetAgentId}:${job.status}`);
       })
       .toEqual([`${alphaId}:succeeded`]);
@@ -156,7 +100,7 @@ test("channel execution retries once when codex returns an empty successful resp
         content: string;
         messageKind: string;
       }>;
-    }>(page, `/api/channels/${channelId}/messages`);
+    }>(server.backendBaseUrl, `/api/channels/${channelId}/messages`);
     expect(messagesResponse.status).toBe(200);
     expect(messagesResponse.data.messages).toHaveLength(2);
     expect(messagesResponse.data.messages[1]).toMatchObject({
@@ -168,7 +112,7 @@ test("channel execution retries once when codex returns an empty successful resp
       false,
     );
   } finally {
-    await electronApp.close();
+    await server.close();
   }
 });
 
@@ -176,24 +120,24 @@ test("archived channel name can be reused by a new active channel", async ({}, t
   const suffix = Date.now();
   const channelName = `reusable-room-${suffix}`;
 
-  const { electronApp, page } = await launchIsolatedApp(testInfo);
+  const server = await launchIsolatedBackend(testInfo);
 
   try {
-    const firstCreate = await createChannelViaApi(page, testInfo, channelName, "first active channel");
+    const firstCreate = await createChannelViaApi(server.backendBaseUrl, testInfo, channelName, "first active channel");
 
     const archiveResponse = await apiRequest<{ ok: boolean }>(
-      page,
+      server.backendBaseUrl,
       `/api/channels/${firstCreate.id}`,
       { method: "DELETE" },
     );
     expect(archiveResponse.status).toBe(200);
 
-    const secondCreate = await createChannelViaApi(page, testInfo, channelName, "recreated active channel");
+    const secondCreate = await createChannelViaApi(server.backendBaseUrl, testInfo, channelName, "recreated active channel");
     expect(secondCreate.name).toBe(channelName);
     expect(secondCreate.id).not.toBe(firstCreate.id);
 
     const listResponse = await apiRequest<{ channels: Array<{ id: string; name: string }> }>(
-      page,
+      server.backendBaseUrl,
       "/api/channels",
     );
     expect(listResponse.status).toBe(200);
@@ -203,7 +147,7 @@ test("archived channel name can be reused by a new active channel", async ({}, t
       name: channelName,
     });
   } finally {
-    await electronApp.close();
+    await server.close();
   }
 });
 
@@ -213,10 +157,10 @@ test("delegated code task fails when worker replies with intent only and no arti
   const workerName = `철수${suffix}`;
   const channelName = `code-intent-room-${suffix}`;
 
-  const { electronApp, page } = await launchIsolatedApp(testInfo);
+  const server = await launchIsolatedBackend(testInfo);
 
   try {
-    const leaderCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+    const leaderCreate = await apiRequest<{ agent: { id: string } }>(server.backendBaseUrl, "/api/agents", {
       method: "POST",
       body: {
         name: leaderName,
@@ -226,7 +170,7 @@ test("delegated code task fails when worker replies with intent only and no arti
     });
     expect(leaderCreate.status).toBe(201);
 
-    const workerCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+    const workerCreate = await apiRequest<{ agent: { id: string } }>(server.backendBaseUrl, "/api/agents", {
       method: "POST",
       body: {
         name: workerName,
@@ -236,14 +180,14 @@ test("delegated code task fails when worker replies with intent only and no arti
     });
     expect(workerCreate.status).toBe(201);
 
-    const channel = await createChannelViaApi(page, testInfo, channelName, "code artifact intent-only validation");
+    const channel = await createChannelViaApi(server.backendBaseUrl, testInfo, channelName, "code artifact intent-only validation");
     const channelId = channel.id;
     const leaderId = leaderCreate.data.agent.id;
     const workerId = workerCreate.data.agent.id;
 
     expect(
       (
-        await apiRequest(page, `/api/channels/${channelId}/members`, {
+        await apiRequest(server.backendBaseUrl, `/api/channels/${channelId}/members`, {
           method: "POST",
           body: { agentId: leaderId },
         })
@@ -251,14 +195,14 @@ test("delegated code task fails when worker replies with intent only and no arti
     ).toBe(201);
     expect(
       (
-        await apiRequest(page, `/api/channels/${channelId}/members`, {
+        await apiRequest(server.backendBaseUrl, `/api/channels/${channelId}/members`, {
           method: "POST",
           body: { agentId: workerId },
         })
       ).status,
     ).toBe(201);
 
-    const sendMessage = await apiRequest<{ message: { id: number } }>(page, `/api/channels/${channelId}/messages`, {
+    const sendMessage = await apiRequest<{ message: { id: number } }>(server.backendBaseUrl, `/api/channels/${channelId}/messages`, {
       method: "POST",
       body: {
         content: `@{${leaderName}} FORCE_CODE_ARTIFACT_INTENT_ONLY 철수한테 구현 시키고 파일 경로 보고받아`,
@@ -274,7 +218,7 @@ test("delegated code task fails when worker replies with intent only and no arti
             targetAgentId: string;
             status: string;
           }>;
-        }>(page, `/api/channels/${channelId}/executions`);
+        }>(server.backendBaseUrl, `/api/channels/${channelId}/executions`);
         return response.data.jobs.map((job) => `${job.targetAgentId}:${job.status}`);
       })
       .toEqual([`${leaderId}:succeeded`, `${workerId}:failed`]);
@@ -286,7 +230,7 @@ test("delegated code task fails when worker replies with intent only and no arti
         content: string;
         messageKind: string;
       }>;
-    }>(page, `/api/channels/${channelId}/messages`);
+    }>(server.backendBaseUrl, `/api/channels/${channelId}/messages`);
     expect(messagesResponse.status).toBe(200);
     expect(messagesResponse.data.messages[messagesResponse.data.messages.length - 1]).toMatchObject({
       senderType: "system",
@@ -299,7 +243,7 @@ test("delegated code task fails when worker replies with intent only and no arti
       "type=report action이 필요합니다.",
     );
   } finally {
-    await electronApp.close();
+    await server.close();
   }
 });
 
@@ -310,10 +254,10 @@ test("delegated code task continues only after worker reports an existing artifa
   const channelName = `code-artifact-room-${suffix}`;
   const artifactKey = `code-artifact-${suffix}`;
 
-  const { electronApp, page } = await launchIsolatedApp(testInfo);
+  const server = await launchIsolatedBackend(testInfo);
 
   try {
-    const leaderCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+    const leaderCreate = await apiRequest<{ agent: { id: string } }>(server.backendBaseUrl, "/api/agents", {
       method: "POST",
       body: {
         name: leaderName,
@@ -323,7 +267,7 @@ test("delegated code task continues only after worker reports an existing artifa
     });
     expect(leaderCreate.status).toBe(201);
 
-    const workerCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+    const workerCreate = await apiRequest<{ agent: { id: string } }>(server.backendBaseUrl, "/api/agents", {
       method: "POST",
       body: {
         name: workerName,
@@ -333,14 +277,14 @@ test("delegated code task continues only after worker reports an existing artifa
     });
     expect(workerCreate.status).toBe(201);
 
-    const channel = await createChannelViaApi(page, testInfo, channelName, "code artifact success validation");
+    const channel = await createChannelViaApi(server.backendBaseUrl, testInfo, channelName, "code artifact success validation");
     const channelId = channel.id;
     const leaderId = leaderCreate.data.agent.id;
     const workerId = workerCreate.data.agent.id;
 
     expect(
       (
-        await apiRequest(page, `/api/channels/${channelId}/members`, {
+        await apiRequest(server.backendBaseUrl, `/api/channels/${channelId}/members`, {
           method: "POST",
           body: { agentId: leaderId },
         })
@@ -348,14 +292,14 @@ test("delegated code task continues only after worker reports an existing artifa
     ).toBe(201);
     expect(
       (
-        await apiRequest(page, `/api/channels/${channelId}/members`, {
+        await apiRequest(server.backendBaseUrl, `/api/channels/${channelId}/members`, {
           method: "POST",
           body: { agentId: workerId },
         })
       ).status,
     ).toBe(201);
 
-    const sendMessage = await apiRequest<{ message: { id: number } }>(page, `/api/channels/${channelId}/messages`, {
+    const sendMessage = await apiRequest<{ message: { id: number } }>(server.backendBaseUrl, `/api/channels/${channelId}/messages`, {
       method: "POST",
       body: {
         content: `@{${leaderName}} FORCE_CODE_ARTIFACT_SUCCESS:${artifactKey} 철수한테 구현 시키고 파일 경로 보고받아`,
@@ -371,7 +315,7 @@ test("delegated code task continues only after worker reports an existing artifa
             targetAgentId: string;
             status: string;
           }>;
-        }>(page, `/api/channels/${channelId}/executions`);
+        }>(server.backendBaseUrl, `/api/channels/${channelId}/executions`);
         return response.data.jobs.map((job) => `${job.targetAgentId}:${job.status}`);
       })
       .toEqual([`${leaderId}:succeeded`, `${workerId}:succeeded`, `${leaderId}:succeeded`]);
@@ -383,7 +327,7 @@ test("delegated code task continues only after worker reports an existing artifa
         content: string;
         messageKind: string;
       }>;
-    }>(page, `/api/channels/${channelId}/messages`);
+    }>(server.backendBaseUrl, `/api/channels/${channelId}/messages`);
     expect(messagesResponse.status).toBe(200);
     const workerMessage = messagesResponse.data.messages.find((message) => message.senderId === workerId);
     const expectedChannelWorkspaceDir = channel.workspacePath;
@@ -399,7 +343,7 @@ test("delegated code task continues only after worker reports an existing artifa
     );
     expect(fs.existsSync(expectedChannelWorkspaceDir)).toBe(true);
   } finally {
-    await electronApp.close();
+    await server.close();
   }
 });
 
@@ -410,10 +354,10 @@ test("channel workspaces are isolated per channel directory", async ({}, testInf
   const secondChannelName = `scoped-b-${suffix}`;
   const fileToken = `channel-file-${suffix}`;
 
-  const { electronApp, page } = await launchIsolatedApp(testInfo);
+  const server = await launchIsolatedBackend(testInfo);
 
   try {
-    const memberCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+    const memberCreate = await apiRequest<{ agent: { id: string } }>(server.backendBaseUrl, "/api/agents", {
       method: "POST",
       body: {
         name: memberName,
@@ -423,9 +367,9 @@ test("channel workspaces are isolated per channel directory", async ({}, testInf
     });
     expect(memberCreate.status).toBe(201);
 
-    const firstChannelCreate = await createChannelViaApi(page, testInfo, firstChannelName, "first isolated workspace");
+    const firstChannelCreate = await createChannelViaApi(server.backendBaseUrl, testInfo, firstChannelName, "first isolated workspace");
     const secondChannelCreate = await createChannelViaApi(
-      page,
+      server.backendBaseUrl,
       testInfo,
       secondChannelName,
       "second isolated workspace",
@@ -443,7 +387,7 @@ test("channel workspaces are isolated per channel directory", async ({}, testInf
 
     expect(
       (
-        await apiRequest(page, `/api/channels/${firstChannelId}/members`, {
+        await apiRequest(server.backendBaseUrl, `/api/channels/${firstChannelId}/members`, {
           method: "POST",
           body: { agentId: memberId },
         })
@@ -451,14 +395,14 @@ test("channel workspaces are isolated per channel directory", async ({}, testInf
     ).toBe(201);
     expect(
       (
-        await apiRequest(page, `/api/channels/${secondChannelId}/members`, {
+        await apiRequest(server.backendBaseUrl, `/api/channels/${secondChannelId}/members`, {
           method: "POST",
           body: { agentId: memberId },
         })
       ).status,
     ).toBe(201);
 
-    const firstWrite = await apiRequest(page, `/api/channels/${firstChannelId}/messages`, {
+    const firstWrite = await apiRequest(server.backendBaseUrl, `/api/channels/${firstChannelId}/messages`, {
       method: "POST",
       body: {
         content: `@{${memberName}} FORCE_CHANNEL_FILE_WRITE:${fileToken}`,
@@ -471,12 +415,12 @@ test("channel workspaces are isolated per channel directory", async ({}, testInf
       .poll(async () => {
         const response = await apiRequest<{
           messages: Array<{ senderId: string | null; content: string }>;
-        }>(page, `/api/channels/${firstChannelId}/messages`);
+        }>(server.backendBaseUrl, `/api/channels/${firstChannelId}/messages`);
         return response.data.messages.find((message) => message.senderId === memberId)?.content ?? "";
       })
       .toContain(`채널 파일 기록:${firstWorkspacePath}`);
 
-    const firstRead = await apiRequest(page, `/api/channels/${firstChannelId}/messages`, {
+    const firstRead = await apiRequest(server.backendBaseUrl, `/api/channels/${firstChannelId}/messages`, {
       method: "POST",
       body: {
         content: `@{${memberName}} FORCE_CHANNEL_FILE_READ:${fileToken}`,
@@ -489,12 +433,12 @@ test("channel workspaces are isolated per channel directory", async ({}, testInf
       .poll(async () => {
         const response = await apiRequest<{
           messages: Array<{ senderId: string | null; content: string }>;
-        }>(page, `/api/channels/${firstChannelId}/messages`);
+        }>(server.backendBaseUrl, `/api/channels/${firstChannelId}/messages`);
         return response.data.messages.some((message) => message.content.includes(`채널 파일 존재:${fileToken}`));
       })
       .toBe(true);
 
-    const secondRead = await apiRequest(page, `/api/channels/${secondChannelId}/messages`, {
+    const secondRead = await apiRequest(server.backendBaseUrl, `/api/channels/${secondChannelId}/messages`, {
       method: "POST",
       body: {
         content: `@{${memberName}} FORCE_CHANNEL_FILE_READ:${fileToken}`,
@@ -507,12 +451,12 @@ test("channel workspaces are isolated per channel directory", async ({}, testInf
       .poll(async () => {
         const response = await apiRequest<{
           messages: Array<{ senderId: string | null; content: string }>;
-        }>(page, `/api/channels/${secondChannelId}/messages`);
+        }>(server.backendBaseUrl, `/api/channels/${secondChannelId}/messages`);
         return response.data.messages.some((message) => message.content.includes(`채널 파일 없음:${fileToken}`));
       })
       .toBe(true);
   } finally {
-    await electronApp.close();
+    await server.close();
   }
 });
 
@@ -522,10 +466,10 @@ test("channel execution jobs and member state metadata", async ({}, testInfo) =>
   const betaName = `MetaBeta${suffix}`;
   const channelName = `meta-room-${suffix}`;
 
-  const { electronApp, page } = await launchIsolatedApp(testInfo);
+  const server = await launchIsolatedBackend(testInfo);
 
   try {
-    const alphaCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+    const alphaCreate = await apiRequest<{ agent: { id: string } }>(server.backendBaseUrl, "/api/agents", {
       method: "POST",
       body: {
         name: alphaName,
@@ -535,7 +479,7 @@ test("channel execution jobs and member state metadata", async ({}, testInfo) =>
     });
     expect(alphaCreate.status).toBe(201);
 
-    const betaCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+    const betaCreate = await apiRequest<{ agent: { id: string } }>(server.backendBaseUrl, "/api/agents", {
       method: "POST",
       body: {
         name: betaName,
@@ -545,14 +489,14 @@ test("channel execution jobs and member state metadata", async ({}, testInfo) =>
     });
     expect(betaCreate.status).toBe(201);
 
-    const channel = await createChannelViaApi(page, testInfo, channelName, "channel metadata verification");
+    const channel = await createChannelViaApi(server.backendBaseUrl, testInfo, channelName, "channel metadata verification");
     const channelId = channel.id;
     const alphaId = alphaCreate.data.agent.id;
     const betaId = betaCreate.data.agent.id;
 
     expect(
       (
-        await apiRequest(page, `/api/channels/${channelId}/members`, {
+        await apiRequest(server.backendBaseUrl, `/api/channels/${channelId}/members`, {
           method: "POST",
           body: { agentId: alphaId },
         })
@@ -560,7 +504,7 @@ test("channel execution jobs and member state metadata", async ({}, testInfo) =>
     ).toBe(201);
     expect(
       (
-        await apiRequest(page, `/api/channels/${channelId}/members`, {
+        await apiRequest(server.backendBaseUrl, `/api/channels/${channelId}/members`, {
           method: "POST",
           body: { agentId: betaId },
         })
@@ -569,7 +513,7 @@ test("channel execution jobs and member state metadata", async ({}, testInfo) =>
 
     const initialReadState = await apiRequest<{
       states: Array<{ agentId: string; isCoordinator: boolean; lastReadMessageId: number }>;
-    }>(page, `/api/channels/${channelId}/read-state`);
+    }>(server.backendBaseUrl, `/api/channels/${channelId}/read-state`);
     expect(initialReadState.status).toBe(200);
     expect(initialReadState.data.states).toHaveLength(2);
     expect(initialReadState.data.states.find((state) => state.agentId === alphaId)?.isCoordinator).toBe(true);
@@ -577,7 +521,7 @@ test("channel execution jobs and member state metadata", async ({}, testInfo) =>
 
     const sendMessage = await apiRequest<{
       message: { id: number };
-    }>(page, `/api/channels/${channelId}/messages`, {
+    }>(server.backendBaseUrl, `/api/channels/${channelId}/messages`, {
       method: "POST",
       body: {
         content: `@{${alphaName}} FORCE_MENTION_NAME:${betaName}`,
@@ -596,7 +540,7 @@ test("channel execution jobs and member state metadata", async ({}, testInfo) =>
             depth: number;
             triggerMessageId: number;
           }>;
-        }>(page, `/api/channels/${channelId}/executions`);
+        }>(server.backendBaseUrl, `/api/channels/${channelId}/executions`);
         return response.data.jobs.map((job) => `${job.executionKind}:${job.status}:${job.depth}`).join("|");
       })
       .toBe("mention:succeeded:0|remention:succeeded:1");
@@ -609,7 +553,7 @@ test("channel execution jobs and member state metadata", async ({}, testInfo) =>
         depth: number;
         triggerMessageId: number;
       }>;
-    }>(page, `/api/channels/${channelId}/executions`);
+    }>(server.backendBaseUrl, `/api/channels/${channelId}/executions`);
     expect(executionResponse.status).toBe(200);
     expect(executionResponse.data.jobs[0]).toMatchObject({
       targetAgentId: alphaId,
@@ -628,7 +572,7 @@ test("channel execution jobs and member state metadata", async ({}, testInfo) =>
 
     const updatedReadState = await apiRequest<{
       states: Array<{ agentId: string; lastReadMessageId: number; isCoordinator: boolean }>;
-    }>(page, `/api/channels/${channelId}/read-state`);
+    }>(server.backendBaseUrl, `/api/channels/${channelId}/read-state`);
     expect(updatedReadState.status).toBe(200);
     expect(updatedReadState.data.states.find((state) => state.agentId === alphaId)?.lastReadMessageId).toBeGreaterThan(
       0,
@@ -639,7 +583,7 @@ test("channel execution jobs and member state metadata", async ({}, testInfo) =>
 
     const promoteBeta = await apiRequest<{
       state: { agentId: string; isCoordinator: boolean };
-    }>(page, `/api/channels/${channelId}/read-state`, {
+    }>(server.backendBaseUrl, `/api/channels/${channelId}/read-state`, {
       method: "POST",
       body: { agentId: betaId, isCoordinator: true },
     });
@@ -648,24 +592,24 @@ test("channel execution jobs and member state metadata", async ({}, testInfo) =>
 
     const afterPromotionReadState = await apiRequest<{
       states: Array<{ agentId: string; isCoordinator: boolean }>;
-    }>(page, `/api/channels/${channelId}/read-state`);
+    }>(server.backendBaseUrl, `/api/channels/${channelId}/read-state`);
     expect(afterPromotionReadState.status).toBe(200);
     expect(afterPromotionReadState.data.states.find((state) => state.agentId === alphaId)?.isCoordinator).toBe(false);
     expect(afterPromotionReadState.data.states.find((state) => state.agentId === betaId)?.isCoordinator).toBe(true);
 
-    const removeBeta = await apiRequest(page, `/api/channels/${channelId}/members/${betaId}`, {
+    const removeBeta = await apiRequest(server.backendBaseUrl, `/api/channels/${channelId}/members/${betaId}`, {
       method: "DELETE",
     });
     expect(removeBeta.status).toBe(200);
 
     const afterRemovalReadState = await apiRequest<{
       states: Array<{ agentId: string; isCoordinator: boolean }>;
-    }>(page, `/api/channels/${channelId}/read-state`);
+    }>(server.backendBaseUrl, `/api/channels/${channelId}/read-state`);
     expect(afterRemovalReadState.status).toBe(200);
     expect(afterRemovalReadState.data.states.some((state) => state.agentId === betaId)).toBe(false);
     expect(afterRemovalReadState.data.states.find((state) => state.agentId === alphaId)?.isCoordinator).toBe(true);
   } finally {
-    await electronApp.close();
+    await server.close();
   }
 });
 
@@ -676,10 +620,10 @@ test("channel execution prompt includes member roster and recent public history"
   const channelName = `ctx-room-${suffix}`;
   const historyToken = `BETA_SHARED_${suffix}`;
 
-  const { electronApp, page } = await launchIsolatedApp(testInfo);
+  const server = await launchIsolatedBackend(testInfo);
 
   try {
-    const alphaCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+    const alphaCreate = await apiRequest<{ agent: { id: string } }>(server.backendBaseUrl, "/api/agents", {
       method: "POST",
       body: {
         name: alphaName,
@@ -689,7 +633,7 @@ test("channel execution prompt includes member roster and recent public history"
     });
     expect(alphaCreate.status).toBe(201);
 
-    const betaCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+    const betaCreate = await apiRequest<{ agent: { id: string } }>(server.backendBaseUrl, "/api/agents", {
       method: "POST",
       body: {
         name: betaName,
@@ -699,14 +643,14 @@ test("channel execution prompt includes member roster and recent public history"
     });
     expect(betaCreate.status).toBe(201);
 
-    const channel = await createChannelViaApi(page, testInfo, channelName, "channel prompt context verification");
+    const channel = await createChannelViaApi(server.backendBaseUrl, testInfo, channelName, "channel prompt context verification");
     const channelId = channel.id;
     const alphaId = alphaCreate.data.agent.id;
     const betaId = betaCreate.data.agent.id;
 
     expect(
       (
-        await apiRequest(page, `/api/channels/${channelId}/members`, {
+        await apiRequest(server.backendBaseUrl, `/api/channels/${channelId}/members`, {
           method: "POST",
           body: { agentId: alphaId },
         })
@@ -714,7 +658,7 @@ test("channel execution prompt includes member roster and recent public history"
     ).toBe(201);
     expect(
       (
-        await apiRequest(page, `/api/channels/${channelId}/members`, {
+        await apiRequest(server.backendBaseUrl, `/api/channels/${channelId}/members`, {
           method: "POST",
           body: { agentId: betaId },
         })
@@ -723,7 +667,7 @@ test("channel execution prompt includes member roster and recent public history"
 
     const betaShare = await apiRequest<{
       results: Array<{ reply: string }>;
-    }>(page, `/api/channels/${channelId}/messages`, {
+    }>(server.backendBaseUrl, `/api/channels/${channelId}/messages`, {
       method: "POST",
       body: {
         content: `@{${betaName}} FORCE_FINAL_REPLY:${historyToken}`,
@@ -735,7 +679,7 @@ test("channel execution prompt includes member roster and recent public history"
 
     const alphaContextCheck = await apiRequest<{
       results: Array<{ reply: string }>;
-    }>(page, `/api/channels/${channelId}/messages`, {
+    }>(server.backendBaseUrl, `/api/channels/${channelId}/messages`, {
       method: "POST",
       body: {
         content: `@{${alphaName}} FORCE_ASSERT_CHANNEL_MEMBERS:${alphaName}|${betaName} FORCE_ASSERT_CHANNEL_HISTORY:${historyToken}`,
@@ -745,7 +689,7 @@ test("channel execution prompt includes member roster and recent public history"
     expect(alphaContextCheck.status).toBe(200);
     expect(alphaContextCheck.data.results[0]?.reply).toContain("채널 컨텍스트 확인:ok");
   } finally {
-    await electronApp.close();
+    await server.close();
   }
 });
 
@@ -756,10 +700,10 @@ test("dm and channel use isolated runtime sessions for the same agent", async ({
   const dmToken = `DM_SCOPE_${suffix}`;
   const channelToken = `CHANNEL_SCOPE_${suffix}`;
 
-  const { electronApp, page } = await launchIsolatedApp(testInfo);
+  const server = await launchIsolatedBackend(testInfo);
 
   try {
-    const memberCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+    const memberCreate = await apiRequest<{ agent: { id: string } }>(server.backendBaseUrl, "/api/agents", {
       method: "POST",
       body: {
         name: memberName,
@@ -770,19 +714,19 @@ test("dm and channel use isolated runtime sessions for the same agent", async ({
     expect(memberCreate.status).toBe(201);
 
     const memberId = memberCreate.data.agent.id;
-    const channel = await createChannelViaApi(page, testInfo, channelName, "runtime session scope verification");
+    const channel = await createChannelViaApi(server.backendBaseUrl, testInfo, channelName, "runtime session scope verification");
     const channelId = channel.id;
 
     expect(
       (
-        await apiRequest(page, `/api/channels/${channelId}/members`, {
+        await apiRequest(server.backendBaseUrl, `/api/channels/${channelId}/members`, {
           method: "POST",
           body: { agentId: memberId },
         })
       ).status,
     ).toBe(201);
 
-    const dmWrite = await apiRequest<{ reply: string }>(page, `/api/agents/${memberId}/messages`, {
+    const dmWrite = await apiRequest<{ reply: string }>(server.backendBaseUrl, `/api/agents/${memberId}/messages`, {
       method: "POST",
       body: {
         content: `FORCE_SESSION_MEMORY_WRITE:${dmToken}`,
@@ -791,7 +735,7 @@ test("dm and channel use isolated runtime sessions for the same agent", async ({
     expect(dmWrite.status).toBe(200);
     expect(dmWrite.data.reply).toContain(`세션 메모리 기록:${dmToken}`);
 
-    const dmRead = await apiRequest<{ reply: string }>(page, `/api/agents/${memberId}/messages`, {
+    const dmRead = await apiRequest<{ reply: string }>(server.backendBaseUrl, `/api/agents/${memberId}/messages`, {
       method: "POST",
       body: {
         content: `FORCE_SESSION_MEMORY_READ:${dmToken}`,
@@ -802,7 +746,7 @@ test("dm and channel use isolated runtime sessions for the same agent", async ({
 
     const channelReadDmToken = await apiRequest<{
       results: Array<{ reply: string }>;
-    }>(page, `/api/channels/${channelId}/messages`, {
+    }>(server.backendBaseUrl, `/api/channels/${channelId}/messages`, {
       method: "POST",
       body: {
         content: `@{${memberName}} FORCE_SESSION_MEMORY_READ:${dmToken}`,
@@ -814,7 +758,7 @@ test("dm and channel use isolated runtime sessions for the same agent", async ({
 
     const channelWrite = await apiRequest<{
       results: Array<{ reply: string }>;
-    }>(page, `/api/channels/${channelId}/messages`, {
+    }>(server.backendBaseUrl, `/api/channels/${channelId}/messages`, {
       method: "POST",
       body: {
         content: `@{${memberName}} FORCE_SESSION_MEMORY_WRITE:${channelToken}`,
@@ -826,7 +770,7 @@ test("dm and channel use isolated runtime sessions for the same agent", async ({
 
     const channelRead = await apiRequest<{
       results: Array<{ reply: string }>;
-    }>(page, `/api/channels/${channelId}/messages`, {
+    }>(server.backendBaseUrl, `/api/channels/${channelId}/messages`, {
       method: "POST",
       body: {
         content: `@{${memberName}} FORCE_SESSION_MEMORY_READ:${channelToken}`,
@@ -836,7 +780,7 @@ test("dm and channel use isolated runtime sessions for the same agent", async ({
     expect(channelRead.status).toBe(200);
     expect(channelRead.data.results[0]?.reply).toContain(`세션 메모리 존재:${channelToken}`);
 
-    const dmReadChannelToken = await apiRequest<{ reply: string }>(page, `/api/agents/${memberId}/messages`, {
+    const dmReadChannelToken = await apiRequest<{ reply: string }>(server.backendBaseUrl, `/api/agents/${memberId}/messages`, {
       method: "POST",
       body: {
         content: `FORCE_SESSION_MEMORY_READ:${channelToken}`,
@@ -845,118 +789,7 @@ test("dm and channel use isolated runtime sessions for the same agent", async ({
     expect(dmReadChannelToken.status).toBe(200);
     expect(dmReadChannelToken.data.reply).toContain(`세션 메모리 없음:${channelToken}`);
   } finally {
-    await electronApp.close();
-  }
-});
-
-test("natural language delegation request becomes channel mention chain", async ({}, testInfo) => {
-  const suffix = Date.now();
-  const leaderName = `영희${suffix}`;
-  const delegateName = `존${suffix}`;
-  const channelName = `delegate-room-${suffix}`;
-
-  const { electronApp, page } = await launchIsolatedApp(testInfo);
-
-  try {
-    const leaderCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
-      method: "POST",
-      body: {
-        name: leaderName,
-        role: "Planner",
-        systemPrompt: "You are Younghee planner. Reply in concise Korean.",
-      },
-    });
-    expect(leaderCreate.status).toBe(201);
-
-    const delegateCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
-      method: "POST",
-      body: {
-        name: delegateName,
-        role: "Researcher",
-        systemPrompt: "You are John researcher. Reply in concise Korean.",
-      },
-    });
-    expect(delegateCreate.status).toBe(201);
-
-    const channel = await createChannelViaApi(page, testInfo, channelName, "delegation mention chain verification");
-    const channelId = channel.id;
-    const leaderId = leaderCreate.data.agent.id;
-    const delegateId = delegateCreate.data.agent.id;
-
-    expect(
-      (
-        await apiRequest(page, `/api/channels/${channelId}/members`, {
-          method: "POST",
-          body: { agentId: leaderId },
-        })
-      ).status,
-    ).toBe(201);
-    expect(
-      (
-        await apiRequest(page, `/api/channels/${channelId}/members`, {
-          method: "POST",
-          body: { agentId: delegateId },
-        })
-      ).status,
-    ).toBe(201);
-
-    const sendMessage = await apiRequest<{
-      message: { id: number };
-      results: Array<{ agentId: string; reply: string }>;
-    }>(page, `/api/channels/${channelId}/messages`, {
-      method: "POST",
-      body: {
-        content: `@{${leaderName}} ${delegateName}한테 조사 시키고 그 결과를 정리해서 나한테 줘`,
-        messageKind: "general",
-      },
-    });
-    expect(sendMessage.status).toBe(200);
-
-    await expect
-      .poll(async () => {
-        const response = await apiRequest<{
-          jobs: Array<{
-            targetAgentId: string;
-            executionKind: string;
-            status: string;
-            depth: number;
-          }>;
-        }>(page, `/api/channels/${channelId}/executions`);
-        return response.data.jobs.map((job) => `${job.targetAgentId}:${job.executionKind}:${job.status}:${job.depth}`);
-      })
-      .toEqual([
-        `${leaderId}:mention:succeeded:0`,
-        `${delegateId}:remention:succeeded:1`,
-        `${leaderId}:remention:succeeded:2`,
-      ]);
-
-    const messagesResponse = await apiRequest<{
-      messages: Array<{
-        senderId: string | null;
-        content: string;
-        messageKind: string;
-      }>;
-    }>(page, `/api/channels/${channelId}/messages`);
-    expect(messagesResponse.status).toBe(200);
-    expect(messagesResponse.data.messages).toHaveLength(4);
-    expect(messagesResponse.data.messages[1]).toMatchObject({
-      senderId: leaderId,
-      messageKind: "result",
-    });
-    expect(messagesResponse.data.messages[1]?.content).toContain(`@{${delegateName}}`);
-    expect(messagesResponse.data.messages[2]).toMatchObject({
-      senderId: delegateId,
-      messageKind: "remention",
-    });
-    expect(messagesResponse.data.messages[2]?.content).toContain(`@{${leaderName}}`);
-    expect(messagesResponse.data.messages[2]?.content).toContain("조사 결과 보고:");
-    expect(messagesResponse.data.messages[3]).toMatchObject({
-      senderId: leaderId,
-      messageKind: "remention",
-    });
-    expect(messagesResponse.data.messages[3]?.content).toContain("최종 정리:");
-  } finally {
-    await electronApp.close();
+    await server.close();
   }
 });
 
@@ -966,10 +799,10 @@ test("user-mentioned member becomes sole coordinator even when another member jo
   const delegateName = `존${suffix}`;
   const channelName = `mentioned-coordinator-room-${suffix}`;
 
-  const { electronApp, page } = await launchIsolatedApp(testInfo);
+  const server = await launchIsolatedBackend(testInfo);
 
   try {
-    const leaderCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+    const leaderCreate = await apiRequest<{ agent: { id: string } }>(server.backendBaseUrl, "/api/agents", {
       method: "POST",
       body: {
         name: leaderName,
@@ -979,7 +812,7 @@ test("user-mentioned member becomes sole coordinator even when another member jo
     });
     expect(leaderCreate.status).toBe(201);
 
-    const delegateCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+    const delegateCreate = await apiRequest<{ agent: { id: string } }>(server.backendBaseUrl, "/api/agents", {
       method: "POST",
       body: {
         name: delegateName,
@@ -989,14 +822,14 @@ test("user-mentioned member becomes sole coordinator even when another member jo
     });
     expect(delegateCreate.status).toBe(201);
 
-    const channel = await createChannelViaApi(page, testInfo, channelName, "first mention should become sole coordinator");
+    const channel = await createChannelViaApi(server.backendBaseUrl, testInfo, channelName, "first mention should become sole coordinator");
     const channelId = channel.id;
     const leaderId = leaderCreate.data.agent.id;
     const delegateId = delegateCreate.data.agent.id;
 
     expect(
       (
-        await apiRequest(page, `/api/channels/${channelId}/members`, {
+        await apiRequest(server.backendBaseUrl, `/api/channels/${channelId}/members`, {
           method: "POST",
           body: { agentId: delegateId },
         })
@@ -1004,7 +837,7 @@ test("user-mentioned member becomes sole coordinator even when another member jo
     ).toBe(201);
     expect(
       (
-        await apiRequest(page, `/api/channels/${channelId}/members`, {
+        await apiRequest(server.backendBaseUrl, `/api/channels/${channelId}/members`, {
           method: "POST",
           body: { agentId: leaderId },
         })
@@ -1013,14 +846,14 @@ test("user-mentioned member becomes sole coordinator even when another member jo
 
     const beforeMessageReadState = await apiRequest<{
       states: Array<{ agentId: string; isCoordinator: boolean }>;
-    }>(page, `/api/channels/${channelId}/read-state`);
+    }>(server.backendBaseUrl, `/api/channels/${channelId}/read-state`);
     expect(beforeMessageReadState.status).toBe(200);
     expect(beforeMessageReadState.data.states.find((state) => state.agentId === delegateId)?.isCoordinator).toBe(true);
     expect(beforeMessageReadState.data.states.find((state) => state.agentId === leaderId)?.isCoordinator).toBe(false);
 
     const sendMessage = await apiRequest<{
       message: { id: number };
-    }>(page, `/api/channels/${channelId}/messages`, {
+    }>(server.backendBaseUrl, `/api/channels/${channelId}/messages`, {
       method: "POST",
       body: {
         content: `@{${leaderName}} ${delegateName}한테 조사 시키고 그 결과를 정리해서 나한테 줘`,
@@ -1038,7 +871,7 @@ test("user-mentioned member becomes sole coordinator even when another member jo
             status: string;
             depth: number;
           }>;
-        }>(page, `/api/channels/${channelId}/executions`);
+        }>(server.backendBaseUrl, `/api/channels/${channelId}/executions`);
         return response.data.jobs.map((job) => `${job.targetAgentId}:${job.executionKind}:${job.status}:${job.depth}`);
       })
       .toEqual([
@@ -1049,7 +882,7 @@ test("user-mentioned member becomes sole coordinator even when another member jo
 
     const afterMessageReadState = await apiRequest<{
       states: Array<{ agentId: string; isCoordinator: boolean; lastReadMessageId: number }>;
-    }>(page, `/api/channels/${channelId}/read-state`);
+    }>(server.backendBaseUrl, `/api/channels/${channelId}/read-state`);
     expect(afterMessageReadState.status).toBe(200);
     expect(afterMessageReadState.data.states.find((state) => state.agentId === leaderId)?.isCoordinator).toBe(true);
     expect(afterMessageReadState.data.states.find((state) => state.agentId === delegateId)?.isCoordinator).toBe(
@@ -1059,7 +892,7 @@ test("user-mentioned member becomes sole coordinator even when another member jo
       afterMessageReadState.data.states.find((state) => state.agentId === leaderId)?.lastReadMessageId,
     ).toBeGreaterThan(0);
   } finally {
-    await electronApp.close();
+    await server.close();
   }
 });
 
@@ -1069,10 +902,10 @@ test("ambiguous delegated task triggers clarification mention back to requester"
   const workerName = `철수${suffix}`;
   const channelName = `clarify-room-${suffix}`;
 
-  const { electronApp, page } = await launchIsolatedApp(testInfo);
+  const server = await launchIsolatedBackend(testInfo);
 
   try {
-    const leaderCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+    const leaderCreate = await apiRequest<{ agent: { id: string } }>(server.backendBaseUrl, "/api/agents", {
       method: "POST",
       body: {
         name: leaderName,
@@ -1082,7 +915,7 @@ test("ambiguous delegated task triggers clarification mention back to requester"
     });
     expect(leaderCreate.status).toBe(201);
 
-    const workerCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+    const workerCreate = await apiRequest<{ agent: { id: string } }>(server.backendBaseUrl, "/api/agents", {
       method: "POST",
       body: {
         name: workerName,
@@ -1092,14 +925,14 @@ test("ambiguous delegated task triggers clarification mention back to requester"
     });
     expect(workerCreate.status).toBe(201);
 
-    const channel = await createChannelViaApi(page, testInfo, channelName, "clarification mention verification");
+    const channel = await createChannelViaApi(server.backendBaseUrl, testInfo, channelName, "clarification mention verification");
     const channelId = channel.id;
     const leaderId = leaderCreate.data.agent.id;
     const workerId = workerCreate.data.agent.id;
 
     expect(
       (
-        await apiRequest(page, `/api/channels/${channelId}/members`, {
+        await apiRequest(server.backendBaseUrl, `/api/channels/${channelId}/members`, {
           method: "POST",
           body: { agentId: leaderId },
         })
@@ -1107,7 +940,7 @@ test("ambiguous delegated task triggers clarification mention back to requester"
     ).toBe(201);
     expect(
       (
-        await apiRequest(page, `/api/channels/${channelId}/members`, {
+        await apiRequest(server.backendBaseUrl, `/api/channels/${channelId}/members`, {
           method: "POST",
           body: { agentId: workerId },
         })
@@ -1116,7 +949,7 @@ test("ambiguous delegated task triggers clarification mention back to requester"
 
     const sendMessage = await apiRequest<{
       message: { id: number };
-    }>(page, `/api/channels/${channelId}/messages`, {
+    }>(server.backendBaseUrl, `/api/channels/${channelId}/messages`, {
       method: "POST",
       body: {
         content: `@{${leaderName}} ${workerName}한테 그거 조사 시키고 정리해서 줘`,
@@ -1134,7 +967,7 @@ test("ambiguous delegated task triggers clarification mention back to requester"
             status: string;
             depth: number;
           }>;
-        }>(page, `/api/channels/${channelId}/executions`);
+        }>(server.backendBaseUrl, `/api/channels/${channelId}/executions`);
         return response.data.jobs.map((job) => `${job.targetAgentId}:${job.executionKind}:${job.status}:${job.depth}`);
       })
       .toEqual([
@@ -1149,7 +982,7 @@ test("ambiguous delegated task triggers clarification mention back to requester"
         content: string;
         messageKind: string;
       }>;
-    }>(page, `/api/channels/${channelId}/messages`);
+    }>(server.backendBaseUrl, `/api/channels/${channelId}/messages`);
     expect(messagesResponse.status).toBe(200);
     expect(messagesResponse.data.messages[1]?.content).toContain(`@{${workerName}}`);
     expect(messagesResponse.data.messages[2]).toMatchObject({
@@ -1159,7 +992,7 @@ test("ambiguous delegated task triggers clarification mention back to requester"
     expect(messagesResponse.data.messages[2]?.content).toContain(`@{${leaderName}}`);
     expect(messagesResponse.data.messages[2]?.content).toContain("확인 질문:");
   } finally {
-    await electronApp.close();
+    await server.close();
   }
 });
 
@@ -1169,10 +1002,10 @@ test("channel mention chain continues beyond the former depth cap", async ({}, t
   const betaName = `ChainBeta${suffix}`;
   const channelName = `chain-room-${suffix}`;
 
-  const { electronApp, page } = await launchIsolatedApp(testInfo);
+  const server = await launchIsolatedBackend(testInfo);
 
   try {
-    const alphaCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+    const alphaCreate = await apiRequest<{ agent: { id: string } }>(server.backendBaseUrl, "/api/agents", {
       method: "POST",
       body: {
         name: alphaName,
@@ -1182,7 +1015,7 @@ test("channel mention chain continues beyond the former depth cap", async ({}, t
     });
     expect(alphaCreate.status).toBe(201);
 
-    const betaCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+    const betaCreate = await apiRequest<{ agent: { id: string } }>(server.backendBaseUrl, "/api/agents", {
       method: "POST",
       body: {
         name: betaName,
@@ -1192,14 +1025,14 @@ test("channel mention chain continues beyond the former depth cap", async ({}, t
     });
     expect(betaCreate.status).toBe(201);
 
-    const channel = await createChannelViaApi(page, testInfo, channelName, "deep mention chain verification");
+    const channel = await createChannelViaApi(server.backendBaseUrl, testInfo, channelName, "deep mention chain verification");
     const channelId = channel.id;
     const alphaId = alphaCreate.data.agent.id;
     const betaId = betaCreate.data.agent.id;
 
     expect(
       (
-        await apiRequest(page, `/api/channels/${channelId}/members`, {
+        await apiRequest(server.backendBaseUrl, `/api/channels/${channelId}/members`, {
           method: "POST",
           body: { agentId: alphaId },
         })
@@ -1207,7 +1040,7 @@ test("channel mention chain continues beyond the former depth cap", async ({}, t
     ).toBe(201);
     expect(
       (
-        await apiRequest(page, `/api/channels/${channelId}/members`, {
+        await apiRequest(server.backendBaseUrl, `/api/channels/${channelId}/members`, {
           method: "POST",
           body: { agentId: betaId },
         })
@@ -1216,7 +1049,7 @@ test("channel mention chain continues beyond the former depth cap", async ({}, t
 
     const sendMessage = await apiRequest<{
       message: { id: number };
-    }>(page, `/api/channels/${channelId}/messages`, {
+    }>(server.backendBaseUrl, `/api/channels/${channelId}/messages`, {
       method: "POST",
       body: {
         content: `@{${alphaName}} FORCE_CHAIN_BOUNCE:${betaName},4`,
@@ -1233,7 +1066,7 @@ test("channel mention chain continues beyond the former depth cap", async ({}, t
             status: string;
             depth: number;
           }>;
-        }>(page, `/api/channels/${channelId}/executions`);
+        }>(server.backendBaseUrl, `/api/channels/${channelId}/executions`);
         return response.data.jobs.map((job) => `${job.targetAgentId}:${job.status}:${job.depth}`);
       })
       .toEqual([
@@ -1251,7 +1084,7 @@ test("channel mention chain continues beyond the former depth cap", async ({}, t
         content: string;
         messageKind: string;
       }>;
-    }>(page, `/api/channels/${channelId}/messages`);
+    }>(server.backendBaseUrl, `/api/channels/${channelId}/messages`);
     expect(messagesResponse.status).toBe(200);
     expect(messagesResponse.data.messages).toHaveLength(6);
     expect(messagesResponse.data.messages.some((message) => message.senderType === "system")).toBe(false);
@@ -1261,7 +1094,7 @@ test("channel mention chain continues beyond the former depth cap", async ({}, t
     });
     expect(messagesResponse.data.messages[5]?.content).toContain("체인 종료");
   } finally {
-    await electronApp.close();
+    await server.close();
   }
 });
 
@@ -1271,10 +1104,10 @@ test("mention execution budget exhaustion skips remaining queued jobs", async ({
   const betaName = `BudgetBeta${suffix}`;
   const channelName = `budget-room-${suffix}`;
 
-  const { electronApp, page } = await launchIsolatedApp(testInfo);
+  const server = await launchIsolatedBackend(testInfo);
 
   try {
-    const alphaCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+    const alphaCreate = await apiRequest<{ agent: { id: string } }>(server.backendBaseUrl, "/api/agents", {
       method: "POST",
       body: {
         name: alphaName,
@@ -1284,7 +1117,7 @@ test("mention execution budget exhaustion skips remaining queued jobs", async ({
     });
     expect(alphaCreate.status).toBe(201);
 
-    const betaCreate = await apiRequest<{ agent: { id: string } }>(page, "/api/agents", {
+    const betaCreate = await apiRequest<{ agent: { id: string } }>(server.backendBaseUrl, "/api/agents", {
       method: "POST",
       body: {
         name: betaName,
@@ -1294,14 +1127,14 @@ test("mention execution budget exhaustion skips remaining queued jobs", async ({
     });
     expect(betaCreate.status).toBe(201);
 
-    const channel = await createChannelViaApi(page, testInfo, channelName, "mention execution budget verification");
+    const channel = await createChannelViaApi(server.backendBaseUrl, testInfo, channelName, "mention execution budget verification");
     const channelId = channel.id;
     const alphaId = alphaCreate.data.agent.id;
     const betaId = betaCreate.data.agent.id;
 
     expect(
       (
-        await apiRequest(page, `/api/channels/${channelId}/members`, {
+        await apiRequest(server.backendBaseUrl, `/api/channels/${channelId}/members`, {
           method: "POST",
           body: { agentId: alphaId },
         })
@@ -1309,7 +1142,7 @@ test("mention execution budget exhaustion skips remaining queued jobs", async ({
     ).toBe(201);
     expect(
       (
-        await apiRequest(page, `/api/channels/${channelId}/members`, {
+        await apiRequest(server.backendBaseUrl, `/api/channels/${channelId}/members`, {
           method: "POST",
           body: { agentId: betaId },
         })
@@ -1318,7 +1151,7 @@ test("mention execution budget exhaustion skips remaining queued jobs", async ({
 
     const sendMessage = await apiRequest<{
       message: { id: number };
-    }>(page, `/api/channels/${channelId}/messages`, {
+    }>(server.backendBaseUrl, `/api/channels/${channelId}/messages`, {
       method: "POST",
       body: {
         content: `@{${alphaName}} FORCE_CHAIN_BOUNCE:${betaName},12`,
@@ -1341,7 +1174,7 @@ test("mention execution budget exhaustion skips remaining queued jobs", async ({
             status: string;
             depth: number;
           }>;
-        }>(page, `/api/channels/${channelId}/executions`);
+        }>(server.backendBaseUrl, `/api/channels/${channelId}/executions`);
         return response.data.jobs.map((job) => `${job.targetAgentId}:${job.status}:${job.depth}`);
       })
       .toEqual(expectedJobStatuses);
@@ -1353,7 +1186,7 @@ test("mention execution budget exhaustion skips remaining queued jobs", async ({
         content: string;
         messageKind: string;
       }>;
-    }>(page, `/api/channels/${channelId}/messages`);
+    }>(server.backendBaseUrl, `/api/channels/${channelId}/messages`);
     expect(messagesResponse.status).toBe(200);
 
     const systemMessages = messagesResponse.data.messages.filter((message) => message.senderType === "system");
@@ -1366,6 +1199,6 @@ test("mention execution budget exhaustion skips remaining queued jobs", async ({
       messageKind: "result",
     });
   } finally {
-    await electronApp.close();
+    await server.close();
   }
 });

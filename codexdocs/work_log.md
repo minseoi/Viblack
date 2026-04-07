@@ -1188,3 +1188,36 @@
   - `npx playwright test tests/e2e/electron.settings.spec.ts` 통과
   - `npm run verify` 통과
   - 결과: Playwright 17 passed, real-codex 계열 2 skipped
+
+### 116) E2E 스위트 중복/저신호 단정 1차 정리
+- 사용자 요청:
+  - E2E 테스트를 리뷰하고 안 쓰거나 불필요한 것들을 정리
+- 조치 계획:
+  - 제품 회귀 가치가 낮은 표현/배치 의존 단정을 먼저 줄이고
+  - 다른 spec이 이미 직접 검증하는 happy-path는 중복 제거
+- 진행 업데이트:
+  - `electron.settings.spec.ts`에서 문구 부재, top-right 버튼 부재, 옵션 순서/개수 같은 저신호 단정을 제거하고 모델 저장/재적용/실행 검증만 유지
+  - `electron.settings.spec.ts`에서 초기 탭 active 상태와 패널 visible/hidden 같은 수동 UI 단정을 한 번 더 덜어내고, 실제 debug toggle 지속성과 메시지 노출 변화만 남김
+  - `electron.smoke.spec.ts`에서 아카이브 후 동일 채널명 재생성 UI 흐름을 제거하고 create/edit/delete + 인라인 오류 + 멤버/메시지 흐름 검증에 집중
+  - `electron.channel-metadata.spec.ts`에서 자연어 위임 happy-path를 제거하고, 전용 `electron.channel-delegation.spec.ts`가 해당 회귀를 대표하도록 정리
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npm run verify` 통과
+  - 결과: Playwright 16 passed, real-codex 계열 2 skipped
+
+### 117) API 중심 E2E의 Electron 창 의존 제거
+- 사용자 요청:
+  - API 테스트는 창 없이 돌릴 수 없나, 테스트할 때마다 창이 떴다 사라져서 거슬림
+- 조치 계획:
+  - backend 단독 child-process 하네스를 추가하고
+  - API 위주 spec을 Electron launch 대신 backend base URL 직접 호출로 전환
+- 진행 업데이트:
+  - `src/backend/test-server-entry.ts` 추가로 compiled backend server를 테스트용 child process로 기동/종료할 수 있게 함
+  - `tests/e2e/support/backend-harness.ts` 추가로 base URL 대기, 종료, 공통 API 호출 유틸을 묶음
+  - `electron.channel-delegation*.spec.ts`와 `electron.channel-metadata.spec.ts`를 Electron window 대신 backend 하네스로 전환
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npm run verify` 통과
+  - 결과: Playwright 16 passed, real-codex 계열 2 skipped, 전체 소요 43.2s
