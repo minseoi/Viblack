@@ -155,7 +155,7 @@ export async function launchDelegationEvalApp(
   const page = await electronApp.firstWindow();
   await page.waitForLoadState("domcontentloaded");
   await expect(page).toHaveTitle("Viblack");
-  await expect(page.locator("#status")).not.toHaveText("Loading...");
+  await expect(page.locator("#member-list .member-item").first()).toBeVisible();
   const backendBaseUrl = await page.evaluate(async () => window.viblackApi.getBackendBaseUrl());
   return { electronApp, page, backendBaseUrl };
 }

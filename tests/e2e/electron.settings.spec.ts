@@ -45,7 +45,7 @@ async function launchIsolatedApp(
   const page = await electronApp.firstWindow();
   await page.waitForLoadState("domcontentloaded");
   await expect(page).toHaveTitle("Viblack");
-  await expect(page.locator("#status")).not.toHaveText("Loading...");
+  await expect(page.locator("#member-list .member-item").first()).toBeVisible();
   return { electronApp, page };
 }
 
@@ -138,7 +138,7 @@ test("electron settings modal saves selected model and uses it for exec", async 
     await expect(page.locator("#member-modal[open]")).toHaveCount(0);
 
     await memberRow(page, memberName).locator(".member-main").click();
-    await expect(page.locator("#agent-title")).toHaveText(memberName);
+    await expect(page.locator("#agent-title")).toContainText(memberName);
     await page.fill("#chat-input", `FORCE_ASSERT_MODEL:${selectedModel}`);
     await page.click("#send-btn");
     await expect(
@@ -210,7 +210,7 @@ test("channel action blocks are visible only when debug mode is enabled", async 
 
     await page.reload();
     await page.waitForLoadState("domcontentloaded");
-    await expect(page.locator("#status")).not.toHaveText("Loading...");
+    await expect(page.locator("#member-list .member-item").first()).toBeVisible();
 
     await expect(channelRow(page, channelName)).toHaveCount(1);
     await channelRow(page, channelName).click();

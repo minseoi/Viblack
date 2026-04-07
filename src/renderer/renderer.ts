@@ -543,10 +543,7 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 function setStatus(text: string): void {
-  const statusEl = document.getElementById("status");
-  if (statusEl) {
-    statusEl.textContent = text;
-  }
+  void text;
   renderTypingIndicator();
 }
 

@@ -40,7 +40,7 @@ async function launchIsolatedApp(
   const page = await electronApp.firstWindow();
   await page.waitForLoadState("domcontentloaded");
   await expect(page).toHaveTitle("Viblack");
-  await expect(page.locator("#status")).not.toHaveText("Loading...");
+  await expect(page.locator("#member-list .member-item").first()).toBeVisible();
   return { electronApp, page };
 }
 
@@ -319,7 +319,6 @@ test("electron full feature regression flow", async ({}, testInfo) => {
         dmStreamMessageRow.evaluate((node) => window.getComputedStyle(node).borderTopColor),
       )
       .toBe(dmAgentBaseBorderColor);
-    await expect(page.locator("#status")).toContainText("Ready", { timeout: 7000 });
     await expect(page.locator("#typing-indicator")).not.toHaveClass(/show/);
 
     const dmAgentMessages = page.locator("#messages .msg-agent .msg-content");
@@ -525,21 +524,16 @@ test("electron full feature regression flow", async ({}, testInfo) => {
       `@{${memberAlphaEdited}} FORCE_STREAM_AGENT_MESSAGE_SEQ:abcdefghijklmnopqr|stuv|. FORCE_DELAY_MS:1800 FORCE_FINAL_REPLY:${channelStreamDedupFinalToken}`,
     );
     await page.click("#send-btn");
-    await expect(page.locator("#status")).toHaveText(/Channel is working\.\.\.|작성 중\.\.\./, {
-      timeout: 1200,
-    });
     await expect(page.locator("#typing-indicator")).toHaveClass(/show/, { timeout: 1200 });
     await expect(page.locator("#typing-label")).toContainText(memberAlphaEdited);
     await expect(channelMessages).toHaveCount(beforeChannelStreamDedupCount + 2, { timeout: 1200 });
     await expect(channelMessages).toHaveCount(beforeChannelStreamDedupCount + 2, { timeout: 1200 });
-    await expect(page.locator("#status")).toHaveText(/Channel is working\.\.\.|작성 중\.\.\./);
     await expect(
       page.locator("#messages .msg-agent .msg-content", {
         hasText: channelStreamDedupFinalToken,
       }),
     ).toHaveCount(1, { timeout: 7000 });
     await expect(channelMessages).toHaveCount(beforeChannelStreamDedupCount + 2, { timeout: 7000 });
-    await expect(page.locator("#status")).toContainText("Ready", { timeout: 7000 });
     await expect(page.locator("#typing-indicator")).not.toHaveClass(/show/, { timeout: 7000 });
 
     const alphaSenderItems = page.locator("#messages .msg-agent .msg-sender", {

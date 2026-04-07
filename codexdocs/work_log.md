@@ -1169,3 +1169,22 @@
   - `npx playwright test tests/e2e/electron.smoke.spec.ts` 통과
   - `npm run verify` 통과
   - 결과: Playwright 17 passed, real-codex 계열 2 skipped
+
+### 115) 헤더 상단 Ready 상태 칩 제거
+- 사용자 요청:
+  - 상단의 `Ready (...)` 상태 버튼/칩은 DM과 채널 모두에서 불필요하므로 제거
+- 조치 계획:
+  - 헤더 `#status` 표시를 DOM/CSS에서 제거
+  - 렌더러 상태 동기화는 타이핑 인디케이터만 갱신하도록 축소
+  - Playwright 런처와 스모크 회귀를 `#status` 의존 없이 동작하도록 수정
+- 진행 업데이트:
+  - 헤더 우측에는 채널 멤버 버튼만 남기고 `#status` 마크업/CSS 제거
+  - `setStatus`는 시각적 텍스트 갱신 대신 `renderTypingIndicator()`만 유지
+  - Electron E2E 런처들은 초기 로드 완료를 Helper 멤버 표시 기준으로 대체
+  - 스모크 테스트의 `Ready`/`Channel is working...` 단정은 타이핑 인디케이터 기준으로 정리
+- 최종 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npx playwright test tests/e2e/electron.settings.spec.ts` 통과
+  - `npm run verify` 통과
+  - 결과: Playwright 17 passed, real-codex 계열 2 skipped

@@ -39,7 +39,7 @@ async function launchIsolatedApp(
   const page = await electronApp.firstWindow();
   await page.waitForLoadState("domcontentloaded");
   await expect(page).toHaveTitle("Viblack");
-  await expect(page.locator("#status")).not.toHaveText("Loading...");
+  await expect(page.locator("#member-list .member-item").first()).toBeVisible();
   return { electronApp, page };
 }
 
