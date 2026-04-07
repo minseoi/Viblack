@@ -4,14 +4,16 @@ import { AgentRepository } from "../repositories/agent-repository";
 import {
   isCompletedAgentMessageStreamEvent,
 } from "./agent-message-stream";
-import { buildMemberExecutionSystemPrompt, isAgentMessageStreamType } from "./member-prompt";
+import { isAgentMessageStreamType } from "./member-prompt";
 import { AgentLockManager } from "./agent-lock-manager";
 import { AppSettingsService } from "./app-settings-service";
+import { PromptTemplateService } from "./prompt-template-service";
 
 export class AgentExecutionService {
   constructor(
     private readonly agentRepository: AgentRepository,
     private readonly appSettingsService: AppSettingsService,
+    private readonly promptTemplateService: PromptTemplateService,
     private readonly workspaceDir: string,
     private readonly lockManager: AgentLockManager,
   ) {}
@@ -37,7 +39,7 @@ export class AgentExecutionService {
       const selectedModel = this.appSettingsService.getSelectedModel();
       const codexResult = await runCodex({
         prompt: content,
-        systemPrompt: buildMemberExecutionSystemPrompt(agent, "dm"),
+        systemPrompt: this.promptTemplateService.buildMemberExecutionSystemPrompt(agent, "dm"),
         model: selectedModel,
         sessionId: runtimeSessionId,
         cwd: this.workspaceDir,

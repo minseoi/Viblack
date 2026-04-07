@@ -1339,3 +1339,27 @@
   - `npm run build` 통과
   - `npm run verify` 통과
   - 결과: Playwright 17 passed, real-codex 계열 2 skipped
+
+### 126) 시스템 프롬프트 파일 외부화 착수
+- 사용자 요청:
+  - 코드 안에 하드코딩된 시스템 프롬프트들을 별도 파일로 분리하고, 앱 시작 시 로드해서 사용하고 싶음.
+- 조사:
+  - 실행용 멤버 시스템 프롬프트는 `src/backend/services/member-prompt.ts`에 긴 문자열로 하드코딩되어 있었음.
+  - 시스템 프롬프트 생성용 user/system prompt는 `src/backend/routes/system-routes.ts`에 하드코딩되어 있었음.
+  - 새 멤버 생성 시 기본 시스템 프롬프트는 `src/renderer/renderer.ts`에 하드코딩되어 있었음.
+- 구현 계획:
+  - backend startup에서 템플릿 파일을 읽는 prompt template service 추가
+  - 실행용/생성용/기본 멤버 프롬프트를 텍스트 파일로 분리
+  - renderer init 시 기본 멤버 프롬프트를 받아와 create modal에 주입
+  - smoke에 startup-loaded prompt 반영 회귀 추가
+- 진행 업데이트:
+  - `src/backend/services/prompt-template-service.ts` 추가로 app startup 시 `src/backend/prompt-templates/*.md`를 로드하는 템플릿 서비스 도입.
+  - 실행용 멤버 시스템 프롬프트, 채널 실행 규칙, 시스템 프롬프트 생성용 user/system prompt, 기본 멤버 프롬프트를 각각 별도 파일로 분리.
+  - `startServer()`에 `appDir`를 추가해 runtime workspace와 템플릿 리소스 루트를 분리하고, DM/채널 실행 서비스와 system route가 공통 템플릿 서비스를 주입받도록 정리.
+  - renderer는 init 시 `/api/system/prompt-templates`를 한 번 읽고, 새 멤버 create modal 기본 system prompt에 startup-loaded 값을 사용하도록 변경.
+  - `electron.smoke.spec.ts`에 새 멤버 모달 기본 프롬프트가 startup-loaded 템플릿과 일치하는지 확인하는 회귀 추가.
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npm run verify` 통과
+  - 결과: Playwright 17 passed, real-codex 계열 2 skipped

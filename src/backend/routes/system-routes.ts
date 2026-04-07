@@ -1,11 +1,13 @@
 import type { Express } from "express";
 import { checkCodexAvailability, runCodex } from "../codex";
 import { AppSettingsService } from "../services/app-settings-service";
+import { PromptTemplateService } from "../services/prompt-template-service";
 import { sanitizeText, unwrapCodeFence } from "../services/text-utils";
 
 interface RegisterSystemRoutesOptions {
   workspaceDir: string;
   appSettingsService: AppSettingsService;
+  promptTemplateService: PromptTemplateService;
 }
 
 export function registerSystemRoutes(app: Express, options: RegisterSystemRoutesOptions): void {
@@ -16,6 +18,10 @@ export function registerSystemRoutes(app: Express, options: RegisterSystemRoutes
   app.get("/api/system/codex-status", async (_req, res) => {
     const status = await checkCodexAvailability(options.workspaceDir);
     res.json(status);
+  });
+
+  app.get("/api/system/prompt-templates", (_req, res) => {
+    res.json(options.promptTemplateService.getRendererPromptTemplates());
   });
 
   app.post("/api/system/generate-system-prompt", async (req, res) => {
@@ -34,23 +40,14 @@ export function registerSystemRoutes(app: Express, options: RegisterSystemRoutes
         return;
       }
 
-      const generationPrompt = [
-        "다음 정보를 바탕으로 AI 에이전트의 SYSTEM PROMPT를 작성하세요.",
-        `- 에이전트 이름: ${name || "(미지정)"}`,
-        `- 에이전트 역할: ${role}`,
-        "",
-        "요구사항:",
-        "1) 출력은 '시스템 프롬프트 본문 텍스트'만 반환 (설명/코드펜스/머리말 금지)",
-        "2) 한국어 기본 응답 원칙 포함, 사용자가 명시하면 해당 언어로 응답 허용",
-        "3) 역할 정체성, 작업 방식, 정확성/불확실성 처리, 보안/안전 경계 포함",
-        "4) 과장/추측 금지 및 모호한 요청 시 확인 질문 원칙 포함",
-        "5) 실무에서 바로 붙여넣어 쓸 수 있게 간결하고 구체적으로 작성",
-      ].join("\n");
+      const generationPrompt = options.promptTemplateService.buildSystemPromptGenerationUserPrompt({
+        name,
+        role,
+      });
 
       const codexResult = await runCodex({
         prompt: generationPrompt,
-        systemPrompt:
-          "You are an expert prompt engineer. Produce only the final system prompt text that the user can paste directly.",
+        systemPrompt: options.promptTemplateService.getSystemPromptGenerationSystemPrompt(),
         model: options.appSettingsService.getSelectedModel(),
         sessionId: null,
         cwd: options.workspaceDir,

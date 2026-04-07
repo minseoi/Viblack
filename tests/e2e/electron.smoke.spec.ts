@@ -399,7 +399,16 @@ test("electron full feature regression flow", async ({}, testInfo) => {
       .poll(async () => page.locator("#member-list .member-item").count())
       .toBeGreaterThan(0);
 
+    const promptTemplatesResponse = await apiRequest<{ defaultMemberSystemPrompt: string }>(
+      page,
+      "/api/system/prompt-templates",
+    );
+    expect(promptTemplatesResponse.status).toBe(200);
+
     await openAddMemberModal(page);
+    await expect(page.locator("#member-prompt-input")).toHaveValue(
+      promptTemplatesResponse.data.defaultMemberSystemPrompt,
+    );
     await page.fill("#member-name-input", memberAlpha);
     await page.fill("#member-role-input", "QA Engineer");
     await page.click("#member-generate-prompt-btn");

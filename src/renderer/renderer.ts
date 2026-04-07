@@ -73,6 +73,10 @@ interface AppSettingsResponse {
   debugMode: boolean;
 }
 
+interface PromptTemplatesResponse {
+  defaultMemberSystemPrompt: string;
+}
+
 interface RenderMessagesOptions {
   forceScrollToBottom?: boolean;
 }
@@ -83,6 +87,7 @@ let renderedMessages: ChatMessage[] = [];
 let agents: Agent[] = [];
 let codexReady = false;
 let appSettings: AppSettingsResponse | null = null;
+let promptTemplates: PromptTemplatesResponse | null = null;
 let openMemberMenuAgentId: string | null = null;
 let openChannelMenuChannelId: string | null = null;
 let memberFormMode: "create" | "edit" = "create";
@@ -977,6 +982,12 @@ async function loadSettings(): Promise<void> {
   renderSettingsModal();
 }
 
+async function loadPromptTemplates(): Promise<void> {
+  promptTemplates = await fetchJson<PromptTemplatesResponse>(
+    `${backendBaseUrl}/api/system/prompt-templates`,
+  );
+}
+
 async function openSettingsModal(): Promise<void> {
   const modal = document.getElementById("settings-modal") as HTMLDialogElement | null;
   if (!modal) {
@@ -1722,8 +1733,7 @@ function openMemberModal(mode: "create" | "edit", targetAgent: Agent | null): vo
     titleEl.textContent = "멤버 추가";
     nameInput.value = "";
     roleInput.value = "";
-    promptInput.value =
-      "You are a practical AI teammate. Reply in concise Korean unless asked otherwise.";
+    promptInput.value = promptTemplates?.defaultMemberSystemPrompt ?? "";
   }
 
   if (modal.open) {
@@ -2878,6 +2888,7 @@ function initMemberCrudUi(): void {
 async function init(): Promise<void> {
   try {
     backendBaseUrl = await window.viblackApi.getBackendBaseUrl();
+    await loadPromptTemplates();
     await loadSettings();
     closeChannelEventStream();
     initChannelEventStream();

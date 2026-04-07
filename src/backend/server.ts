@@ -18,8 +18,10 @@ import { AgentLockManager } from "./services/agent-lock-manager";
 import { AppSettingsService } from "./services/app-settings-service";
 import { ChannelMessageService } from "./services/channel-message-service";
 import { ChannelWorkspaceService } from "./services/channel-workspace-service";
+import { PromptTemplateService } from "./services/prompt-template-service";
 
 interface StartServerOptions {
+  appDir: string;
   dbPath: string;
   workspaceDir: string;
   preferredPort?: number;
@@ -41,12 +43,14 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
   const channelMessageRepository = new ChannelMessageRepository(db.connection);
   const channelExecutionRepository = new ChannelExecutionRepository(db.connection);
   const appSettingsService = new AppSettingsService(appSettingsRepository);
+  const promptTemplateService = new PromptTemplateService(options.appDir);
   const lockManager = new AgentLockManager();
   const channelEventBus = new ChannelEventBus();
   const channelWorkspaceService = new ChannelWorkspaceService();
   const agentExecutionService = new AgentExecutionService(
     agentRepository,
     appSettingsService,
+    promptTemplateService,
     options.workspaceDir,
     lockManager,
   );
@@ -58,6 +62,7 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
     channelMessageRepository,
     channelExecutionRepository,
     appSettingsService,
+    promptTemplateService,
     channelWorkspaceService,
     lockManager,
     channelEventBus,
@@ -68,6 +73,7 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
   registerSystemRoutes(app, {
     workspaceDir: options.workspaceDir,
     appSettingsService,
+    promptTemplateService,
   });
   registerSettingsRoutes(app, { appSettingsService });
   registerAgentRoutes(app, { agentRepository, agentExecutionService });

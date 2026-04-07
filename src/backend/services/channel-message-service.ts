@@ -15,13 +15,13 @@ import {
 } from "./agent-message-stream";
 import {
   buildChannelPrompt,
-  buildMemberExecutionSystemPrompt,
   isAgentMessageStreamType,
   type ChannelPromptTimelineEntry,
 } from "./member-prompt";
 import { parseChannelActions } from "./channel-action-protocol";
 import { ChannelWorkspaceService } from "./channel-workspace-service";
 import { extractMentionedAgents, type MentionedAgent } from "./mention-router";
+import { PromptTemplateService } from "./prompt-template-service";
 
 interface ChannelExecutionResult {
   agentId: string;
@@ -67,6 +67,7 @@ export class ChannelMessageService {
     private readonly channelMessageRepository: ChannelMessageRepository,
     private readonly channelExecutionRepository: ChannelExecutionRepository,
     private readonly appSettingsService: AppSettingsService,
+    private readonly promptTemplateService: PromptTemplateService,
     private readonly channelWorkspaceService: ChannelWorkspaceService,
     private readonly lockManager: AgentLockManager,
     private readonly eventBus: ChannelEventBus,
@@ -539,7 +540,10 @@ export class ChannelMessageService {
         let lastStreamContent = "";
         const codexResult = await runCodex({
           prompt,
-          systemPrompt: buildMemberExecutionSystemPrompt(targetAgent, "channel"),
+          systemPrompt: this.promptTemplateService.buildMemberExecutionSystemPrompt(
+            targetAgent,
+            "channel",
+          ),
           model: selectedModel,
           sessionId: runtimeSessionId,
           cwd: channelWorkspacePath,

@@ -49,9 +49,10 @@ function createWindow(): BrowserWindow {
 }
 
 async function boot(): Promise<void> {
-  const workspaceDir = app.getAppPath();
+  const appDir = app.getAppPath();
+  const workspaceDir = appDir;
   const dbPath = resolveDbPath(workspaceDir);
-  backendServer = await startServer({ dbPath, workspaceDir });
+  backendServer = await startServer({ appDir, dbPath, workspaceDir });
   backendBaseUrl = `http://127.0.0.1:${backendServer.port}`;
 
   try {

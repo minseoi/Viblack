@@ -45,6 +45,7 @@ async function shutdown(exitCode: number): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  const appDir = process.env.VIBLACK_APP_DIR?.trim() || process.cwd();
   const dbPath = getRequiredEnv("VIBLACK_DB_PATH");
   const workspaceDir = getRequiredEnv("VIBLACK_WORKSPACE_DIR");
   const preferredPortRaw = process.env.VIBLACK_PREFERRED_PORT?.trim();
@@ -53,7 +54,7 @@ async function main(): Promise<void> {
       ? Number.parseInt(preferredPortRaw, 10)
       : undefined;
 
-  startedServer = await startServer({ dbPath, workspaceDir, preferredPort });
+  startedServer = await startServer({ appDir, dbPath, workspaceDir, preferredPort });
   process.stdout.write(`VIBLACK_TEST_SERVER_READY http://127.0.0.1:${startedServer.port}\n`);
 }
 

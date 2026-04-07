@@ -55,6 +55,21 @@ npm run start
 5. 채널에 멤버를 추가한 뒤 메시지와 멘션으로 협업을 시작합니다.
 6. 채널 멤버는 다른 멤버를 다시 멘션해 작업을 넘기거나, 결과를 보고하고, 필요하면 산출물 경로를 함께 전달할 수 있습니다.
 
+## 프롬프트 템플릿
+
+프롬프트 템플릿은 `src/backend/prompt-templates/` 아래에 있고, 앱 시작 시 backend가 한 번 로드합니다. 템플릿 파일을 수정한 뒤에는 앱을 다시 실행해야 반영됩니다.
+
+- `default-member-system-prompt.md`
+  새 멤버 생성 모달을 열었을 때 기본값으로 채워지는 시스템 프롬프트입니다. 사용자가 직접 수정하지 않고 저장하면 이 템플릿이 멤버의 초기 `systemPrompt`가 됩니다.
+- `member-execution-system-prompt.md`
+  DM과 채널에서 Codex를 실제 실행할 때 공통으로 쓰는 실행용 시스템 프롬프트 골격입니다. 멤버 이름, 역할, 실행 컨텍스트, 사용자가 저장한 멤버별 시스템 프롬프트가 여기에 주입됩니다.
+- `member-execution-channel-rules.md`
+  채널 실행일 때만 `member-execution-system-prompt.md` 안에 추가되는 채널 전용 규칙입니다. 멘션 위임, `CHANNEL_ACTION` 형식, artifact 보고, 채널 워크스페이스 제한 같은 협업 규칙이 여기에 들어갑니다.
+- `system-prompt-generation-user.md`
+  멤버 생성/수정 모달에서 `시스템 프롬프트 자동 생성`을 눌렀을 때 Codex에 보내는 user prompt 템플릿입니다. 멤버 이름과 역할이 치환되어 초안 생성 요청에 사용됩니다.
+- `system-prompt-generation-system.md`
+  같은 자동 생성 흐름에서 함께 전달되는 system prompt 템플릿입니다. Codex가 설명 없이 최종 시스템 프롬프트 본문만 반환하도록 제한하는 역할을 합니다.
+
 ## 개발 및 테스트
 
 ### 주요 명령
