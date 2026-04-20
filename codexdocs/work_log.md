@@ -1363,3 +1363,52 @@
   - `npm run build` 통과
   - `npm run verify` 통과
   - 결과: Playwright 17 passed, real-codex 계열 2 skipped
+
+### 127) evaluate-tool 구현 착수
+- 사용자 요청:
+  - `codexdocs/evaluate/evaluate-tool-spec.md`를 기반으로 headless evaluate-tool을 구현하고, 사용 방법 문서를 별도로 작성해야 함.
+- 조사:
+  - 기존 backend-only harness는 `tests/e2e/support/backend-harness.ts`에 있고, delegation 평가 루프는 `tests/e2e/support/channel-delegation-eval.ts`에 묶여 있음.
+  - 현재 빌드는 root `tsconfig.json`이 `src/**`만 컴파일하므로 `tools/evaluator/**`를 위한 별도 TypeScript build 경로가 필요함.
+- 구현 계획:
+  - `tools/evaluator/` 아래에 CLI, scenario, scorer, reporter, runtime harness를 분리해서 추가
+  - 기존 delegation 평가 로직을 evaluator 코드로 옮기고 Playwright는 그 shared evaluator를 재사용
+  - baseline report 비교와 최종 decision 계산을 evaluator CLI에 포함
+  - 사용 문서를 별도 `codexdocs/` 문서로 작성
+- 진행 업데이트:
+  - `package.json`에 `build:app`, `build:evaluator`, `check:app`, `check:evaluator`, `eval:prompt`를 추가해 evaluator가 루트 빌드/체크 체인에 포함되도록 정리.
+  - `tools/evaluator/tsconfig.json` 추가로 `dist/tools/evaluator/` 빌드 경로를 신설.
+  - `tools/evaluator/src/` 아래에 runtime backend harness, repo path resolver, delegation-basic scorer, baseline comparison/final decision, JSON/Markdown reporter, CLI 엔트리(`run.ts`)를 추가.
+  - evaluator는 `dist/backend/test-server-entry.js`를 child process로 띄우고 backend API 계약을 재사용하는 구조로 구현.
+  - delegation Playwright spec 2개는 새 evaluator shared code를 사용하도록 전환했고, evaluator CLI 자체를 검증하는 `tests/e2e/evaluator.cli.spec.ts`를 추가.
+  - 기존 `tests/e2e/support/channel-delegation-eval.ts`는 제거.
+- 중간 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+- 추가 진행:
+  - `codexdocs/evaluate/evaluate-tool-usage.md` 추가로 fake/real 실행, baseline report 비교, output 구조, decision 해석, 현재 제약을 별도 사용 문서로 정리.
+  - evaluator CLI는 `delegation-basic` scenario, fake/real codex 선택, baseline report 비교, final decision(`promote/hold/reject/investigate`) 계산, JSON/Markdown report 출력을 지원하게 구현.
+  - `tests/e2e/evaluator.cli.spec.ts`에서 실제 CLI를 두 번 실행해 report artifact 생성과 baseline comparison 동작을 검증.
+  - `tests/e2e/electron.channel-delegation*.spec.ts`는 shared evaluator 경로를 사용하도록 전환해 evaluator와 Playwright가 같은 시나리오/채점 로직을 재사용하게 정리.
+- 최종 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npm run verify` 통과
+  - 결과: Playwright `18 passed, 2 skipped`
+
+### 128) evaluator real-only 정리 착수
+- 사용자 요청:
+  - evaluator는 프롬프트 하네스 엔지니어링 평가용이므로 fake Codex 평가는 user-facing 경로에서 불필요함.
+- 조정 방향:
+  - evaluator CLI와 관련 문서는 real Codex 전용으로 정리
+  - fake 경로는 앱 회귀용 shared helper에만 내부적으로 남기고, evaluator 사용 문서/옵션에서는 제거
+  - Playwright는 `fake 금지`와 `real opt-in 실행` 기준으로 재정리
+- 진행 업데이트:
+  - `tools/evaluator/src/run.ts`의 CLI 파서를 수정해 `--codex real`만 허용하고, `fake` 입력 시 명시적 에러로 종료하도록 변경.
+  - `codexdocs/evaluate/evaluate-tool-spec.md`, `codexdocs/evaluate/evaluate-tool-usage.md`에서 fake evaluator 실행 예시와 설명을 제거하고, user-facing evaluator는 real Codex만 지원한다고 정리.
+  - `tests/e2e/evaluator.cli.spec.ts`는 기본 회귀에서 `fake` 거부를 검증하고, 실제 evaluator 실행은 `VIBLACK_E2E_REAL_CODEX`가 있을 때만 opt-in으로 돌도록 재구성.
+- 검증:
+  - `npm run build` 통과
+  - `npx playwright test tests/e2e/evaluator.cli.spec.ts` 통과
+  - `npm run verify` 통과
+  - 결과: Playwright `18 passed, 3 skipped`

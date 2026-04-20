@@ -3,8 +3,13 @@
   "version": "1.0.0",
   "main": "dist/main.js",
   "scripts": {
-    "build": "tsc",
-    "check": "tsc --noEmit",
+    "build:app": "tsc -p tsconfig.json",
+    "build:evaluator": "tsc -p tools/evaluator/tsconfig.json",
+    "build": "npm run build:app && npm run build:evaluator",
+    "check:app": "tsc --noEmit -p tsconfig.json",
+    "check:evaluator": "tsc --noEmit -p tools/evaluator/tsconfig.json",
+    "check": "npm run check:app && npm run check:evaluator",
+    "eval:prompt": "npm run build && node dist/tools/evaluator/run.js",
     "start": "npm run build && electron .",
     "test:e2e": "npm run build && playwright test",
     "verify": "npm run check && npm run build && npm run test:e2e"
