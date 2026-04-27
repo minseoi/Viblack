@@ -9,7 +9,7 @@ interface CliOptions {
   suite?: string;
   codexKind: "real";
   outputDir?: string;
-  baselineReportPath?: string;
+  previousReportPath?: string;
   runtime?: string;
 }
 
@@ -21,7 +21,7 @@ function printUsage(): void {
   process.stdout.write(
     [
       "Usage:",
-      "  node dist/tools/evaluator/run.js --scenario delegation-basic --codex real --baseline-report path/to/report.json",
+      "  node dist/tools/evaluator/run.js --scenario delegation-basic --codex real --previous-report path/to/report.json",
       "  node dist/tools/evaluator/run.js --suite prompt-regression --codex real",
       "",
       "Options:",
@@ -29,7 +29,7 @@ function printUsage(): void {
       "  --suite <id>              Suite id to run",
       "  --codex <real>            Codex runtime kind (default: real)",
       "  --output-dir <path>       Directory to store evaluation artifacts",
-      "  --baseline-report <path>  Prior report JSON for delta comparison",
+      "  --previous-report <path>  Prior report JSON for qualitative comparison",
       "  --runtime <name>          Codex runtime preference, e.g. exec or app-server",
       "  --help                    Show this help",
       "",
@@ -60,8 +60,8 @@ function parseArgs(argv: string[]): CliOptions {
     } else if (arg === "--output-dir") {
       options.outputDir = next;
       index += 1;
-    } else if (arg === "--baseline-report") {
-      options.baselineReportPath = next;
+    } else if (arg === "--previous-report" || arg === "--baseline-report") {
+      options.previousReportPath = next;
       index += 1;
     } else if (arg === "--runtime") {
       options.runtime = next;
@@ -101,10 +101,10 @@ function defaultOutputDir(repoRoot: string, label: string, codexKind: string): s
 }
 
 function summarizeEvaluation(evaluation: EvaluationResult): string {
-  const comparison = evaluation.baselineComparison
-    ? ` delta=${evaluation.baselineComparison.deltaVerdict}/${evaluation.baselineComparison.deltaScore}`
+  const comparison = evaluation.previousRunComparison
+    ? ` compare=${evaluation.previousRunComparison.verdict}`
     : "";
-  return `[${evaluation.scenarioId}] ${evaluation.report.score}/${evaluation.report.maxScore} ${evaluation.report.verdict} decision=${evaluation.finalDecision.decision}${comparison}`;
+  return `[${evaluation.scenarioId}] ${evaluation.report.verdict}${comparison}`;
 }
 
 function writeSuiteSummary(outputDir: string, evaluations: EvaluationResult[]): void {
@@ -117,11 +117,9 @@ function writeSuiteSummary(outputDir: string, evaluations: EvaluationResult[]): 
         generatedAt: new Date().toISOString(),
         evaluations: evaluations.map((evaluation) => ({
           scenarioId: evaluation.scenarioId,
-          score: evaluation.report.score,
-          maxScore: evaluation.report.maxScore,
           verdict: evaluation.report.verdict,
-          finalDecision: evaluation.finalDecision.decision,
-          baselineComparison: evaluation.baselineComparison,
+          improvementAreaCount: evaluation.feedback.improvementAreas.length,
+          comparisonVerdict: evaluation.previousRunComparison?.verdict ?? null,
         })),
       },
       null,
@@ -135,7 +133,7 @@ function writeSuiteSummary(outputDir: string, evaluations: EvaluationResult[]): 
     "",
     ...evaluations.map(
       (evaluation) =>
-        `- ${evaluation.scenarioId}: ${evaluation.report.score}/${evaluation.report.maxScore}, verdict=${evaluation.report.verdict}, decision=${evaluation.finalDecision.decision}`,
+        `- ${evaluation.scenarioId}: verdict=${evaluation.report.verdict}, improvementAreas=${evaluation.feedback.improvementAreas.length}, compare=${evaluation.previousRunComparison?.verdict ?? "n/a"}`,
     ),
     "",
   ].join("\n");
@@ -159,7 +157,7 @@ async function main(): Promise<void> {
     const { evaluation, artifactPaths } = await runDelegationBasicEvaluation({
       codexKind: options.codexKind,
       outputDir: scenarioOutputDir,
-      baselineReportPath: options.baselineReportPath,
+      previousReportPath: options.previousReportPath,
       runtime: options.runtime,
       repoRoot,
     });
@@ -173,7 +171,7 @@ async function main(): Promise<void> {
     writeSuiteSummary(outputDir, evaluations);
   }
 
-  if (evaluations.some((evaluation) => evaluation.finalDecision.decision === "reject")) {
+  if (evaluations.some((evaluation) => evaluation.report.verdict === "fail")) {
     process.exitCode = 1;
   }
 }

@@ -15,15 +15,12 @@ function isQuestionLike(content: string): boolean {
 function buildCriterion(
   key: string,
   label: string,
-  maxScore: number,
   passed: boolean,
   evidence: string,
 ): EvalCriterion {
   return {
     key,
     label,
-    maxScore,
-    earnedScore: passed ? maxScore : 0,
     passed,
     evidence,
   };
@@ -57,6 +54,9 @@ export function evaluateDelegationBasicReport(input: {
   const mentionsById = new Map<number, string[]>(input.transcript.map((entry) => [entry.id, entry.mentions]));
   const nonProgressMessages = input.transcript.filter((entry) => entry.messageKind !== "progress");
   const agentMessages = nonProgressMessages.filter((entry) => entry.senderType === "agent");
+  const progressMessages = input.transcript.filter(
+    (entry) => entry.senderType === "agent" && entry.messageKind === "progress",
+  );
   const systemMessages = nonProgressMessages.filter((entry) => entry.senderType === "system");
   const userMessages = nonProgressMessages.filter((entry) => entry.senderType === "user");
 
@@ -103,19 +103,29 @@ export function evaluateDelegationBasicReport(input: {
   });
 
   const reasonableJobCount = input.jobs.length > 0 && input.jobs.length <= 6;
+  const compactProgressUpdates = progressMessages.length <= 3;
+  const irrelevantWorkspaceChatterMessage = input.transcript.find((entry) => {
+    if (entry.senderType !== "agent") {
+      return false;
+    }
+    return ["codexdocs/", "워크스페이스를 확인해 보니", "파일도 비어 있는 상태"].some((token) =>
+      entry.content.includes(token),
+    );
+  });
+  const genericTestDisclaimerMessage = agentMessages.find((entry) =>
+    ["테스트는 진행하지 않았습니다", "코드 검증", "별도 코드 검증"].some((token) => entry.content.includes(token)),
+  );
 
   const criteria = [
     buildCriterion(
       "initial_coordinator",
       "최초 요청이 coordinator에게 전달됨",
-      15,
       coordinatorFirst,
       coordinatorFirst ? `첫 실행 대상이 ${input.coordinatorName}였다.` : "첫 실행 대상이 coordinator가 아니거나 job이 비어 있다.",
     ),
     buildCriterion(
       "research_before_writer",
       "조사 단계가 문서화보다 먼저 시작됨",
-      20,
       researchBeforeWriter,
       researchBeforeWriter
         ? `${input.researcherName} job(${firstResearcherJob?.id})이 ${input.writerName} job(${firstWriterJob?.id})보다 먼저 생성됐다.`
@@ -124,7 +134,6 @@ export function evaluateDelegationBasicReport(input: {
     buildCriterion(
       "research_reported",
       "조사 결과가 공개 채널에 보고됨",
-      15,
       researcherReported,
       researcherReported
         ? `${input.researcherName}가 message ${firstResearcherMessage?.id}로 공개 보고를 남겼다.`
@@ -133,7 +142,6 @@ export function evaluateDelegationBasicReport(input: {
     buildCriterion(
       "writer_after_research",
       "문서 작성이 조사 결과 이후에 진행됨",
-      15,
       writerAfterResearch,
       writerAfterResearch
         ? `${input.writerName}의 첫 결과(message ${firstWriterMessage?.id})가 조사 결과 이후에 나왔다.`
@@ -142,7 +150,6 @@ export function evaluateDelegationBasicReport(input: {
     buildCriterion(
       "final_report",
       "coordinator가 사용자에게 최종 완료를 보고함",
-      20,
       finalCoordinatorReport,
       finalCoordinatorReport
         ? `${input.coordinatorName}가 후속 멘션 없이 마지막 답변을 남겼다.`
@@ -151,14 +158,12 @@ export function evaluateDelegationBasicReport(input: {
     buildCriterion(
       "no_budget_exhausted",
       "실행 예산 소진 없이 종료됨",
-      5,
       noBudgetExhausted,
       noBudgetExhausted ? "예산 소진 시스템 메시지가 없다." : "멘션 실행 한도 소진 메시지가 기록됐다.",
     ),
     buildCriterion(
       "no_question_loop",
       "사용자 답변 없이 내부 질문 루프로 진행하지 않음",
-      5,
       !questionWithoutUserFollowup,
       questionWithoutUserFollowup
         ? `message ${questionWithoutUserFollowup.id}에서 질문 후 사용자 응답 없이 후속 에이전트 실행이 이어졌다.`
@@ -167,9 +172,32 @@ export function evaluateDelegationBasicReport(input: {
     buildCriterion(
       "reasonable_job_count",
       "위임 체인이 과도하게 증식하지 않음",
-      5,
       reasonableJobCount,
       reasonableJobCount ? `실행 job 수는 ${input.jobs.length}건이다.` : `실행 job 수가 과도하다: ${input.jobs.length}건.`,
+    ),
+    buildCriterion(
+      "compact_progress_updates",
+      "중간 progress 보고가 과도하게 반복되지 않음",
+      compactProgressUpdates,
+      compactProgressUpdates
+        ? `progress message 수는 ${progressMessages.length}건이다.`
+        : `progress message가 과도하다: ${progressMessages.length}건.`,
+    ),
+    buildCriterion(
+      "no_irrelevant_workspace_chatter",
+      "작업과 무관한 workspace 탐색 설명을 공개 채널에 흘리지 않음",
+      !irrelevantWorkspaceChatterMessage,
+      irrelevantWorkspaceChatterMessage
+        ? `message ${irrelevantWorkspaceChatterMessage.id}에서 불필요한 workspace 탐색 설명이 노출됐다.`
+        : "작업과 무관한 workspace 탐색 설명이 감지되지 않았다.",
+    ),
+    buildCriterion(
+      "no_generic_test_disclaimer",
+      "비코드 작업 결과에 generic 테스트 미실행 문구를 붙이지 않음",
+      !genericTestDisclaimerMessage,
+      genericTestDisclaimerMessage
+        ? `message ${genericTestDisclaimerMessage.id}에서 generic 테스트 미실행 문구가 노출됐다.`
+        : "generic 테스트 미실행 문구가 감지되지 않았다.",
     ),
   ];
 
@@ -196,17 +224,17 @@ export function evaluateDelegationBasicReport(input: {
     ),
   ];
 
-  const score = criteria.reduce((sum, criterion) => sum + criterion.earnedScore, 0);
-  const maxScore = criteria.reduce((sum, criterion) => sum + criterion.maxScore, 0);
   const issues = [
     ...criteria.filter((criterion) => !criterion.passed).map((criterion) => criterion.evidence),
     ...hardGates.filter((gate) => !gate.passed).map((gate) => gate.evidence),
   ];
-  const verdict = score >= 85 && hardGates.every((gate) => gate.passed) ? "pass" : "fail";
+  const verdict = hardGates.every((gate) => gate.passed) ? "pass" : "fail";
   const summary =
     verdict === "pass"
-      ? `Delegation flow succeeded with score ${score}/${maxScore}.`
-      : `Delegation flow failed with score ${score}/${maxScore}. ${issues[0] ?? "No issue details available."}`;
+      ? issues.length === 0
+        ? "Delegation flow completed and no prompt improvement areas were flagged."
+        : `Delegation flow completed, but ${issues.length} prompt improvement area(s) were flagged.`
+      : `Delegation flow failed. ${issues[0] ?? "No issue details available."}`;
 
   const questionCount = agentMessages.filter((entry) => isQuestionLike(entry.content)).length;
 
@@ -228,8 +256,6 @@ export function evaluateDelegationBasicReport(input: {
     finishedAt: input.finishedAt,
     transcript: input.transcript,
     jobs: input.jobs,
-    score,
-    maxScore,
     verdict,
     criteria,
     hardGates,
@@ -238,6 +264,7 @@ export function evaluateDelegationBasicReport(input: {
     metrics: {
       jobCount: input.jobs.length,
       agentMessageCount: agentMessages.length,
+      progressMessageCount: progressMessages.length,
       userMessageCount: userMessages.length,
       systemMessageCount: systemMessages.length,
       questionCount,

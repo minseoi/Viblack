@@ -5,13 +5,13 @@ import { ensureDirectory, resolveFakeCodexPath, resolveRepoRoot } from "../runti
 import { writeEvaluationJson } from "../reporters/json-reporter";
 import { writeEvaluationMarkdown } from "../reporters/markdown-reporter";
 import { evaluateDelegationBasicReport } from "../scorers/delegation-basic-scorer";
-import { buildFinalDecision, compareAgainstBaseline, loadScenarioReportFromJson } from "../scorers/final-decision";
+import { buildPromptFeedback, compareWithPreviousRun, loadScenarioReportFromJson } from "../scorers/final-decision";
 import type {
   ChannelAction,
   CodexKind,
+  EvaluationResult,
   EvalJobEntry,
   EvalTranscriptEntry,
-  EvaluationResult,
 } from "../types";
 
 export const DELEGATION_BASIC_SCENARIO_ID = "delegation-basic";
@@ -19,6 +19,7 @@ export const DELEGATION_BASIC_SCENARIO_ID = "delegation-basic";
 export interface RunDelegationBasicEvaluationOptions {
   codexKind: CodexKind;
   outputDir: string;
+  previousReportPath?: string;
   baselineReportPath?: string;
   runtime?: string;
   settleOptions?: {
@@ -419,10 +420,11 @@ export async function runDelegationBasicEvaluation(
       durationMs: Date.now() - startedAtMs,
     });
 
-    const baselineComparison = options.baselineReportPath
-      ? compareAgainstBaseline(report, loadScenarioReportFromJson(path.resolve(options.baselineReportPath)), path.resolve(options.baselineReportPath))
+    const previousReportPath = options.previousReportPath ?? options.baselineReportPath;
+    const previousRunComparison = previousReportPath
+      ? compareWithPreviousRun(report, loadScenarioReportFromJson(path.resolve(previousReportPath)), path.resolve(previousReportPath))
       : null;
-    const finalDecision = buildFinalDecision(report, baselineComparison);
+    const feedback = buildPromptFeedback(report, previousRunComparison);
 
     const evaluation: EvaluationResult = {
       toolName: "viblack-evaluator",
@@ -432,8 +434,8 @@ export async function runDelegationBasicEvaluation(
       codexKind: options.codexKind,
       runtime,
       report,
-      baselineComparison,
-      finalDecision,
+      feedback,
+      previousRunComparison,
       runtimePaths: {
         outputDir,
         runtimeDir,

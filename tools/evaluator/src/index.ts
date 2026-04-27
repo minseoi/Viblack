@@ -2,9 +2,9 @@ export { runDelegationBasicEvaluation, DELEGATION_BASIC_SCENARIO_ID } from "./sc
 export { resolveFakeCodexPath, resolveRepoRoot } from "./runtime/paths";
 export { apiRequest, launchBackendHarness } from "./runtime/backend-harness";
 export type {
-  BaselineComparison,
   CodexKind,
   EvaluationResult,
-  FinalDecision,
+  PreviousRunComparison,
+  PromptFeedback,
   ScenarioEvaluationReport,
 } from "./types";

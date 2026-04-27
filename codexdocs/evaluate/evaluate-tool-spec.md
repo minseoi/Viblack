@@ -1,5 +1,16 @@
 # Evaluate Tool Spec
 
+## 상태 메모
+
+이 문서는 evaluator의 초기 설계 메모를 포함하고 있어, 일부 섹션은 현재 구현과 다를 수 있다.
+
+현재 구현의 authoritative behavior는 아래 두 문서를 따른다.
+
+- [evaluate-tool-usage.md](/Users/minseoi/dev/Viblack/codexdocs/evaluate/evaluate-tool-usage.md)
+- [evaluate-loop-playbook.md](/Users/minseoi/dev/Viblack/codexdocs/evaluate/evaluate-loop-playbook.md)
+
+특히 현재 구현은 더 이상 numeric score나 `promote/hold/reject/investigate` 판정을 주축으로 삼지 않고, `feedback`과 `previousRunComparison` 기반의 qualitative loop를 사용한다.
+
 ## 목적
 
 Viblack의 프롬프트 템플릿과 멤버 협업 규칙을 UI 개발과 분리해서 개선할 수 있는 headless 평가 도구를 정의한다.

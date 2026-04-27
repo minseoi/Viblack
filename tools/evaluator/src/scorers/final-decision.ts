@@ -1,13 +1,77 @@
 import fs from "node:fs";
 import type {
-  BaselineComparison,
+  EvalCriterion,
+  EvalGateCheck,
   EvaluationResult,
-  FinalDecision,
+  PreviousRunComparison,
+  PromptFeedback,
   ScenarioEvaluationReport,
 } from "../types";
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
+function uniqueNonEmpty(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter((value) => value.length > 0))];
+}
+
+function buildCheckMaps<T extends EvalCriterion | EvalGateCheck>(checks: T[]): Map<string, T> {
+  return new Map(checks.map((check) => [check.key, check]));
+}
+
+function recordCheckDelta(
+  kindLabel: string,
+  currentChecks: Array<EvalCriterion | EvalGateCheck>,
+  previousChecks: Array<EvalCriterion | EvalGateCheck>,
+  improvements: string[],
+  regressions: string[],
+  unchangedConcerns: string[],
+): void {
+  const previousByKey = buildCheckMaps(previousChecks);
+  for (const currentCheck of currentChecks) {
+    const previousCheck = previousByKey.get(currentCheck.key);
+    if (!previousCheck) {
+      continue;
+    }
+
+    if (!previousCheck.passed && currentCheck.passed) {
+      improvements.push(`${kindLabel} 개선: ${currentCheck.label}`);
+      continue;
+    }
+
+    if (previousCheck.passed && !currentCheck.passed) {
+      regressions.push(`${kindLabel} 퇴보: ${currentCheck.evidence}`);
+      continue;
+    }
+
+    if (!previousCheck.passed && !currentCheck.passed) {
+      unchangedConcerns.push(`${kindLabel} 미해결: ${currentCheck.evidence}`);
+    }
+  }
+}
+
+function compareMetricDirection(
+  label: string,
+  previousValue: number,
+  currentValue: number,
+  improvements: string[],
+  regressions: string[],
+): void {
+  if (currentValue < previousValue) {
+    improvements.push(`${label} 감소: ${previousValue} -> ${currentValue}`);
+  } else if (currentValue > previousValue) {
+    regressions.push(`${label} 증가: ${previousValue} -> ${currentValue}`);
+  }
+}
+
+function compareDuration(
+  previousDurationMs: number,
+  currentDurationMs: number,
+  improvements: string[],
+  regressions: string[],
+): void {
+  if (currentDurationMs < previousDurationMs * 0.9) {
+    improvements.push(`실행 시간 단축: ${previousDurationMs}ms -> ${currentDurationMs}ms`);
+  } else if (currentDurationMs > previousDurationMs * 1.2) {
+    regressions.push(`실행 시간 증가: ${previousDurationMs}ms -> ${currentDurationMs}ms`);
+  }
 }
 
 export function loadScenarioReportFromJson(filePath: string): ScenarioEvaluationReport {
@@ -18,115 +82,83 @@ export function loadScenarioReportFromJson(filePath: string): ScenarioEvaluation
   return raw;
 }
 
-export function compareAgainstBaseline(
+export function compareWithPreviousRun(
   current: ScenarioEvaluationReport,
-  baseline: ScenarioEvaluationReport,
-  baselineReportPath: string,
-): BaselineComparison {
-  if (current.scenario.id !== baseline.scenario.id) {
+  previous: ScenarioEvaluationReport,
+  previousReportPath: string,
+): PreviousRunComparison {
+  if (current.scenario.id !== previous.scenario.id) {
     return {
-      baselineReportPath,
-      baselineScenarioId: baseline.scenario.id,
-      baselineScore: baseline.score,
-      currentScore: current.score,
-      deltaScore: current.score - baseline.score,
-      deltaVerdict: "unclear",
-      deltaConfidence: 0.25,
-      efficiencyVerdict: "unclear",
-      efficiencyNotes: ["baseline report의 scenario id가 current와 다르다."],
-      summary: "Baseline scenario가 달라 직접 비교할 수 없다.",
+      previousReportPath,
+      previousScenarioId: previous.scenario.id,
+      verdict: "uncomparable",
+      improvements: [],
+      regressions: [],
+      unchangedConcerns: [],
+      summary: "Previous report의 scenario id가 달라 직접 비교할 수 없다.",
     };
   }
 
-  const deltaScore = current.score - baseline.score;
-  const deltaVerdict =
-    deltaScore >= 5 ? "better" : deltaScore <= -5 ? "worse" : Math.abs(deltaScore) <= 2 ? "same" : "unclear";
+  const improvements: string[] = [];
+  const regressions: string[] = [];
+  const unchangedConcerns: string[] = [];
 
-  const efficiencyNotes: string[] = [];
-  let worseSignals = 0;
-  let betterSignals = 0;
+  recordCheckDelta("criterion", current.criteria, previous.criteria, improvements, regressions, unchangedConcerns);
+  recordCheckDelta("hard gate", current.hardGates, previous.hardGates, improvements, regressions, unchangedConcerns);
 
-  if (current.metrics.jobCount < baseline.metrics.jobCount) {
-    efficiencyNotes.push(`job 수 감소: ${baseline.metrics.jobCount} -> ${current.metrics.jobCount}`);
-    betterSignals += 1;
-  } else if (current.metrics.jobCount > baseline.metrics.jobCount) {
-    efficiencyNotes.push(`job 수 증가: ${baseline.metrics.jobCount} -> ${current.metrics.jobCount}`);
-    worseSignals += 1;
-  }
-
-  if (current.metrics.questionCount < baseline.metrics.questionCount) {
-    efficiencyNotes.push(`질문 수 감소: ${baseline.metrics.questionCount} -> ${current.metrics.questionCount}`);
-    betterSignals += 1;
-  } else if (current.metrics.questionCount > baseline.metrics.questionCount) {
-    efficiencyNotes.push(`질문 수 증가: ${baseline.metrics.questionCount} -> ${current.metrics.questionCount}`);
-    worseSignals += 1;
-  }
-
-  if (current.metrics.agentMessageCount < baseline.metrics.agentMessageCount) {
-    efficiencyNotes.push(
-      `agent message 수 감소: ${baseline.metrics.agentMessageCount} -> ${current.metrics.agentMessageCount}`,
+  compareMetricDirection("job 수", previous.metrics.jobCount, current.metrics.jobCount, improvements, regressions);
+  compareMetricDirection(
+    "질문 수",
+    previous.metrics.questionCount,
+    current.metrics.questionCount,
+    improvements,
+    regressions,
+  );
+  compareMetricDirection(
+    "progress message 수",
+    previous.metrics.progressMessageCount,
+    current.metrics.progressMessageCount,
+    improvements,
+    regressions,
+  );
+  if (current.metrics.agentMessageCount < previous.metrics.agentMessageCount - 1) {
+    improvements.push(
+      `agent message 수 감소: ${previous.metrics.agentMessageCount} -> ${current.metrics.agentMessageCount}`,
     );
-    betterSignals += 1;
-  } else if (current.metrics.agentMessageCount > baseline.metrics.agentMessageCount + 1) {
-    efficiencyNotes.push(
-      `agent message 수 증가: ${baseline.metrics.agentMessageCount} -> ${current.metrics.agentMessageCount}`,
+  } else if (current.metrics.agentMessageCount > previous.metrics.agentMessageCount + 1) {
+    regressions.push(
+      `agent message 수 증가: ${previous.metrics.agentMessageCount} -> ${current.metrics.agentMessageCount}`,
     );
-    worseSignals += 1;
   }
+  compareDuration(previous.metrics.durationMs, current.metrics.durationMs, improvements, regressions);
 
-  if (current.metrics.durationMs < baseline.metrics.durationMs * 0.9) {
-    efficiencyNotes.push(`실행 시간 단축: ${baseline.metrics.durationMs}ms -> ${current.metrics.durationMs}ms`);
-    betterSignals += 1;
-  } else if (current.metrics.durationMs > baseline.metrics.durationMs * 1.2) {
-    efficiencyNotes.push(`실행 시간 증가: ${baseline.metrics.durationMs}ms -> ${current.metrics.durationMs}ms`);
-    worseSignals += 1;
-  }
-
-  let efficiencyVerdict: BaselineComparison["efficiencyVerdict"] = "same";
-  if (betterSignals > 0 && worseSignals === 0) {
-    efficiencyVerdict = "better";
-  } else if (worseSignals > 0 && betterSignals === 0) {
-    efficiencyVerdict = "worse";
-  } else if (worseSignals > 0 && betterSignals > 0) {
-    efficiencyVerdict = "unclear";
-  }
-
-  const confidenceBase =
-    deltaVerdict === "better" || deltaVerdict === "worse"
-      ? 0.75 + Math.min(Math.abs(deltaScore), 15) / 50
-      : deltaVerdict === "same"
-        ? 0.7
-        : 0.5;
-  const efficiencyAdjustment =
-    efficiencyVerdict === "unclear" ? -0.15 : efficiencyVerdict === "same" ? -0.05 : 0;
-
-  const deltaConfidence = clamp(confidenceBase + efficiencyAdjustment, 0.2, 0.95);
+  const verdict =
+    improvements.length > 0 && regressions.length === 0
+      ? "better"
+      : regressions.length > 0 && improvements.length === 0
+        ? "worse"
+        : improvements.length > 0 && regressions.length > 0
+          ? "mixed"
+          : "same";
 
   const summary =
-    deltaVerdict === "better"
-      ? `Baseline 대비 ${deltaScore}점 상승했다.`
-      : deltaVerdict === "worse"
-        ? `Baseline 대비 ${Math.abs(deltaScore)}점 하락했다.`
-        : deltaVerdict === "same"
-          ? "Baseline과 유사한 점수대다."
-          : "점수 변화가 애매해 개선 여부가 불명확하다.";
+    verdict === "better"
+      ? "직전 실행 대비 개선만 확인됐다."
+      : verdict === "worse"
+        ? "직전 실행 대비 퇴보만 확인됐다."
+        : verdict === "mixed"
+          ? "직전 실행 대비 개선과 퇴보가 함께 나타났다."
+          : "직전 실행과 큰 차이가 없다.";
 
   return {
-    baselineReportPath,
-    baselineScenarioId: baseline.scenario.id,
-    baselineScore: baseline.score,
-    currentScore: current.score,
-    deltaScore,
-    deltaVerdict,
-    deltaConfidence,
-    efficiencyVerdict,
-    efficiencyNotes,
+    previousReportPath,
+    previousScenarioId: previous.scenario.id,
+    verdict,
+    improvements: uniqueNonEmpty(improvements),
+    regressions: uniqueNonEmpty(regressions),
+    unchangedConcerns: uniqueNonEmpty(unchangedConcerns),
     summary,
   };
-}
-
-function uniqueNonEmpty(values: string[]): string[] {
-  return [...new Set(values.map((value) => value.trim()).filter((value) => value.length > 0))];
 }
 
 function suggestionForCriterion(key: string): string {
@@ -147,92 +179,47 @@ function suggestionForCriterion(key: string): string {
       return "명확한 요청에서는 clarification 없이 진행하고 질문은 정말 필요한 경우만 하게 한다.";
     case "reasonable_job_count":
       return "중간 handoff와 중복 요약을 줄여 위임 체인을 압축한다.";
+    case "compact_progress_updates":
+      return "중간 progress 보고는 꼭 필요한 1~2회 수준으로 줄이고, 완료 직전까지 불필요한 상태 설명을 반복하지 않게 한다.";
+    case "no_irrelevant_workspace_chatter":
+      return "사용자 과업과 직접 관련 없는 repo/워크스페이스 탐색 설명은 공개 답변에 드러내지 말고 결과 보고에 집중하게 한다.";
+    case "no_generic_test_disclaimer":
+      return "문서/비코드 작업에서는 generic한 테스트 미실행 문구를 제거하고 산출물과 핵심 결과만 보고하게 한다.";
     default:
       return "실패 기준에 맞는 행동 제약을 프롬프트에 더 구체적으로 반영한다.";
   }
 }
 
-export function buildFinalDecision(
+export function buildPromptFeedback(
   report: ScenarioEvaluationReport,
-  comparison: BaselineComparison | null,
-): FinalDecision {
-  const hardGateFailure = report.hardGates.some((gate) => !gate.passed);
+  comparison: PreviousRunComparison | null,
+): PromptFeedback {
   const strengths = uniqueNonEmpty([
     ...report.criteria.filter((criterion) => criterion.passed).slice(0, 3).map((criterion) => criterion.label),
-    ...(comparison?.deltaVerdict === "better" ? ["baseline 대비 품질 개선"] : []),
-    ...(comparison?.efficiencyVerdict === "better" ? ["효율성 개선"] : []),
+    ...(report.hardGates.every((gate) => gate.passed) ? ["핵심 hard gate를 모두 통과함"] : []),
+    ...(comparison?.improvements.slice(0, 2) ?? []),
   ]);
-  const weaknesses = uniqueNonEmpty([
-    ...report.criteria.filter((criterion) => !criterion.passed).map((criterion) => criterion.evidence),
+
+  const improvementAreas = uniqueNonEmpty([
     ...report.hardGates.filter((gate) => !gate.passed).map((gate) => gate.evidence),
-    ...(comparison?.efficiencyVerdict === "worse" ? comparison.efficiencyNotes : []),
+    ...report.criteria.filter((criterion) => !criterion.passed).map((criterion) => criterion.evidence),
+    ...(comparison?.regressions ?? []),
+    ...(comparison?.unchangedConcerns ?? []),
   ]);
+
   const nextPromptChanges = uniqueNonEmpty([
     ...report.criteria.filter((criterion) => !criterion.passed).map((criterion) => suggestionForCriterion(criterion.key)),
-    ...(comparison?.efficiencyVerdict === "worse"
-      ? ["중간 보고와 질문을 줄여 더 적은 턴으로 끝나도록 프롬프트를 압축한다."]
+    ...(comparison?.regressions.some((entry) => entry.includes("질문 수 증가"))
+      ? ["clarification은 정말 필요한 경우에만 허용하고, 질문 후 바로 후속 실행으로 이어지는 루프를 더 강하게 금지한다."]
       : []),
-    ...(!comparison ? ["baseline report를 저장해 다음 실험부터 개선 폭을 비교 가능하게 만든다."] : []),
+    ...(comparison?.regressions.some((entry) => entry.includes("progress message 수 증가"))
+      ? ["worker의 progress 업데이트 수를 제한하고, 상태 설명보다 결과 보고를 우선하도록 문구를 압축한다."]
+      : []),
   ]);
 
-  if (hardGateFailure || report.verdict === "fail") {
-    return {
-      decision: "reject",
-      reason: report.hardGates.find((gate) => !gate.passed)?.evidence ?? report.summary,
-      strengths,
-      weaknesses,
-      nextPromptChanges,
-    };
-  }
-
-  if (!comparison) {
-    return {
-      decision: "hold",
-      reason: "현재 실행은 통과했지만 baseline report가 없어 개선 여부를 판정할 수 없다.",
-      strengths,
-      weaknesses,
-      nextPromptChanges,
-    };
-  }
-
-  if (comparison.deltaVerdict === "worse") {
-    return {
-      decision: "reject",
-      reason: `Baseline 대비 품질이 악화됐다. ${comparison.summary}`,
-      strengths,
-      weaknesses,
-      nextPromptChanges,
-    };
-  }
-
-  if (comparison.deltaVerdict === "better" && comparison.efficiencyVerdict !== "worse") {
-    return {
-      decision: "promote",
-      reason: `Baseline 대비 개선이 확인됐다. ${comparison.summary}`,
-      strengths,
-      weaknesses,
-      nextPromptChanges,
-    };
-  }
-
-  if (comparison.deltaVerdict === "unclear" && comparison.efficiencyVerdict === "unclear") {
-    return {
-      decision: "investigate",
-      reason: "점수 변화와 효율성 변화가 엇갈려 추가 진단이 필요하다.",
-      strengths,
-      weaknesses,
-      nextPromptChanges,
-    };
-  }
-
   return {
-    decision: "hold",
-    reason:
-      comparison.deltaVerdict === "better"
-        ? "품질은 좋아졌지만 효율성이 악화돼 바로 승격하기 어렵다."
-        : "Baseline 대비 개선 폭이 충분히 명확하지 않다.",
     strengths,
-    weaknesses,
+    improvementAreas,
     nextPromptChanges,
   };
 }

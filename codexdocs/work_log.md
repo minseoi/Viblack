@@ -1412,3 +1412,50 @@
   - `npx playwright test tests/e2e/evaluator.cli.spec.ts` 통과
   - `npm run verify` 통과
   - 결과: Playwright `18 passed, 3 skipped`
+
+### 129) 원격 evaluator 실패 조사 및 exec stdin 경로 보강 착수
+- 사용자 요청:
+  - 원격 서버에서 evaluator baseline이 `empty response from codex`로 실패했다는 리포트가 와서, evaluator가 정상 동작하는지 확인이 필요함.
+- 조사:
+  - evaluator는 backend test server를 127.0.0.1 loopback 포트에 띄우므로, sandbox 기본 권한에서 `listen EPERM`이면 부팅 자체가 막힘.
+  - 권한 상승 후에도 `exec` 경로에서 Codex가 `Reading additional input from stdin...` 상태에 들어간다는 리포트가 있었음.
+  - 현재 `src/backend/codex.ts`의 `runCodexExecOnce`는 prompt를 CLI 인자로 넘기지만 child stdin을 명시적으로 닫지 않고 있음.
+- 구현 계획:
+  - `exec` spawn 직후 child stdin을 명시적으로 닫아 EOF를 보장
+  - fake-codex에 stdin EOF가 필요할 때 빠르게 실패하는 회귀 훅 추가
+  - backend-only Playwright 회귀로 stdin close 경로를 검증
+
+### 130) evaluate loop 정상 동작 여부 점검 착수
+- 사용자 요청:
+  - `evaluate`가 에이전트 프롬프트 평가 루프를 정상 지원하는지 확인하고, 시나리오 실행 후 결과 평가/피드백/재평가 흐름이 실제로 닫히는지 점검해야 함.
+- 조사:
+  - `codexdocs/evaluate/evaluate-loop-playbook.md` 기준 의도된 루프는 `real Codex 평가 -> report 해석 -> prompt 수정 -> baseline 비교 재평가` 순서임.
+  - `tools/evaluator/src/run.ts`는 현재 scenario/suite 실행, baseline 비교, final decision 계산, artifact 출력까지만 담당함.
+  - 즉 evaluator 자체는 "평가 실행기"이고, report를 읽어 prompt를 수정하고 다시 돌리는 반복 제어는 별도 에이전트 운영 절차로 문서화돼 있음.
+- 다음 확인 항목:
+  - headless CLI가 실제 report와 baseline 비교를 안정적으로 생성하는지
+  - `finalDecision`이 prompt 개선 루프의 판정 기준으로 충분한지
+  - 루프 관점에서 evaluator 안에 없어도 되는 책임과, 반대로 빠진 책임이 있는지
+- 추가 확인:
+  - real evaluator baseline 1회 실행은 성공했고 `delegation-basic` report artifact를 생성함.
+  - 하지만 현재 report는 `100/100 pass`로 포화되어, transcript에 남아 있는 불필요한 progress chatter / repo 탐색 발화 / 문서 작업에 대한 generic test disclaimer를 개선 포인트로 잡아내지 못함.
+  - 따라서 점수/decision 중심 구조보다 `현재 실행의 개선 사항 + 이전 실행 대비 better/worse diff` 구조가 prompt loop에 더 적합하다고 판단.
+- 구현 계획:
+  - evaluator report에서 score/finalDecision 의존을 제거
+  - `baseline-report` 개념을 `previous-report` 비교로 재정의하고 CLI/문서 반영
+  - transcript 기반 개선 포인트로 `과도한 progress`, `작업과 무관한 workspace 탐색 발화`, `generic test disclaimer` 같은 질적 기준을 추가
+  - Playwright evaluator/delegation spec을 새 qualitative report 구조에 맞춰 갱신
+- 진행 업데이트:
+  - `tools/evaluator/src/types.ts`에서 numeric score / final decision 타입을 제거하고, `feedback` + `previousRunComparison` 중심 구조로 정리.
+  - `tools/evaluator/src/scorers/delegation-basic-scorer.ts`는 hard gate pass/fail과 별도로 `compact_progress_updates`, `no_irrelevant_workspace_chatter`, `no_generic_test_disclaimer` 기준을 추가해 transcript의 불필요 행동을 직접 플래그하도록 변경.
+  - `tools/evaluator/src/scorers/final-decision.ts`는 role을 바꿔 qualitative comparison builder로 재작성했고, `better/same/worse/mixed/uncomparable` verdict와 개선/퇴보/미해결 목록을 생성하도록 수정.
+  - `tools/evaluator/src/run.ts`, scenario/reporter는 `--previous-report`를 주 옵션으로 사용하고, CLI 출력/JSON/Markdown report를 새 구조에 맞게 갱신.
+  - `tests/e2e/electron.channel-delegation.spec.ts`는 fake evaluator 두 번 실행으로 previous-report qualitative compare 회귀를 추가했고, score 의존 assertions를 제거.
+  - `tests/e2e/evaluator.cli.spec.ts`, `tests/e2e/electron.channel-delegation.real.spec.ts`도 feedback/previousRunComparison 구조에 맞춰 갱신.
+  - `codexdocs/evaluate/evaluate-tool-usage.md`, `evaluate-loop-playbook.md`는 점수형/`promote` 중심 설명을 걷어내고 `current feedback + previous run diff` 운영 방식으로 전면 재작성.
+  - `codexdocs/evaluate/evaluate-tool-spec.md` 상단에는 현재 구현이 qualitative loop 기준이라는 상태 메모를 추가.
+- 중간 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npx playwright test tests/e2e/electron.channel-delegation.spec.ts tests/e2e/evaluator.cli.spec.ts` 통과 (`3 passed, 1 skipped`)
+  - real evaluator 재실행에서 `VIBLACK_CODEX_PATH`를 명시하니 새 report가 실제로 `progress message 과다`, `workspace 탐색 설명 노출`을 개선 포인트로 잡는 것을 확인.

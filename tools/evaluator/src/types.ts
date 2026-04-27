@@ -1,12 +1,8 @@
 export type CodexKind = "real" | "fake";
 
-export type ScoreVerdict = "pass" | "fail";
+export type EvaluationVerdict = "pass" | "fail";
 
-export type DeltaVerdict = "better" | "same" | "worse" | "unclear";
-
-export type EfficiencyVerdict = "better" | "same" | "worse" | "unclear";
-
-export type FinalDecisionKind = "promote" | "hold" | "reject" | "investigate";
+export type ComparisonVerdict = "better" | "same" | "worse" | "mixed" | "uncomparable";
 
 export interface ChannelAction {
   type: string;
@@ -40,8 +36,6 @@ export interface EvalJobEntry {
 export interface EvalCriterion {
   key: string;
   label: string;
-  maxScore: number;
-  earnedScore: number;
   passed: boolean;
   evidence: string;
 }
@@ -56,6 +50,7 @@ export interface EvalGateCheck {
 export interface EfficiencyMetrics {
   jobCount: number;
   agentMessageCount: number;
+  progressMessageCount: number;
   userMessageCount: number;
   systemMessageCount: number;
   questionCount: number;
@@ -81,9 +76,7 @@ export interface ScenarioEvaluationReport {
   finishedAt: string;
   transcript: EvalTranscriptEntry[];
   jobs: EvalJobEntry[];
-  score: number;
-  maxScore: number;
-  verdict: ScoreVerdict;
+  verdict: EvaluationVerdict;
   criteria: EvalCriterion[];
   hardGates: EvalGateCheck[];
   issues: string[];
@@ -91,24 +84,19 @@ export interface ScenarioEvaluationReport {
   metrics: EfficiencyMetrics;
 }
 
-export interface BaselineComparison {
-  baselineReportPath: string;
-  baselineScenarioId: string;
-  baselineScore: number;
-  currentScore: number;
-  deltaScore: number;
-  deltaVerdict: DeltaVerdict;
-  deltaConfidence: number;
-  efficiencyVerdict: EfficiencyVerdict;
-  efficiencyNotes: string[];
+export interface PreviousRunComparison {
+  previousReportPath: string;
+  previousScenarioId: string;
+  verdict: ComparisonVerdict;
+  improvements: string[];
+  regressions: string[];
+  unchangedConcerns: string[];
   summary: string;
 }
 
-export interface FinalDecision {
-  decision: FinalDecisionKind;
-  reason: string;
+export interface PromptFeedback {
   strengths: string[];
-  weaknesses: string[];
+  improvementAreas: string[];
   nextPromptChanges: string[];
 }
 
@@ -128,8 +116,8 @@ export interface EvaluationResult {
   codexKind: CodexKind;
   runtime: string;
   report: ScenarioEvaluationReport;
-  baselineComparison: BaselineComparison | null;
-  finalDecision: FinalDecision;
+  feedback: PromptFeedback;
+  previousRunComparison: PreviousRunComparison | null;
   runtimePaths: EvaluationRuntimePaths;
 }
 

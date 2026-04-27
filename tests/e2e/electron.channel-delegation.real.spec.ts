@@ -5,8 +5,6 @@ test("real codex channel delegation evaluation", async ({}, testInfo) => {
   test.skip(!process.env.VIBLACK_E2E_REAL_CODEX, "Set VIBLACK_E2E_REAL_CODEX=1 to run against real codex");
   test.setTimeout(12 * 60 * 1000);
 
-  const minScoreRaw = process.env.VIBLACK_E2E_REAL_CODEX_MIN_SCORE?.trim();
-  const minScore = minScoreRaw ? Number.parseInt(minScoreRaw, 10) : Number.NaN;
   const timeoutRaw = process.env.VIBLACK_E2E_REAL_CODEX_TIMEOUT_MS?.trim();
   const settleTimeoutMs = timeoutRaw ? Number.parseInt(timeoutRaw, 10) : 6 * 60 * 1000;
 
@@ -23,12 +21,15 @@ test("real codex channel delegation evaluation", async ({}, testInfo) => {
   });
 
   testInfo.annotations.push({
-    type: "delegation-score",
-    description: `${evaluation.report.score}/${evaluation.report.maxScore}`,
+    type: "delegation-verdict",
+    description: evaluation.report.verdict,
   });
   testInfo.annotations.push({ type: "delegation-summary", description: evaluation.report.summary });
+  testInfo.annotations.push({
+    type: "delegation-improvement-areas",
+    description: `${evaluation.feedback.improvementAreas.length}`,
+  });
 
-  if (Number.isFinite(minScore)) {
-    expect(evaluation.report.score).toBeGreaterThanOrEqual(minScore);
-  }
+  expect(evaluation.report.hardGates.length).toBeGreaterThan(0);
+  expect(Array.isArray(evaluation.feedback.improvementAreas)).toBe(true);
 });

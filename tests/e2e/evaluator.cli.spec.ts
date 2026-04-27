@@ -50,8 +50,6 @@ test("real evaluate tool CLI writes report artifacts", async ({}, testInfo) => {
   const repoRoot = path.resolve(__dirname, "..", "..");
   const outputDir = testInfo.outputPath("evaluator-cli-real");
   const runtime = process.env.VIBLACK_E2E_REAL_CODEX_RUNTIME?.trim() || "exec";
-  const minScoreRaw = process.env.VIBLACK_E2E_REAL_CODEX_MIN_SCORE?.trim();
-  const minScore = minScoreRaw ? Number.parseInt(minScoreRaw, 10) : Number.NaN;
 
   const run = await runEvaluatorCli(
     ["--scenario", "delegation-basic", "--codex", "real", "--runtime", runtime, "--output-dir", outputDir],
@@ -66,14 +64,15 @@ test("real evaluate tool CLI writes report artifacts", async ({}, testInfo) => {
 
   const report = JSON.parse(fs.readFileSync(reportPath, "utf8")) as {
     scenarioId: string;
-    report: { score: number; maxScore: number; verdict: string };
-    finalDecision: { decision: string };
+    report: { verdict: string; hardGates: Array<{ passed: boolean }> };
+    feedback: { strengths: string[]; improvementAreas: string[]; nextPromptChanges: string[] };
+    previousRunComparison: { verdict: string } | null;
   };
   expect(report.scenarioId).toBe("delegation-basic");
-  expect(report.report.maxScore).toBe(100);
-  if (Number.isFinite(minScore)) {
-    expect(report.report.score).toBeGreaterThanOrEqual(minScore);
-  }
   expect(["pass", "fail"]).toContain(report.report.verdict);
-  expect(["promote", "hold", "reject", "investigate"]).toContain(report.finalDecision.decision);
+  expect(report.report.hardGates.length).toBeGreaterThan(0);
+  expect(Array.isArray(report.feedback.strengths)).toBe(true);
+  expect(Array.isArray(report.feedback.improvementAreas)).toBe(true);
+  expect(Array.isArray(report.feedback.nextPromptChanges)).toBe(true);
+  expect(report.previousRunComparison).toBeNull();
 });
