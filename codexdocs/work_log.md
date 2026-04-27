@@ -1459,3 +1459,14 @@
   - `npm run build` 통과
   - `npx playwright test tests/e2e/electron.channel-delegation.spec.ts tests/e2e/evaluator.cli.spec.ts` 통과 (`3 passed, 1 skipped`)
   - real evaluator 재실행에서 `VIBLACK_CODEX_PATH`를 명시하니 새 report가 실제로 `progress message 과다`, `workspace 탐색 설명 노출`을 개선 포인트로 잡는 것을 확인.
+
+### 131) eval-results gitignore 추가
+- 사용자 요청:
+  - evaluator 산출물 디렉토리 `eval-results/`를 git 추적 대상에서 제외하고, `prompt-tuning` 브랜치에 별도 커밋/푸시해야 함.
+- 조사:
+  - 현재 `.gitignore`에는 `test-results/`, `playwright-report/`는 있으나 `eval-results/`는 없어 real evaluator 산출물이 untracked로 남고 있었음.
+- 진행 업데이트:
+  - `.gitignore`에 `eval-results/`를 추가해 evaluator 반복 실행 산출물이 기본 추적 대상에서 제외되도록 조정.
+- 검증:
+  - `npm run verify` 통과
+  - 결과: Playwright `20 passed, 3 skipped`
