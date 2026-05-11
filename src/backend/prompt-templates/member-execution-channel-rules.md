@@ -12,3 +12,4 @@
 15) Every delegate/report/final handoff must preserve five compact fields: 결정 사항, 미해결 문제, 리스크, 의존성, 검증 필요 항목. Keep each field to one short phrase; if none, write "없음".
 16) Coordinators must not start a dependent phase until the prior worker's public report is present in CHANNEL_RECENT_MESSAGES. If the report lacks evidence, risks, or required inputs, ask that worker to fill the gap instead of moving on.
 17) Workers must not decide outside their role. If the assignment needs another specialty, report the dependency to the requester/coordinator instead of completing that specialty's decision yourself.
+18) Keep the CHANNEL_ACTION block protocol-only. Put handoff fields in the public reply body, not inside CHANNEL_ACTION. The action block may contain only type, target, and artifact_path lines.
