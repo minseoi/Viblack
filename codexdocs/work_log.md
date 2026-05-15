@@ -1412,3 +1412,24 @@
   - `npx playwright test tests/e2e/evaluator.cli.spec.ts` 통과
   - `npm run verify` 통과
   - 결과: Playwright `18 passed, 3 skipped`
+
+### 129) 채널 멤버의 워킹 디렉토리 쓰기 작업 일반화 착수
+- 사용자 요청:
+  - 채널 내 멤버들이 워킹 디렉토리에 쓰기 작업을 할 수 있게 해야 함.
+- 조사:
+  - fake 회귀에서는 `FORCE_CHANNEL_FILE_WRITE`로 채널 멤버가 `cwd`(채널 workspace)에 직접 파일을 쓰는 경로가 이미 검증돼 있음.
+  - 현재 제품 로직의 `requiresArtifactReport()`는 `Programmer/Developer` 계열 역할일 때만 파일 산출물 검증/강제 경로를 타고 있음.
+  - 따라서 문서 작성, 리서치 정리, Markdown 초안 작성처럼 "비코드지만 파일 산출물이 필요한 작업"은 프롬프트/검증이 약해 실제 파일 생성 없이 텍스트 답변으로 끝나기 쉬운 구조임.
+- 구현 계획:
+  - artifact/report 강제 조건을 코드 역할 전용에서 "실제 파일 산출이 필요한 작업" 전반으로 일반화
+  - 채널 프롬프트 문구도 코드 중심에서 파일 산출 중심으로 정리
+  - 문서 작성 역할이 워크스페이스 파일을 생성하고 `artifact_path`로 보고하는 회귀를 추가
+- 진행 업데이트:
+  - `validateChannelCompletionReply()`가 worker `report`뿐 아니라 coordinator의 direct `final + artifact_path`도 파일 산출 완료 신호로 인정하도록 조정.
+  - 첫 시도에서 coordinator의 초기 `delegate` 응답까지 artifact completion으로 오인해 막히는 회귀를 발견했고, `delegate/ask_user/noop`처럼 아직 완료 단계가 아닌 coordinator 제어 응답은 통과시키도록 보정.
+  - 후속 검증에서 `sourceAgentId` 기준 때문에 coordinator가 worker 보고를 받아 `final`로 마무리하는 응답까지 worker로 오판하는 문제를 추가로 확인했고, 검증 기준을 `sourceAgentId` 대신 실제 coordinator 여부로 전환.
+  - `requiresArtifactReport()`는 코드 역할 fallback을 유지하되, `workspace`, `markdown`, `파일`, 확장자 힌트 등 파일 산출 요청 문구가 있으면 역할과 무관하게 artifact 검증 경로를 타도록 일반화.
+  - fake Codex에 `FORCE_DOC_ARTIFACT_SUCCESS:*` 시나리오를 추가해 채널 워크스페이스에 `.md` 파일을 실제 생성하고 `type=final`로 완료 보고하도록 확장.
+  - 기존 code-artifact fake 성공 시나리오도 coordinator의 최종 `type=final`에 worker가 전달한 `artifact_path`를 다시 싣도록 맞춰 새 completion 규칙과 정합성을 맞춤.
+  - `electron.channel-metadata` 스펙에 direct mention 문서 작성 회귀를 추가하고, 기존 실패 기대 문구도 `채널 파일 작업 미완료` 기준으로 갱신 중.
+  - 전체 `verify` 중 `electron.smoke`에서 새 멤버 생성 직후 `/api/agents` lookup이 드물게 뒤 구두점이 붙은 표시명 때문에 흔들리는 것을 확인해, smoke 테스트의 agent ID 조회를 trailing punctuation 무시 방식으로 보강.

@@ -81,10 +81,10 @@ export function buildChannelPrompt(input: {
     "delegate는 다른 멤버에게 새 작업을 넘길 때만 사용합니다. report는 맡은 작업 결과를 요청자나 coordinator에게 돌려줄 때 사용합니다.",
     "ask_user는 사용자 확인이 꼭 필요할 때만 사용합니다. final은 coordinator가 사용자에게 최종 결과를 전달하고 종료할 때 사용합니다.",
     input.requiresArtifactReport
-      ? "이번 작업은 코드/파일 산출물이 필요한 구현 작업입니다. 계획만 말하고 끝내지 말고, 실제 파일 편집/생성을 마친 뒤에만 답하세요."
+      ? "이번 작업은 실제 파일 산출물이 필요한 작업입니다. 계획만 말하고 끝내지 말고, 실제 파일 편집/생성을 마친 뒤에만 답하세요."
       : "",
     input.requiresArtifactReport
-      ? `답변 본문에 실제 산출물 파일 경로를 넣고, 마지막 CHANNEL_ACTION report에도 artifact_path를 포함하세요. artifact_path는 실제로 존재하는 경로여야 하며 반드시 채널 워크스페이스 내부여야 합니다. workspace root: ${input.workspaceRoot}`
+      ? `답변 본문에 실제 산출물 파일 경로를 넣고, 마지막 CHANNEL_ACTION completion action에도 artifact_path를 포함하세요. worker가 requester/coordinator에게 넘길 때는 type=report를, coordinator가 사용자에게 직접 마무리할 때는 type=final을 사용하세요. artifact_path는 실제로 존재하는 경로여야 하며 반드시 채널 워크스페이스 내부여야 합니다. workspace root: ${input.workspaceRoot}`
       : "",
     input.targetAgentMode === "coordinator"
       ? "당신은 coordinator 입니다. 의존 관계가 있는 작업은 한 번에 한 단계씩만 위임하세요. 조사 결과가 채널에 올라오기 전에는 문서 작성처럼 다음 단계를 시작하지 마세요."
@@ -104,6 +104,7 @@ export function buildChannelPrompt(input: {
     "CHANNEL_ACTION_END",
     "CHANNEL_ACTION_BEGIN",
     "type=final",
+    "artifact_path=/absolute/or/repo-relative/path.md",
     "CHANNEL_ACTION_END",
     "",
     "[ACTIVE_TASK_REQUESTER_BEGIN]",

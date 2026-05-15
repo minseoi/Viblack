@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import { expect, test, type TestInfo } from "@playwright/test";
 import {
   apiRequest,
@@ -237,7 +238,7 @@ test("delegated code task fails when worker replies with intent only and no arti
       messageKind: "remention",
     });
     expect(messagesResponse.data.messages[messagesResponse.data.messages.length - 1]?.content).toContain(
-      "채널 코드 작업 미완료:",
+      "채널 파일 작업 미완료:",
     );
     expect(messagesResponse.data.messages[messagesResponse.data.messages.length - 1]?.content).toContain(
       "type=report action이 필요합니다.",
@@ -342,6 +343,90 @@ test("delegated code task continues only after worker reports an existing artifa
       expectedChannelWorkspaceDir,
     );
     expect(fs.existsSync(expectedChannelWorkspaceDir)).toBe(true);
+  } finally {
+    await server.close();
+  }
+});
+
+test("direct document task writes a workspace artifact and completes with final artifact_path", async ({}, testInfo) => {
+  const suffix = Date.now();
+  const writerName = `문서요원${suffix}`;
+  const channelName = `doc-artifact-room-${suffix}`;
+  const artifactKey = `doc-artifact-${suffix}`;
+
+  const server = await launchIsolatedBackend(testInfo);
+
+  try {
+    const writerCreate = await apiRequest<{ agent: { id: string } }>(server.backendBaseUrl, "/api/agents", {
+      method: "POST",
+      body: {
+        name: writerName,
+        role: "Writer",
+        systemPrompt: "You are a document writer. Reply in concise Korean.",
+      },
+    });
+    expect(writerCreate.status).toBe(201);
+
+    const channel = await createChannelViaApi(server.backendBaseUrl, testInfo, channelName, "document artifact success validation");
+    const channelId = channel.id;
+    const writerId = writerCreate.data.agent.id;
+    const expectedChannelWorkspaceDir = channel.workspacePath;
+    const expectedArtifactPath = path.join(expectedChannelWorkspaceDir, `viblack-fake-doc-artifact-${artifactKey}.md`);
+
+    expect(
+      (
+        await apiRequest(server.backendBaseUrl, `/api/channels/${channelId}/members`, {
+          method: "POST",
+          body: { agentId: writerId },
+        })
+      ).status,
+    ).toBe(201);
+
+    const sendMessage = await apiRequest<{ message: { id: number } }>(server.backendBaseUrl, `/api/channels/${channelId}/messages`, {
+      method: "POST",
+      body: {
+        content: `@{${writerName}} FORCE_DOC_ARTIFACT_SUCCESS:${artifactKey} 이 채널 working directory에 markdown 파일로 저장하고 경로를 알려줘`,
+        messageKind: "general",
+      },
+    });
+    expect(sendMessage.status).toBe(200);
+
+    await expect
+      .poll(async () => {
+        const response = await apiRequest<{
+          jobs: Array<{
+            targetAgentId: string;
+            status: string;
+          }>;
+        }>(server.backendBaseUrl, `/api/channels/${channelId}/executions`);
+        return response.data.jobs.map((job) => `${job.targetAgentId}:${job.status}`);
+      })
+      .toEqual([`${writerId}:succeeded`]);
+
+    const messagesResponse = await apiRequest<{
+      messages: Array<{
+        senderType: string;
+        senderId: string | null;
+        content: string;
+        messageKind: string;
+      }>;
+    }>(server.backendBaseUrl, `/api/channels/${channelId}/messages`);
+    expect(messagesResponse.status).toBe(200);
+    expect(messagesResponse.data.messages[messagesResponse.data.messages.length - 1]).toMatchObject({
+      senderType: "agent",
+      senderId: writerId,
+      messageKind: "result",
+    });
+    expect(messagesResponse.data.messages[messagesResponse.data.messages.length - 1]?.content).toContain(
+      "viblack-fake-doc-artifact-",
+    );
+    expect(messagesResponse.data.messages[messagesResponse.data.messages.length - 1]?.content).toContain(
+      expectedChannelWorkspaceDir,
+    );
+    expect(messagesResponse.data.messages[messagesResponse.data.messages.length - 1]?.content).toContain(
+      `artifact_path=${expectedArtifactPath}`,
+    );
+    expect(fs.existsSync(expectedArtifactPath)).toBe(true);
   } finally {
     await server.close();
   }

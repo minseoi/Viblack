@@ -355,7 +355,9 @@ function maybeBuildCodeArtifactScenarioReply(promptText, cwd, sessionId, session
       const artifactPathMatch = artifactPathMatches[artifactPathMatches.length - 1] ?? null;
       return [
         `최종 보고: 철수가 구현 파일을 전달했습니다.${artifactPathMatch ? ` ${artifactPathMatch[1]}` : ""}`,
-        buildChannelActionBlock(["type=final"]),
+        buildChannelActionBlock(
+          artifactPathMatch ? ["type=final", `artifact_path=${artifactPathMatch[1]}`] : ["type=final"],
+        ),
       ].join("\n\n");
     }
 
@@ -392,6 +394,33 @@ function maybeBuildCodeArtifactScenarioReply(promptText, cwd, sessionId, session
     "구현 완료 보고: 블럭 회전 로직 구현을 마쳤습니다.",
     `산출물: ${artifactPath}`,
     buildChannelActionBlock(["type=report", `target=${coordinatorName}`, `artifact_path=${artifactPath}`]),
+  ].join("\n\n");
+}
+
+function maybeBuildDocumentArtifactScenarioReply(promptText, cwd, sessionId, sessionState = {}) {
+  const successMatch = promptText.match(/FORCE_DOC_ARTIFACT_SUCCESS:\s*([^\s\r\n]+)/);
+  if (!successMatch) {
+    return "";
+  }
+
+  const currentAgentName = (extractAgentName(promptText) || sessionState.agentName || "").trim();
+  if (!currentAgentName) {
+    return "";
+  }
+
+  const artifactPath = path.join(
+    cwd,
+    `viblack-fake-doc-artifact-${sanitizeMarkerPart(successMatch[1])}.md`,
+  );
+  fs.writeFileSync(
+    artifactPath,
+    "# Fake document artifact\n\nThis file was generated inside the channel workspace.\n",
+    "utf8",
+  );
+  return [
+    "문서 작성 완료했습니다.",
+    `산출물: ${artifactPath}`,
+    buildChannelActionBlock(["type=final", `artifact_path=${artifactPath}`]),
   ].join("\n\n");
 }
 
@@ -597,6 +626,15 @@ function buildReply(
   const codeArtifactScenarioReply = maybeBuildCodeArtifactScenarioReply(promptText, cwd, sessionId, sessionState);
   if (codeArtifactScenarioReply) {
     return codeArtifactScenarioReply;
+  }
+  const documentArtifactScenarioReply = maybeBuildDocumentArtifactScenarioReply(
+    promptText,
+    cwd,
+    sessionId,
+    sessionState,
+  );
+  if (documentArtifactScenarioReply) {
+    return documentArtifactScenarioReply;
   }
   const delegatedReply = maybeBuildDelegationReply(promptText, controlPromptText, sessionState);
   if (delegatedReply) {

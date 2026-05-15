@@ -782,6 +782,9 @@ export class ChannelMessageService {
     triggerContent: string;
     replyText: string;
   }): { ok: true } | { ok: false; errorText: string } {
+    const coordinator = this.resolveChannelCoordinator(input.channelId, input.members);
+    const isCoordinator = coordinator?.id === input.targetAgent.id;
+
     if (
       !this.requiresArtifactReport({
         targetAgent: input.targetAgent,
@@ -794,17 +797,41 @@ export class ChannelMessageService {
 
     const actions = parseChannelActions(input.replyText);
     const reportAction = actions.find((action) => action.type === "report");
-    const artifactCheck = reportAction?.artifactPath
-      ? this.channelWorkspaceService.resolveArtifactPath(input.channelWorkspacePath, reportAction.artifactPath)
+    const finalAction = actions.find((action) => action.type === "final");
+    const completionAction = reportAction ?? finalAction ?? null;
+    const coordinatorControlAction =
+      isCoordinator && !completionAction
+        ? actions.find((action) => action.type === "delegate" || action.type === "ask_user" || action.type === "noop")
+        : null;
+
+    if (coordinatorControlAction) {
+      return { ok: true };
+    }
+
+    const artifactCheck = completionAction?.artifactPath
+      ? this.channelWorkspaceService.resolveArtifactPath(input.channelWorkspacePath, completionAction.artifactPath)
       : null;
     const intentOnly = this.isIntentOnlyImplementationReply(input.replyText);
     const problems: string[] = [];
 
-    if (input.sourceAgentId && !reportAction) {
-      problems.push("코드 작업 worker 응답에는 type=report action이 필요합니다.");
+    if (!isCoordinator && !reportAction) {
+      problems.push("파일 산출물 worker 응답에는 type=report action이 필요합니다.");
     }
-    if (input.sourceAgentId && reportAction && !reportAction.artifactPath?.trim()) {
-      problems.push("type=report action에는 artifact_path가 필요합니다.");
+    if (!completionAction) {
+      problems.push(
+        isCoordinator
+          ? "파일 산출물 완료 응답에는 completion action이 필요합니다."
+          : "파일 산출물 worker 응답에는 completion action이 필요합니다."
+      );
+    }
+    if (isCoordinator && finalAction && reportAction) {
+      problems.push("coordinator 파일 완료 응답에는 하나의 completion action만 사용하세요.");
+    }
+    if (!isCoordinator && finalAction) {
+      problems.push("worker 파일 응답은 type=final 대신 type=report를 사용해야 합니다.");
+    }
+    if (completionAction && !completionAction.artifactPath?.trim()) {
+      problems.push("completion action에는 artifact_path가 필요합니다.");
     }
     if (artifactCheck && !artifactCheck.insideWorkspace) {
       problems.push(`artifact_path는 채널 워크스페이스 내부여야 합니다. workspace: ${artifactCheck.workspacePath}`);
@@ -823,7 +850,7 @@ export class ChannelMessageService {
     return {
       ok: false,
       errorText: [
-        "채널 코드 작업 미완료:",
+        "채널 파일 작업 미완료:",
         ...problems.map((problem) => `- ${problem}`),
         `partial: ${input.replyText}`,
       ].join("\n"),
@@ -835,15 +862,36 @@ export class ChannelMessageService {
     sourceAgentId: string | null;
     triggerContent: string;
   }): boolean {
-    if (!input.sourceAgentId) {
-      return false;
-    }
-
     const roleText = `${input.targetAgent.role} ${input.targetAgent.roleProfile ?? ""}`.toLowerCase();
     const roleLooksCodeRelated = ["프로그래머", "개발", "programmer", "developer", "coder", "engineer"].some(
       (needle) => roleText.includes(needle.toLowerCase()),
     );
-    return roleLooksCodeRelated;
+    const normalizedTrigger = input.triggerContent.toLowerCase();
+    const hasExplicitFilePath = /\.[a-z0-9]{1,8}\b/.test(normalizedTrigger);
+    const requestsFileOutput = [
+      "artifact_path",
+      "working directory",
+      "workspace",
+      "파일",
+      "파일로",
+      "경로",
+      "저장",
+      "생성",
+      "써서",
+      "작성해서",
+      "markdown",
+      "마크다운",
+      ".md",
+      ".txt",
+      ".json",
+      ".csv",
+    ].some((token) => normalizedTrigger.includes(token));
+
+    if (requestsFileOutput || hasExplicitFilePath) {
+      return true;
+    }
+
+    return Boolean(input.sourceAgentId && roleLooksCodeRelated);
   }
 
   private isIntentOnlyImplementationReply(replyText: string): boolean {

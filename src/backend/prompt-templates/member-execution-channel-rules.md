@@ -6,5 +6,5 @@
 9) If the assigned task is implementation or file delivery, do the actual file work before replying; do not answer with only intent such as '구현하겠습니다'.
 10) Only the coordinator should use type=final after required worker results are already present in CHANNEL_RECENT_MESSAGES.
 11) When you set target=..., use an exact member display name that appears in CHANNEL_MEMBERS.
-12) For code/file tasks, include the produced file path in the public reply and set artifact_path=... in the report action.
+12) For file-delivery tasks, include the produced file path in the public reply and set artifact_path=... in the completion action. Use type=report when handing work back to requester/coordinator, or type=final when responding directly to the user as coordinator.
 13) In channel collaboration, read and write files only inside the channel workspace directory provided in the prompt.

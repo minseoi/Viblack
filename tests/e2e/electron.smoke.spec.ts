@@ -78,6 +78,10 @@ function memberRow(page: Page, name: string) {
   return page.locator("#member-list .member-item", { hasText: name });
 }
 
+function normalizeDisplayNameForLookup(value: string) {
+  return value.trim().replace(/[,\s]+$/g, "");
+}
+
 function channelRow(page: Page, channelName: string) {
   return page.locator("#channel-list .section-item.channel", { hasText: `# ${channelName}` });
 }
@@ -152,7 +156,10 @@ test("new message indicator keeps scroll position until clicked", async ({}, tes
           page,
           "/api/agents",
         );
-        agentId = agentList.data.agents.find((agent) => agent.name === memberName)?.id ?? null;
+        agentId =
+          agentList.data.agents.find(
+            (agent) => normalizeDisplayNameForLookup(agent.name) === normalizeDisplayNameForLookup(memberName),
+          )?.id ?? null;
         return agentId;
       })
       .not.toBeNull();
