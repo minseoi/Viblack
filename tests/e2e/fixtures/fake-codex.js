@@ -381,6 +381,10 @@ function maybeBuildCodeArtifactScenarioReply(promptText, cwd, sessionId, session
     ].join("\n");
   }
 
+  if (!canWriteWorkspaceFromSession(sessionState, cwd)) {
+    return "현재 워크스페이스는 read-only라 구현 파일을 만들 수 없습니다.";
+  }
+
   const artifactPath = path.join(
     cwd,
     `viblack-fake-code-artifact-${sanitizeMarkerPart(successMatch[1])}.ts`,
@@ -398,6 +402,14 @@ function maybeBuildCodeArtifactScenarioReply(promptText, cwd, sessionId, session
 }
 
 function maybeBuildDocumentArtifactScenarioReply(promptText, cwd, sessionId, sessionState = {}) {
+  if (promptText.includes("FORCE_DOC_ARTIFACT_ASK_USER")) {
+    return [
+      "요청하신 문서는 지금 만들 수 있지만, 현재 실행 환경이 read-only라 실제 파일 생성은 불가능합니다.",
+      "권한이 허용되면 바로 저장하겠습니다.",
+      buildChannelActionBlock(["type=ask_user"]),
+    ].join("\n\n");
+  }
+
   const successMatch = promptText.match(/FORCE_DOC_ARTIFACT_SUCCESS:\s*([^\s\r\n]+)/);
   if (!successMatch) {
     return "";
@@ -406,6 +418,10 @@ function maybeBuildDocumentArtifactScenarioReply(promptText, cwd, sessionId, ses
   const currentAgentName = (extractAgentName(promptText) || sessionState.agentName || "").trim();
   if (!currentAgentName) {
     return "";
+  }
+
+  if (!canWriteWorkspaceFromSession(sessionState, cwd)) {
+    return "현재 워크스페이스는 read-only라 문서 파일을 만들 수 없습니다.";
   }
 
   const artifactPath = path.join(
@@ -424,9 +440,12 @@ function maybeBuildDocumentArtifactScenarioReply(promptText, cwd, sessionId, ses
   ].join("\n\n");
 }
 
-function maybeHandleChannelWorkspaceFile(cwd, controlPromptText) {
+function maybeHandleChannelWorkspaceFile(cwd, controlPromptText, sessionState = {}) {
   const writeMatch = controlPromptText.match(/FORCE_CHANNEL_FILE_WRITE:\s*([^\s\r\n]+)/);
   if (writeMatch) {
+    if (!canWriteWorkspaceFromSession(sessionState, cwd)) {
+      return `채널 파일 쓰기 실패:read-only:${cwd}`;
+    }
     const token = writeMatch[1].trim();
     const filePath = path.join(cwd, `channel-file-${sanitizeMarkerPart(token)}.txt`);
     fs.writeFileSync(filePath, token, "utf8");
@@ -441,6 +460,50 @@ function maybeHandleChannelWorkspaceFile(cwd, controlPromptText) {
   }
 
   return "";
+}
+
+function isWorkspaceWritableFromProcessRoot(cwd) {
+  const processRoot = path.resolve(process.cwd());
+  const targetRoot = path.resolve(cwd);
+  return targetRoot === processRoot || targetRoot.startsWith(`${processRoot}${path.sep}`);
+}
+
+function normalizeWritableRoots(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((root) => typeof root === "string" && root.trim().length > 0)
+    .map((root) => path.resolve(root));
+}
+
+function isWorkspaceCoveredByWritableRoots(cwd, writableRoots) {
+  const targetRoot = path.resolve(cwd);
+  return writableRoots.some((root) => targetRoot === root || targetRoot.startsWith(`${root}${path.sep}`));
+}
+
+function canWriteWorkspaceFromSession(sessionState, cwd) {
+  if (!isWorkspaceWritableFromProcessRoot(cwd)) {
+    return false;
+  }
+  if (sessionState.sandboxMode !== "workspace-write") {
+    return false;
+  }
+  const writableRoots = normalizeWritableRoots(sessionState.writableRoots);
+  if (writableRoots.length === 0) {
+    return true;
+  }
+  return isWorkspaceCoveredByWritableRoots(cwd, writableRoots);
+}
+
+function extractWritableRootsFromSandboxPolicy(sandboxPolicy) {
+  if (!sandboxPolicy || typeof sandboxPolicy !== "object") {
+    return [];
+  }
+  if (sandboxPolicy.type !== "workspaceWrite") {
+    return [];
+  }
+  return normalizeWritableRoots(sandboxPolicy.writableRoots);
 }
 
 function parseForcedStreamMessage(promptText) {
@@ -611,7 +674,7 @@ function buildReply(
     const token = sessionMemoryReadMatch[1].trim();
     return hasSessionMemory(sessionId, token) ? `세션 메모리 존재:${token}` : `세션 메모리 없음:${token}`;
   }
-  const channelWorkspaceReply = maybeHandleChannelWorkspaceFile(cwd, controlPromptText);
+  const channelWorkspaceReply = maybeHandleChannelWorkspaceFile(cwd, controlPromptText, sessionState);
   if (channelWorkspaceReply) {
     return channelWorkspaceReply;
   }
@@ -692,6 +755,13 @@ function buildReply(
   }
   if (promptText.includes("FORCE_REQUIRE_APP_SERVER")) {
     return runtimeMode === "app-server" ? "APP_SERVER_RUNTIME_OK" : "EXEC_RUNTIME_ONLY";
+  }
+  if (promptText.includes("FORCE_REQUIRE_WORKSPACE_WRITE_RUNTIME")) {
+    return runtimeMode === "app-server" &&
+      hasWorkspaceWriteSandboxArg() &&
+      canWriteWorkspaceFromSession(sessionState, cwd)
+      ? "WORKSPACE_WRITE_RUNTIME_OK"
+      : "WORKSPACE_WRITE_RUNTIME_MISSING";
   }
   const assertMemberPromptMatch = controlPromptText.match(/FORCE_ASSERT_MEMBER_PROMPT:\s*([^\s\r\n]+)/);
   if (controlPromptText.includes("FORCE_ASSERT_MEMBER_TEMPLATE") && assertMemberPromptMatch) {
@@ -778,6 +848,17 @@ function buildReply(
     return forcedFinalReply;
   }
   return "테스트 응답: 요청을 정상 처리했습니다.";
+}
+
+function hasWorkspaceWriteSandboxArg() {
+  const args = process.argv.slice(2);
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if ((arg === "--sandbox" || arg === "-s") && args[index + 1] === "workspace-write") {
+      return true;
+    }
+  }
+  return false;
 }
 
 function parseForcedDelayMs(promptText) {
@@ -917,7 +998,12 @@ async function runAppServer() {
           typeof params.model === "string" && params.model.trim()
             ? params.model.trim()
             : null;
-        updateSessionState(threadId, { requestedModel });
+        const sandboxMode = typeof params.sandbox === "string" ? params.sandbox.trim() : null;
+        updateSessionState(threadId, {
+          requestedModel,
+          sandboxMode,
+          writableRoots: sandboxMode === "workspace-write" ? [cwd] : [],
+        });
         respond(id, createThreadPayload(threadId, cwd, requestedModel));
         continue;
       }
@@ -937,7 +1023,19 @@ async function runAppServer() {
             : typeof previousState.requestedModel === "string" && previousState.requestedModel.trim()
               ? previousState.requestedModel.trim()
               : null;
-        updateSessionState(threadId, { requestedModel });
+        const sandboxMode = Object.prototype.hasOwnProperty.call(params, "sandbox")
+          ? typeof params.sandbox === "string" && params.sandbox.trim()
+            ? params.sandbox.trim()
+            : null
+          : typeof previousState.sandboxMode === "string" && previousState.sandboxMode.trim()
+            ? previousState.sandboxMode.trim()
+            : null;
+        const writableRoots = Object.prototype.hasOwnProperty.call(params, "sandbox")
+          ? sandboxMode === "workspace-write"
+            ? [cwd]
+            : []
+          : normalizeWritableRoots(previousState.writableRoots);
+        updateSessionState(threadId, { requestedModel, sandboxMode, writableRoots });
         respond(id, createThreadPayload(threadId, cwd, requestedModel));
         continue;
       }
@@ -966,6 +1064,11 @@ async function runAppServer() {
               : null;
         if (Object.prototype.hasOwnProperty.call(params, "model")) {
           updateSessionState(threadId, { requestedModel });
+        }
+        if (Object.prototype.hasOwnProperty.call(params, "sandboxPolicy")) {
+          updateSessionState(threadId, {
+            writableRoots: extractWritableRootsFromSandboxPolicy(params.sandboxPolicy),
+          });
         }
         const promptText = extractTurnInputText(params.input);
         const controlPromptText = getControlPromptText(promptText);
@@ -1189,17 +1292,21 @@ async function main() {
     process.exit(0);
   }
 
-  if (args[0] === "app-server") {
-    await runAppServer();
-    return;
-  }
-
-  if (args[0] !== "exec") {
+  const commandIndex = args.findIndex((arg) => arg === "app-server" || arg === "exec");
+  if (commandIndex < 0) {
     process.stderr.write("unsupported command\n");
     process.exit(1);
   }
 
-  await runExec(args);
+  const command = args[commandIndex];
+  const commandArgs = args.slice(commandIndex);
+
+  if (command === "app-server") {
+    await runAppServer();
+    return;
+  }
+
+  await runExec(commandArgs);
 }
 
 void main().catch((err) => {

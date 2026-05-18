@@ -57,8 +57,22 @@ const activeCodexProcesses = new Set<ChildProcess>();
 const CODEX_TRANSIENT_RETRY_DELAY_MS = 900;
 const CODEX_MAX_TRANSIENT_RETRIES = 1;
 
-let appServerClient: CodexAppServerClient | null = null;
+const appServerClients = new Map<string, CodexAppServerClient>();
 let appServerDisabledReason: string | null = null;
+
+function normalizeAppServerWorkspaceKey(cwd: string): string {
+  return path.resolve(cwd);
+}
+
+function getAppServerClient(cwd: string): CodexAppServerClient {
+  const key = normalizeAppServerWorkspaceKey(cwd);
+  let client = appServerClients.get(key);
+  if (!client) {
+    client = new CodexAppServerClient();
+    appServerClients.set(key, client);
+  }
+  return client;
+}
 
 function trackProcess(child: ChildProcess): void {
   activeCodexProcesses.add(child);
@@ -337,6 +351,7 @@ class CodexAppServerClient {
         cwd,
         approvalPolicy: "never",
         model,
+        sandbox: "workspace-write",
       });
       const resumedThreadId = this.extractThreadId(result) ?? threadId;
       this.loadedThreadIds.add(resumedThreadId);
@@ -347,6 +362,7 @@ class CodexAppServerClient {
       cwd,
       approvalPolicy: "never",
       model,
+      sandbox: "workspace-write",
     });
     const startedThreadId = this.extractThreadId(started);
     if (!startedThreadId) {
@@ -410,6 +426,13 @@ class CodexAppServerClient {
         threadId: params.threadId,
         cwd: params.cwd,
         approvalPolicy: "never",
+        sandboxPolicy: {
+          type: "workspaceWrite",
+          writableRoots: [params.cwd],
+          networkAccess: false,
+          excludeTmpdirEnvVar: false,
+          excludeSlashTmp: false,
+        },
         model: params.model,
         input: [{ type: "text", text: params.prompt }],
       });
@@ -489,7 +512,7 @@ class CodexAppServerClient {
 
     let child: ChildProcess;
     try {
-      child = spawn(codexCommand, ["app-server", "--listen", "stdio://"], {
+      child = spawn(codexCommand, ["--sandbox", "workspace-write", "app-server", "--listen", "stdio://"], {
         cwd,
         windowsHide: true,
         shell: needsShellOnWindows(codexCommand),
@@ -948,10 +971,9 @@ async function runCodexViaAppServerOnce(params: {
   onStream?: (event: CodexStreamEvent) => void;
 }): Promise<InternalCodexRunResult> {
   try {
-    appServerClient ??= new CodexAppServerClient();
-
-    const threadId = await appServerClient.prepareThread(params.sessionId, params.cwd, params.model);
-    const result = await appServerClient.runTurn({
+    const client = getAppServerClient(params.cwd);
+    const threadId = await client.prepareThread(params.sessionId, params.cwd, params.model);
+    const result = await client.runTurn({
       threadId,
       prompt: params.prompt,
       cwd: params.cwd,
@@ -1004,13 +1026,18 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
 }
 
 export async function shutdownCodexProcesses(): Promise<void> {
-  if (appServerClient) {
-    try {
-      await appServerClient.shutdown();
-    } catch {
-      // Ignore app-server shutdown errors.
-    }
-    appServerClient = null;
+  if (appServerClients.size > 0) {
+    const clients = [...appServerClients.values()];
+    appServerClients.clear();
+    await Promise.all(
+      clients.map(async (client) => {
+        try {
+          await client.shutdown();
+        } catch {
+          // Ignore app-server shutdown errors.
+        }
+      }),
+    );
   }
 
   if (activeCodexProcesses.size === 0) {

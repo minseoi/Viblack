@@ -1448,3 +1448,82 @@
   - `npx playwright test tests/e2e/electron.settings.spec.ts tests/e2e/electron.channel-delegation.spec.ts tests/e2e/electron.smoke.spec.ts` 통과
   - `npm run verify` 통과
   - 결과: Playwright `19 passed, 3 skipped`
+
+### 131) app-server 유지 + 사용자 표시를 최종 응답 only로 회귀
+- 사용자 요청:
+  - app-server는 유지하되, AI 멤버 응답은 스트리밍처럼 점진적으로 보이지 말고 한 번에 도착해야 함.
+- 조사:
+  - 현재 app-server delta는 `src/backend/codex.ts`에서 계속 `onStream`으로 emit되고 있음.
+  - 다만 실제 사용자 노출 여부는 `agent-execution-service` / `channel-message-service`가 non-completed stream을 저장하느냐에 달려 있음.
+  - fake app-server는 `turn/completed` 직전에 `item/completed`를 먼저 보내므로, completed 이벤트를 즉시 렌더링하면 채널/DM 모두 최종 완료 전에 메시지 수가 먼저 증가함.
+- 진행 업데이트:
+  - 1차로 delta 표시만 끊었지만, smoke에서 channel 경로가 여전히 `item/completed` 시점에 한 박자 먼저 렌더링되는 회귀를 확인.
+  - `agent-execution-service`와 `channel-message-service` 모두 completed agent message를 즉시 append/update하지 않고 메모리 버퍼에만 쌓도록 전환.
+  - 실제 저장/노출은 `runCodex()`가 끝난 뒤에만 수행하고, 여러 completed agent message가 있으면 순서대로 append한 뒤 최종 reply와 마지막 completed 내용이 다를 때만 추가 메시지를 하나 더 append하도록 정리.
+  - 이로써 app-server 스트림 자체는 유지하지만, 사용자 UI에는 turn 완료 후 최종 결과만 한 번에 나타나고, multi-completed message 회귀도 보존되는 구조로 맞춤.
+  - smoke는 채널 타이핑 인디케이터 정리 타이밍과 분리해서, DM/채널 모두 중간 chunk가 실제 메시지로 노출되지 않고 최종 완료 텍스트만 남는지 검증하도록 기대값을 갱신.
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npx playwright test tests/e2e/electron.smoke.spec.ts` 통과
+  - `npm run verify` 통과
+  - 결과: Playwright `19 passed, 3 skipped`
+
+### 132) app-server write sandbox 누락으로 채널 파일 생성 실패 수정
+- 사용자 이슈:
+  - 채널에서 Markdown 산출물 생성을 요청했는데 에이전트가 `현재 실행 환경이 read-only라 파일 생성이 차단됐다`고 응답.
+- 조사:
+  - 실제 채널 메시지에 `read-only`, `cat > 거부`, `권한 허용 필요` 응답이 남아 있었음.
+  - 현재 `src/backend/codex.ts`는 app-server를 `codex app-server --listen stdio://`로만 띄우고 있었고, CLI의 sandbox 모드 지정이 전혀 없었음.
+  - 반면 fake-codex app-server payload는 `sandbox.mode = workspace-write`를 전제로 동작해서, 그동안 fake E2E가 실제 런타임 누락을 가려 왔음.
+- 진행 업데이트:
+  - real app-server spawn 인자를 `codex --sandbox workspace-write app-server --listen stdio://`로 변경.
+  - fake-codex는 global CLI 옵션이 subcommand 앞에 와도 `app-server`/`exec`를 올바르게 해석하도록 argv 파서를 일반화.
+  - fake 응답에 `FORCE_REQUIRE_WORKSPACE_WRITE_RUNTIME` 검증 토큰을 추가해, app-server가 실제로 `--sandbox workspace-write`로 떠 있는지 settings E2E에서 확인하도록 보강.
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npx playwright test tests/e2e/electron.settings.spec.ts` 통과
+  - `npm run verify` 통과
+  - 결과: Playwright `19 passed, 3 skipped`
+
+### 133) 파일 산출 작업에서 coordinator ask_user 회피 차단
+- 사용자 이슈:
+  - 실제 채널에서 문서 파일 생성 요청 시, 에이전트가 `read-only`, `권한 허용` 같은 문구와 함께 `type=ask_user`로 빠지며 작업을 끝내지 않음.
+- 조사:
+  - 현재 `validateChannelCompletionReply()`는 파일 산출 작업이어도 coordinator의 `ask_user` / `noop` control action을 정상 완료처럼 통과시키고 있었음.
+  - 그래서 실제 artifact가 없어도 `ask_user` 응답이 result로 저장되어 사용자에게 그대로 노출될 수 있었음.
+- 진행 업데이트:
+  - 파일 산출 검증에서는 coordinator의 중간 제어 응답으로 `delegate`만 허용하고, `ask_user` / `noop`는 더 이상 완료로 인정하지 않도록 조정.
+  - 멤버 프롬프트에도 채널 워크스페이스는 이미 쓰기 루트라고 명시하고, read-only/권한 요청 핑계 대신 실제 파일 생성 후 completion action으로만 마무리하라고 강화.
+  - fake-codex에 `FORCE_DOC_ARTIFACT_ASK_USER` 시나리오를 추가해, direct document task가 `ask_user`로 빠질 때 job이 실패하고 시스템 오류로 승격되는 회귀를 추가.
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npx playwright test tests/e2e/electron.channel-metadata.spec.ts` 통과
+  - `npm run verify` 통과
+  - 결과: Playwright `20 passed, 3 skipped`
+
+### 134) workspace별 app-server 분리로 채널 간 파일 쓰기 루트 고정 문제 수정
+- 사용자 이슈:
+  - `v4` 채널에서 한 번 작업한 뒤 `v5` 같은 다른 워크스페이스 채널에서 계속 `read-only`, `쓰기 권한 허용` 응답이 반복됨.
+- 조사:
+  - 실제 실행 중인 app-server 프로세스는 `--sandbox workspace-write`로 뜨고 있었지만, 프로세스 cwd가 `/Users/minseoi/Desktop/test/v4`로 고정돼 있었음.
+  - 현재 구현은 global singleton app-server client 하나를 모든 DM/채널에서 재사용하고 있었음.
+  - Codex CLI의 workspace-write sandbox는 thread `cwd`보다 app-server 프로세스의 workspace root 영향을 받는 것으로 보였고, 그래서 첫 채널(root=v4) 이후 다른 채널(root=v5) 파일 쓰기가 막히는 구조였음.
+- 진행 업데이트:
+  - `src/backend/codex.ts`의 app-server client를 singleton에서 `workspace root -> client` 맵으로 전환해, 각 워크스페이스마다 별도 app-server 프로세스를 유지하도록 조정.
+  - 종료 시에도 모든 workspace별 app-server를 순회하며 함께 shutdown 하도록 정리.
+  - app-server protocol 생성 타입을 다시 확인한 결과, real Codex는 CLI 인자만으로는 충분하지 않았고 `thread/start|resume`의 `sandbox: "workspace-write"`, `turn/start`의 `sandboxPolicy: { type: "workspaceWrite", writableRoots: [...] }`까지 함께 보내야 실제 쓰기 세션으로 열렸음.
+  - 그래서 `src/backend/codex.ts`에 thread/turn sandbox override를 추가하고, fake-codex도 session sandbox mode + writableRoots를 실제로 검사하도록 보강.
+  - fake-codex도 app-server 프로세스의 `process.cwd()` 밖 워크스페이스에 대해서는 파일 생성/문서 artifact 쓰기를 `read-only`처럼 실패시키도록 바꿔, 이 버그를 테스트에서 재현 가능하게 만듦.
+  - channel workspace isolation E2E를 확장해 첫 채널 write 후 두 번째 채널에서도 별도 write가 실제로 성공하는지까지 검증하도록 보강.
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npx playwright test tests/e2e/electron.channel-metadata.spec.ts` 통과
+  - `npm run verify` 통과
+  - 결과: Playwright `20 passed, 3 skipped`
+  - real Codex 채널 probe(`.tmp_probe_app_server.js`)로 서로 다른 두 workspace에서 sequential markdown 파일 생성까지 직접 확인:
+    - workspace A: `real-a.md` 생성 성공, 내용 `alpha`
+    - workspace B: `real-b.md` 생성 성공, 내용 `beta`

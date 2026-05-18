@@ -534,10 +534,8 @@ export class ChannelMessageService {
           sourceMessageId,
           fallbackTriggerContent: triggerContent,
         });
-        let activeStreamMessageId: number | null = null;
-        let lastCompletedStreamMessageId: number | null = null;
-        let lastCompletedStreamContent = "";
         let lastStreamContent = "";
+        const completedStreamContents: string[] = [];
         const codexResult = await runCodex({
           prompt,
           systemPrompt: this.promptTemplateService.buildMemberExecutionSystemPrompt(
@@ -552,55 +550,15 @@ export class ChannelMessageService {
             if (!isAgentMessageStreamType(event.rawType)) {
               return;
             }
+            if (!isCompletedAgentMessageStreamEvent(event.raw)) {
+              return;
+            }
             const streamedContent = event.content.trim();
             if (!streamedContent) {
               return;
             }
-            if (isCompletedAgentMessageStreamEvent(event.raw)) {
-              if (activeStreamMessageId !== null) {
-                this.updateChannelMessageAndNotify(
-                  activeStreamMessageId,
-                  "agent",
-                  targetAgent.id,
-                  streamedContent,
-                  "progress",
-                );
-                lastCompletedStreamMessageId = activeStreamMessageId;
-              } else {
-                const message = this.appendChannelMessageAndNotify(
-                  channelId,
-                  "agent",
-                  targetAgent.id,
-                  streamedContent,
-                  "progress",
-                );
-                lastCompletedStreamMessageId = message.id;
-              }
-              lastCompletedStreamContent = streamedContent;
-              activeStreamMessageId = null;
-              lastStreamContent = streamedContent;
-              return;
-            }
-            if (activeStreamMessageId === null) {
-              const message = this.appendChannelMessageAndNotify(
-                channelId,
-                "agent",
-                targetAgent.id,
-                streamedContent,
-                "progress",
-              );
-              activeStreamMessageId = message.id;
-              lastStreamContent = streamedContent;
-              return;
-            }
-            this.updateChannelMessageAndNotify(
-              activeStreamMessageId,
-              "agent",
-              targetAgent.id,
-              streamedContent,
-              "progress",
-            );
             lastStreamContent = streamedContent;
+            completedStreamContents.push(streamedContent);
           },
         });
 
@@ -638,32 +596,42 @@ export class ChannelMessageService {
             : completionValidation.errorText ?? initialReplyText;
 
         let message: ChannelMessage | null = null;
-        if (executionOk && activeStreamMessageId !== null) {
-          message = this.updateChannelMessageAndNotify(
-            activeStreamMessageId,
-            "agent",
-            targetAgent.id,
-            replyText,
-            resultMessageKind,
-          );
-        } else if (
-          executionOk &&
-          lastCompletedStreamMessageId !== null &&
-          replyText === lastCompletedStreamContent
-        ) {
-          message = this.updateChannelMessageAndNotify(
-            lastCompletedStreamMessageId,
-            "agent",
-            targetAgent.id,
-            replyText,
-            resultMessageKind,
-          );
-        }
-        if (!message) {
+        if (executionOk) {
+          for (const completedContent of completedStreamContents) {
+            message = this.appendChannelMessageAndNotify(
+              channelId,
+              "agent",
+              targetAgent.id,
+              completedContent,
+              resultMessageKind,
+            );
+          }
+          if (
+            completedStreamContents.length === 0 ||
+            replyText !== completedStreamContents[completedStreamContents.length - 1]
+          ) {
+            message = this.appendChannelMessageAndNotify(
+              channelId,
+              "agent",
+              targetAgent.id,
+              replyText,
+              resultMessageKind,
+            );
+          }
+          if (!message) {
+            message = this.appendChannelMessageAndNotify(
+              channelId,
+              "agent",
+              targetAgent.id,
+              replyText,
+              resultMessageKind,
+            );
+          }
+        } else {
           message = this.appendChannelMessageAndNotify(
             channelId,
-            executionOk ? "agent" : "system",
-            executionOk ? targetAgent.id : null,
+            "system",
+            null,
             replyText,
             resultMessageKind,
           );
@@ -800,9 +768,7 @@ export class ChannelMessageService {
     const finalAction = actions.find((action) => action.type === "final");
     const completionAction = reportAction ?? finalAction ?? null;
     const coordinatorControlAction =
-      isCoordinator && !completionAction
-        ? actions.find((action) => action.type === "delegate" || action.type === "ask_user" || action.type === "noop")
-        : null;
+      isCoordinator && !completionAction ? actions.find((action) => action.type === "delegate") : null;
 
     if (coordinatorControlAction) {
       return { ok: true };

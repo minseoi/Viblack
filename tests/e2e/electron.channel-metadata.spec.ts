@@ -432,6 +432,94 @@ test("direct document task writes a workspace artifact and completes with final 
   }
 });
 
+test("direct document task cannot escape with ask_user instead of creating the artifact", async ({}, testInfo) => {
+  const suffix = Date.now();
+  const writerName = `문서회피${suffix}`;
+  const channelName = `doc-artifact-ask-user-${suffix}`;
+
+  const server = await launchIsolatedBackend(testInfo);
+
+  try {
+    const writerCreate = await apiRequest<{ agent: { id: string } }>(server.backendBaseUrl, "/api/agents", {
+      method: "POST",
+      body: {
+        name: writerName,
+        role: "Writer",
+        systemPrompt: "You are a document writer. Reply in concise Korean.",
+      },
+    });
+    expect(writerCreate.status).toBe(201);
+
+    const channel = await createChannelViaApi(server.backendBaseUrl, testInfo, channelName, "document artifact ask_user validation");
+    const channelId = channel.id;
+    const writerId = writerCreate.data.agent.id;
+
+    expect(
+      (
+        await apiRequest(server.backendBaseUrl, `/api/channels/${channelId}/members`, {
+          method: "POST",
+          body: { agentId: writerId },
+        })
+      ).status,
+    ).toBe(201);
+
+    const sendMessage = await apiRequest(server.backendBaseUrl, `/api/channels/${channelId}/messages`, {
+      method: "POST",
+      body: {
+        content: `@{${writerName}} FORCE_DOC_ARTIFACT_ASK_USER 이 채널 working directory에 markdown 파일로 저장하고 경로를 알려줘`,
+        messageKind: "general",
+      },
+    });
+    expect(sendMessage.status).toBe(200);
+
+    await expect
+      .poll(async () => {
+        const response = await apiRequest<{
+          jobs: Array<{
+            targetAgentId: string;
+            status: string;
+            errorText: string | null;
+          }>;
+        }>(server.backendBaseUrl, `/api/channels/${channelId}/executions`);
+        return response.data.jobs.map((job) => ({
+          targetAgentId: job.targetAgentId,
+          status: job.status,
+          errorText: job.errorText,
+        }));
+      })
+      .toEqual([
+        {
+          targetAgentId: writerId,
+          status: "failed",
+          errorText: expect.stringContaining("채널 파일 작업 미완료:"),
+        },
+      ]);
+
+    const messagesResponse = await apiRequest<{
+      messages: Array<{
+        senderType: string;
+        senderId: string | null;
+        content: string;
+        messageKind: string;
+      }>;
+    }>(server.backendBaseUrl, `/api/channels/${channelId}/messages`);
+    expect(messagesResponse.status).toBe(200);
+    expect(messagesResponse.data.messages[messagesResponse.data.messages.length - 1]).toMatchObject({
+      senderType: "system",
+      senderId: null,
+      messageKind: "result",
+    });
+    expect(messagesResponse.data.messages[messagesResponse.data.messages.length - 1]?.content).toContain(
+      "채널 파일 작업 미완료:",
+    );
+    expect(messagesResponse.data.messages[messagesResponse.data.messages.length - 1]?.content).toContain(
+      "completion action이 필요합니다.",
+    );
+  } finally {
+    await server.close();
+  }
+});
+
 test("channel workspaces are isolated per channel directory", async ({}, testInfo) => {
   const suffix = Date.now();
   const memberName = `ScopedWorker${suffix}`;
@@ -538,6 +626,44 @@ test("channel workspaces are isolated per channel directory", async ({}, testInf
           messages: Array<{ senderId: string | null; content: string }>;
         }>(server.backendBaseUrl, `/api/channels/${secondChannelId}/messages`);
         return response.data.messages.some((message) => message.content.includes(`채널 파일 없음:${fileToken}`));
+      })
+      .toBe(true);
+
+    const secondToken = `${fileToken}-second`;
+    const secondWrite = await apiRequest(server.backendBaseUrl, `/api/channels/${secondChannelId}/messages`, {
+      method: "POST",
+      body: {
+        content: `@{${memberName}} FORCE_CHANNEL_FILE_WRITE:${secondToken}`,
+        messageKind: "general",
+      },
+    });
+    expect(secondWrite.status).toBe(200);
+
+    await expect
+      .poll(async () => {
+        const response = await apiRequest<{
+          messages: Array<{ senderId: string | null; content: string }>;
+        }>(server.backendBaseUrl, `/api/channels/${secondChannelId}/messages`);
+        return response.data.messages.find((message) => message.senderId === memberId && message.content.includes(secondToken))
+          ?.content ?? "";
+      })
+      .toContain(`채널 파일 기록:${secondWorkspacePath}`);
+
+    const secondReadAfterWrite = await apiRequest(server.backendBaseUrl, `/api/channels/${secondChannelId}/messages`, {
+      method: "POST",
+      body: {
+        content: `@{${memberName}} FORCE_CHANNEL_FILE_READ:${secondToken}`,
+        messageKind: "general",
+      },
+    });
+    expect(secondReadAfterWrite.status).toBe(200);
+
+    await expect
+      .poll(async () => {
+        const response = await apiRequest<{
+          messages: Array<{ senderId: string | null; content: string }>;
+        }>(server.backendBaseUrl, `/api/channels/${secondChannelId}/messages`);
+        return response.data.messages.some((message) => message.content.includes(`채널 파일 존재:${secondToken}`));
       })
       .toBe(true);
   } finally {

@@ -146,6 +146,14 @@ test("electron settings modal saves selected model and keeps using app-server", 
         hasText: "APP_SERVER_RUNTIME_OK",
       }),
     ).toHaveCount(1);
+
+    await page.fill("#chat-input", "FORCE_REQUIRE_WORKSPACE_WRITE_RUNTIME");
+    await page.click("#send-btn");
+    await expect(
+      page.locator("#messages .msg-agent .msg-content", {
+        hasText: "WORKSPACE_WRITE_RUNTIME_OK",
+      }),
+    ).toHaveCount(1);
   } finally {
     await electronApp.close();
   }

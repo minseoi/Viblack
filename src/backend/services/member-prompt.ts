@@ -86,6 +86,9 @@ export function buildChannelPrompt(input: {
     input.requiresArtifactReport
       ? `답변 본문에 실제 산출물 파일 경로를 넣고, 마지막 CHANNEL_ACTION completion action에도 artifact_path를 포함하세요. worker가 requester/coordinator에게 넘길 때는 type=report를, coordinator가 사용자에게 직접 마무리할 때는 type=final을 사용하세요. artifact_path는 실제로 존재하는 경로여야 하며 반드시 채널 워크스페이스 내부여야 합니다. workspace root: ${input.workspaceRoot}`
       : "",
+    input.requiresArtifactReport
+      ? "채널 워크스페이스는 이 작업의 쓰기 루트로 이미 주어져 있습니다. read-only, 권한 요청, 추후 저장 약속으로 종료하지 말고 실제 파일을 만든 뒤 completion action으로만 마무리하세요."
+      : "",
     input.targetAgentMode === "coordinator"
       ? "당신은 coordinator 입니다. 의존 관계가 있는 작업은 한 번에 한 단계씩만 위임하세요. 조사 결과가 채널에 올라오기 전에는 문서 작성처럼 다음 단계를 시작하지 마세요."
       : "당신은 worker 입니다. 다른 worker에게 다시 위임하거나 사용자를 직접 상대하지 말고, 맡은 결과를 공개 채널에 올린 뒤 requester/coordinator에게 report 하세요.",

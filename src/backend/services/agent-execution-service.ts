@@ -33,9 +33,7 @@ export class AgentExecutionService {
       const runtimeSessionId = this.agentRepository.getRuntimeSession(agentId, DM_RUNTIME_SESSION_SCOPE);
 
       let lastStreamReply = "";
-      let activeStreamMessageId: number | null = null;
-      let lastCompletedStreamMessageId: number | null = null;
-      let lastCompletedStreamContent = "";
+      const completedStreamReplies: string[] = [];
       const selectedModel = this.appSettingsService.getSelectedModel();
       const codexResult = await runCodex({
         prompt: content,
@@ -47,31 +45,15 @@ export class AgentExecutionService {
           if (!isAgentMessageStreamType(event.rawType)) {
             return;
           }
+          if (!isCompletedAgentMessageStreamEvent(event.raw)) {
+            return;
+          }
           const streamedContent = event.content.trim();
           if (!streamedContent) {
             return;
           }
           lastStreamReply = streamedContent;
-          if (isCompletedAgentMessageStreamEvent(event.raw)) {
-            if (activeStreamMessageId !== null) {
-              this.agentRepository.updateMessage(activeStreamMessageId, streamedContent);
-              lastCompletedStreamMessageId = activeStreamMessageId;
-            } else {
-              const message = this.agentRepository.appendMessage(agentId, "agent", streamedContent);
-              lastCompletedStreamMessageId = message.id;
-            }
-            lastCompletedStreamContent = streamedContent;
-            activeStreamMessageId = null;
-            return;
-          }
-
-          if (activeStreamMessageId === null) {
-            const message = this.agentRepository.appendMessage(agentId, "agent", streamedContent);
-            activeStreamMessageId = message.id;
-            return;
-          }
-
-          this.agentRepository.updateMessage(activeStreamMessageId, streamedContent);
+          completedStreamReplies.push(streamedContent);
         },
       });
 
@@ -92,16 +74,18 @@ export class AgentExecutionService {
             .filter((line) => line.length > 0)
             .join("\n");
 
-      if (executionOk && activeStreamMessageId !== null) {
-        this.agentRepository.updateMessage(activeStreamMessageId, replyText);
-      } else if (
-        executionOk &&
-        lastCompletedStreamMessageId !== null &&
-        replyText === lastCompletedStreamContent
-      ) {
-        this.agentRepository.updateMessage(lastCompletedStreamMessageId, replyText);
+      if (executionOk) {
+        for (const completedReply of completedStreamReplies) {
+          this.agentRepository.appendMessage(agentId, "agent", completedReply);
+        }
+        if (
+          completedStreamReplies.length === 0 ||
+          replyText !== completedStreamReplies[completedStreamReplies.length - 1]
+        ) {
+          this.agentRepository.appendMessage(agentId, "agent", replyText);
+        }
       } else {
-        this.agentRepository.appendMessage(agentId, executionOk ? "agent" : "system", replyText);
+        this.agentRepository.appendMessage(agentId, "system", replyText);
       }
 
       return {

@@ -584,16 +584,19 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     await page.click("#send-btn");
     await expect(page.locator("#typing-indicator")).toHaveClass(/show/, { timeout: 1200 });
     await expect(page.locator("#typing-label")).toContainText(memberAlphaEdited);
+    const dmAgentMessagesBeforeFinalOnly = page.locator("#messages .msg-agent .msg-content");
+    const beforeDmFinalOnlyCount = await dmAgentMessagesBeforeFinalOnly.count();
     await expect(
       page.locator("#messages .msg-agent .msg-content", {
         hasText: dmStreamToken,
       }),
-    ).toHaveCount(1, { timeout: 1200 });
+    ).toHaveCount(0, { timeout: 1200 });
     await expect(
       page.locator("#messages .msg-agent .msg-content", {
         hasText: dmFinalToken,
       }),
     ).toHaveCount(0, { timeout: 900 });
+    await expect(dmAgentMessagesBeforeFinalOnly).toHaveCount(beforeDmFinalOnlyCount, { timeout: 1200 });
     await expect(
       page.locator("#messages .msg-agent .msg-content", {
         hasText: dmFinalToken,
@@ -614,8 +617,8 @@ test("electron full feature regression flow", async ({}, testInfo) => {
       `DM stream dedupe FORCE_STREAM_AGENT_MESSAGE_SEQ:abcdefghijklmnopqr|stuv|. FORCE_DELAY_MS:1800 FORCE_FINAL_REPLY:${dmStreamDedupFinalToken}`,
     );
     await page.click("#send-btn");
-    await expect(dmAgentMessages).toHaveCount(beforeDmStreamDedupCount + 1, { timeout: 1200 });
-    await expect(dmAgentMessages).toHaveCount(beforeDmStreamDedupCount + 1, { timeout: 1200 });
+    await expect(dmAgentMessages).toHaveCount(beforeDmStreamDedupCount, { timeout: 1200 });
+    await expect(dmAgentMessages).toHaveCount(beforeDmStreamDedupCount, { timeout: 1200 });
     await expect(
       page.locator("#messages .msg-agent .msg-content", {
         hasText: dmStreamDedupFinalToken,
@@ -812,8 +815,16 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     await page.click("#send-btn");
     await expect(page.locator("#typing-indicator")).toHaveClass(/show/, { timeout: 1200 });
     await expect(page.locator("#typing-label")).toContainText(memberAlphaEdited);
-    await expect(channelMessages).toHaveCount(beforeChannelStreamDedupCount + 2, { timeout: 1200 });
-    await expect(channelMessages).toHaveCount(beforeChannelStreamDedupCount + 2, { timeout: 1200 });
+    await expect(
+      page.locator("#messages .msg-agent .msg-content", {
+        hasText: "abcdefghijklmnopqr",
+      }),
+    ).toHaveCount(0, { timeout: 1200 });
+    await expect(
+      page.locator("#messages .msg-agent .msg-content", {
+        hasText: "abcdefghijklmnopqrstuv",
+      }),
+    ).toHaveCount(0, { timeout: 1200 });
     await expect(
       page.locator("#messages .msg-agent .msg-content", {
         hasText: channelStreamDedupFinalToken,
