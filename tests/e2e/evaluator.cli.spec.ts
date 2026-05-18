@@ -49,7 +49,7 @@ test("real evaluate tool CLI writes report artifacts", async ({}, testInfo) => {
 
   const repoRoot = path.resolve(__dirname, "..", "..");
   const outputDir = testInfo.outputPath("evaluator-cli-real");
-  const runtime = process.env.VIBLACK_E2E_REAL_CODEX_RUNTIME?.trim() || "exec";
+  const runtime = process.env.VIBLACK_E2E_REAL_CODEX_RUNTIME?.trim() || "app-server";
   const minScoreRaw = process.env.VIBLACK_E2E_REAL_CODEX_MIN_SCORE?.trim();
   const minScore = minScoreRaw ? Number.parseInt(minScoreRaw, 10) : Number.NaN;
 

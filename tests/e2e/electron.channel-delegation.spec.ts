@@ -5,7 +5,7 @@ test("channel delegation flow completes in coordinator -> researcher -> writer -
   const { evaluation } = await runDelegationBasicEvaluation({
     codexKind: "fake",
     outputDir: testInfo.outputPath("delegation-basic-fake-eval"),
-    runtime: "exec",
+    runtime: "app-server",
     settleOptions: {
       timeoutMs: 30_000,
       quietMs: 1_500,

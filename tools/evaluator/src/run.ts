@@ -30,7 +30,7 @@ function printUsage(): void {
       "  --codex <real>            Codex runtime kind (default: real)",
       "  --output-dir <path>       Directory to store evaluation artifacts",
       "  --baseline-report <path>  Prior report JSON for delta comparison",
-      "  --runtime <name>          Codex runtime preference, e.g. exec or app-server",
+      "  --runtime <name>          Codex runtime preference, e.g. app-server",
       "  --help                    Show this help",
       "",
     ].join("\n"),

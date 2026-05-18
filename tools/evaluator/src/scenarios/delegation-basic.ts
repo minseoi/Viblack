@@ -390,7 +390,10 @@ export async function runDelegationBasicEvaluation(
   const backendWorkspaceDir = ensureDirectory(path.join(runtimeDir, "backend-workspace"));
   const scenarioWorkspaceDir = ensureDirectory(path.join(runtimeDir, "channel-workspaces"));
   const dbPath = path.join(runtimeDir, "viblack.evaluator.sqlite");
-  const runtime = options.codexKind === "fake" ? "exec" : options.runtime?.trim() || process.env.VIBLACK_CODEX_RUNTIME?.trim() || "exec";
+  const runtime =
+    options.codexKind === "fake"
+      ? "app-server"
+      : options.runtime?.trim() || process.env.VIBLACK_CODEX_RUNTIME?.trim() || "app-server";
 
   const server = await launchBackendHarness({
     repoRoot,

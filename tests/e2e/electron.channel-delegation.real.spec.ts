@@ -13,7 +13,7 @@ test("real codex channel delegation evaluation", async ({}, testInfo) => {
   const { evaluation } = await runDelegationBasicEvaluation({
     codexKind: "real",
     outputDir: testInfo.outputPath("delegation-basic-real-eval"),
-    runtime: process.env.VIBLACK_E2E_REAL_CODEX_RUNTIME?.trim() || "exec",
+    runtime: process.env.VIBLACK_E2E_REAL_CODEX_RUNTIME?.trim() || "app-server",
     settleOptions: {
       timeoutMs: Number.isFinite(settleTimeoutMs) ? settleTimeoutMs : 6 * 60 * 1000,
       quietMs: 6_000,

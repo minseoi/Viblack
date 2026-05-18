@@ -56,8 +56,6 @@ let codexCommand = process.env.VIBLACK_CODEX_PATH || "codex";
 const activeCodexProcesses = new Set<ChildProcess>();
 const CODEX_TRANSIENT_RETRY_DELAY_MS = 900;
 const CODEX_MAX_TRANSIENT_RETRIES = 1;
-const runtimePreference = (process.env.VIBLACK_CODEX_RUNTIME || "app-server").trim().toLowerCase();
-const shouldPreferAppServer = runtimePreference !== "exec";
 
 let appServerClient: CodexAppServerClient | null = null;
 let appServerDisabledReason: string | null = null;
@@ -324,7 +322,7 @@ class CodexAppServerClient {
     await this.startupPromise;
   }
 
-  async prepareThread(threadId: string | null, cwd: string): Promise<string> {
+  async prepareThread(threadId: string | null, cwd: string, model: string | null): Promise<string> {
     await this.ensureStarted(cwd);
     if (!this.child) {
       throw new Error("codex app-server is not running");
@@ -338,6 +336,7 @@ class CodexAppServerClient {
         threadId,
         cwd,
         approvalPolicy: "never",
+        model,
       });
       const resumedThreadId = this.extractThreadId(result) ?? threadId;
       this.loadedThreadIds.add(resumedThreadId);
@@ -347,6 +346,7 @@ class CodexAppServerClient {
     const started = await this.request("thread/start", {
       cwd,
       approvalPolicy: "never",
+      model,
     });
     const startedThreadId = this.extractThreadId(started);
     if (!startedThreadId) {
@@ -360,6 +360,7 @@ class CodexAppServerClient {
     threadId: string;
     prompt: string;
     cwd: string;
+    model: string | null;
     timeoutMs: number;
     onStream?: (event: CodexStreamEvent) => void;
   }): Promise<InternalCodexRunResult> {
@@ -409,6 +410,7 @@ class CodexAppServerClient {
         threadId: params.threadId,
         cwd: params.cwd,
         approvalPolicy: "never",
+        model: params.model,
         input: [{ type: "text", text: params.prompt }],
       });
 
@@ -901,6 +903,7 @@ export async function checkCodexAvailability(cwd: string): Promise<CodexStatus> 
 async function runCodexViaAppServer(params: {
   prompt: string;
   cwd: string;
+  model: string | null;
   timeoutMs: number;
   sessionId: string | null;
   onStream?: (event: CodexStreamEvent) => void;
@@ -939,6 +942,7 @@ async function runCodexViaAppServer(params: {
 async function runCodexViaAppServerOnce(params: {
   prompt: string;
   cwd: string;
+  model: string | null;
   timeoutMs: number;
   sessionId: string | null;
   onStream?: (event: CodexStreamEvent) => void;
@@ -946,11 +950,12 @@ async function runCodexViaAppServerOnce(params: {
   try {
     appServerClient ??= new CodexAppServerClient();
 
-    const threadId = await appServerClient.prepareThread(params.sessionId, params.cwd);
+    const threadId = await appServerClient.prepareThread(params.sessionId, params.cwd, params.model);
     const result = await appServerClient.runTurn({
       threadId,
       prompt: params.prompt,
       cwd: params.cwd,
+      model: params.model,
       timeoutMs: params.timeoutMs,
       onStream: params.onStream,
     });
@@ -979,311 +984,22 @@ export async function runCodex(params: CodexRunParams): Promise<CodexRunResult> 
   const timeoutMs = params.timeoutMs ?? 120_000;
   const model = params.model?.trim() ? params.model.trim() : null;
 
-  if (model) {
-    return runCodexViaExec({
-      prompt,
-      model,
-      timeoutMs,
-      cwd: params.cwd,
-      sessionId: params.sessionId,
-      onStream: params.onStream,
-    });
-  }
-
-  if (shouldPreferAppServer && !appServerDisabledReason) {
-    const appServerResult = await runCodexViaAppServer({
-      prompt,
-      timeoutMs,
-      cwd: params.cwd,
-      sessionId: params.sessionId,
-      onStream: params.onStream,
-    });
-    if (appServerResult.ok) {
-      return appServerResult;
-    }
-
-    if (!appServerResult.fallbackEligible) {
-      return appServerResult;
-    }
-
-    const execFallback = await runCodexViaExec({
-      prompt,
-      timeoutMs,
-      cwd: params.cwd,
-      model: null,
-      sessionId: params.sessionId,
-      onStream: params.onStream,
-    });
-
-    if (!execFallback.ok && appServerResult.error && execFallback.error) {
-      return {
-        ...execFallback,
-        error: `app-server: ${appServerResult.error}\nexec: ${execFallback.error}`,
-      };
-    }
-
-    return execFallback;
-  }
-
-  return runCodexViaExec({
-    prompt,
-    timeoutMs,
-    cwd: params.cwd,
-    model: null,
-    sessionId: params.sessionId,
-    onStream: params.onStream,
-  });
-}
-
-interface CodexRunOnceParams {
-  prompt: string;
-  model?: string | null;
-  sessionId: string | null;
-  cwd: string;
-  timeoutMs: number;
-  onStream?: (event: CodexStreamEvent) => void;
-}
-
-async function runCodexViaExec(params: CodexRunOnceParams): Promise<CodexRunResult> {
-  let latestResult: CodexRunResult | null = null;
-  let currentSessionId = params.sessionId;
-
-  for (let attempt = 0; attempt <= CODEX_MAX_TRANSIENT_RETRIES; attempt += 1) {
-    const result = await runCodexExecOnce({
-      ...params,
-      sessionId: currentSessionId,
-    });
-    latestResult = result;
-    currentSessionId = result.sessionId ?? currentSessionId;
-    if (result.ok && !isEmptySuccessfulCodexResult(result)) {
-      return result;
-    }
-    const shouldRetry = shouldRetryCodexResult(result, attempt);
-    if (!shouldRetry) {
-      return result;
-    }
-    await sleep(CODEX_TRANSIENT_RETRY_DELAY_MS * (attempt + 1));
-  }
-
-  return (
-    latestResult ?? {
+  if (appServerDisabledReason) {
+    return {
       ok: false,
       reply: "",
       sessionId: params.sessionId,
-      error: "codex execution failed",
-    }
-  );
-}
-
-async function runCodexExecOnce(params: CodexRunOnceParams): Promise<CodexRunResult> {
-  const args = params.sessionId
-    ? [
-        "exec",
-        "resume",
-        "--full-auto",
-        "--skip-git-repo-check",
-        ...(params.model ? ["-m", params.model] : []),
-        "--json",
-        params.sessionId,
-        params.prompt,
-      ]
-    : [
-        "exec",
-        "--full-auto",
-        "--skip-git-repo-check",
-        ...(params.model ? ["-m", params.model] : []),
-        "--json",
-        params.prompt,
-      ];
-
-  return new Promise((resolve) => {
-    let child: ChildProcess;
-    try {
-      child = spawn(codexCommand, args, {
-        cwd: params.cwd,
-        windowsHide: true,
-        shell: needsShellOnWindows(codexCommand),
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      resolve({
-        ok: false,
-        reply: "",
-        sessionId: params.sessionId,
-        error: message,
-      });
-      return;
-    }
-
-    trackProcess(child);
-    let stdoutBuffer = "";
-    let stderrBuffer = "";
-    let stderrOutput = "";
-    let stdoutOutput = "";
-    let sessionId = params.sessionId;
-    const deltaParts: string[] = [];
-    const fullParts: string[] = [];
-    const terminalParts: string[] = [];
-    const failureParts: string[] = [];
-    let sawFailureEvent = false;
-
-    const processLine = (rawLine: string, source: "stdout" | "stderr"): void => {
-      const line = rawLine.trim();
-      if (!line) {
-        return;
-      }
-
-      try {
-        const event = JSON.parse(line) as Record<string, unknown>;
-        const topLevelType = typeof event.type === "string" ? event.type : "";
-        const nestedItem = event.item;
-        const nestedItemType =
-          nestedItem &&
-          typeof nestedItem === "object" &&
-          typeof (nestedItem as Record<string, unknown>).type === "string"
-            ? String((nestedItem as Record<string, unknown>).type)
-            : "";
-        const streamType =
-          topLevelType === "item.completed" && nestedItemType ? nestedItemType : topLevelType;
-
-        if (topLevelType === "thread.started" && typeof event.thread_id === "string") {
-          sessionId = event.thread_id;
-        }
-
-        if (topLevelType.toLowerCase().includes("failed")) {
-          sawFailureEvent = true;
-          const failureText = extractTextParts(event.error ?? event)
-            .map((part) => part.trim())
-            .filter((part) => part.length > 0)
-            .join(" ");
-          if (failureText) {
-            failureParts.push(failureText);
-          }
-        }
-
-        if (topLevelType === "error") {
-          const errorParts = extractTextParts(event);
-          if (errorParts.length > 0) {
-            failureParts.push(errorParts.join(" "));
-            if (params.onStream) {
-              params.onStream({
-                type: "error",
-                content: errorParts.join(" "),
-                raw: event,
-              });
-            }
-          }
-          return;
-        }
-
-        const parts = extractTextParts(event)
-          .map((part) => part.trim())
-          .filter((part) => part.length > 0);
-
-        if (parts.length > 0) {
-          const terminalEvent = isTerminalStreamEventType(topLevelType);
-          const streamEventType = classifyStreamEventType(streamType);
-          if (params.onStream && streamEventType) {
-            params.onStream({
-              type: streamEventType,
-              content: parts.join(" "),
-              rawType: streamType,
-              raw: event,
-            });
-          }
-
-          if (streamType.toLowerCase().includes("delta")) {
-            deltaParts.push(...parts);
-          } else if (terminalEvent) {
-            terminalParts.push(...parts);
-          } else if (streamEventType === "message") {
-            fullParts.push(...parts);
-          }
-        }
-      } catch {
-        if (source === "stderr") {
-          stderrOutput += `${line}\n`;
-        } else {
-          stdoutOutput += `${line}\n`;
-        }
-      }
+      error: appServerDisabledReason,
     };
+  }
 
-    const flushLines = (source: "stdout" | "stderr", flushAll: boolean): void => {
-      const buffer = source === "stdout" ? stdoutBuffer : stderrBuffer;
-      const lines = buffer.split(/\r?\n/);
-      const remain = flushAll ? "" : (lines.pop() ?? "");
-      if (source === "stdout") {
-        stdoutBuffer = remain;
-      } else {
-        stderrBuffer = remain;
-      }
-
-      for (const rawLine of lines) {
-        processLine(rawLine, source);
-      }
-    };
-
-    const timeoutHandle = setTimeout(() => {
-      child.kill();
-    }, params.timeoutMs);
-
-    child.stdout?.on("data", (chunk) => {
-      stdoutBuffer += String(chunk);
-      flushLines("stdout", false);
-    });
-
-    child.stderr?.on("data", (chunk) => {
-      stderrBuffer += String(chunk);
-      flushLines("stderr", false);
-    });
-
-    child.on("error", (err) => {
-      clearTimeout(timeoutHandle);
-      resolve({
-        ok: false,
-        reply: "",
-        sessionId,
-        error: err.message,
-      });
-    });
-
-    child.on("close", (code) => {
-      clearTimeout(timeoutHandle);
-      flushLines("stdout", true);
-      flushLines("stderr", true);
-
-      const bestTerminal = pickLongest(terminalParts);
-      const bestFull = pickLongest(fullParts);
-      const bestFailure = pickLongest(failureParts);
-      const mergedReply = (bestTerminal || bestFull || deltaParts.join("") || stdoutOutput.trim()).trim();
-      const mergedFailure = (bestFailure || stderrOutput.trim()).trim();
-
-      if (code === 0 && sawFailureEvent) {
-        resolve({
-          ok: false,
-          reply: mergedReply,
-          sessionId,
-          error: mergedFailure || "codex turn failed",
-        });
-        return;
-      }
-      if (code === 0) {
-        resolve({
-          ok: true,
-          reply: mergedReply,
-          sessionId,
-        });
-        return;
-      }
-
-      resolve({
-        ok: false,
-        reply: mergedReply,
-        sessionId,
-        error: mergedFailure || "codex execution failed",
-      });
-    });
+  return runCodexViaAppServer({
+    prompt,
+    timeoutMs,
+    cwd: params.cwd,
+    model,
+    sessionId: params.sessionId,
+    onStream: params.onStream,
   });
 }
 

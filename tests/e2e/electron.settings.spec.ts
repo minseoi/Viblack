@@ -93,7 +93,7 @@ function channelRow(page: Page, channelName: string) {
   return page.locator("#channel-list .section-item.channel", { hasText: `# ${channelName}` });
 }
 
-test("electron settings modal saves selected model and uses it for exec", async ({}, testInfo) => {
+test("electron settings modal saves selected model and keeps using app-server", async ({}, testInfo) => {
   const memberName = `ModelQA${Date.now()}`;
   const selectedModel = "gpt-5.4-mini";
   const { electronApp, page } = await launchIsolatedApp(testInfo);
@@ -136,6 +136,14 @@ test("electron settings modal saves selected model and uses it for exec", async 
     await expect(
       page.locator("#messages .msg-agent .msg-content", {
         hasText: `모델 확인:${selectedModel}`,
+      }),
+    ).toHaveCount(1);
+
+    await page.fill("#chat-input", "FORCE_REQUIRE_APP_SERVER");
+    await page.click("#send-btn");
+    await expect(
+      page.locator("#messages .msg-agent .msg-content", {
+        hasText: "APP_SERVER_RUNTIME_OK",
       }),
     ).toHaveCount(1);
   } finally {

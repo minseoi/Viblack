@@ -1433,3 +1433,18 @@
   - 기존 code-artifact fake 성공 시나리오도 coordinator의 최종 `type=final`에 worker가 전달한 `artifact_path`를 다시 싣도록 맞춰 새 completion 규칙과 정합성을 맞춤.
   - `electron.channel-metadata` 스펙에 direct mention 문서 작성 회귀를 추가하고, 기존 실패 기대 문구도 `채널 파일 작업 미완료` 기준으로 갱신 중.
   - 전체 `verify` 중 `electron.smoke`에서 새 멤버 생성 직후 `/api/agents` lookup이 드물게 뒤 구두점이 붙은 표시명 때문에 흔들리는 것을 확인해, smoke 테스트의 agent ID 조회를 trailing punctuation 무시 방식으로 보강.
+
+### 130) Codex app-server only 전환
+- 사용자 요청:
+  - 선택 모델이 있어도 `exec`로 우회하지 말고 `app-server`로 실행.
+  - `exec` 경로와 fallback을 제거하고, 실패 시 앱에서 에러 메시지를 그대로 노출.
+- 진행 업데이트:
+  - `src/backend/codex.ts`에서 `runCodex()`의 `model -> exec` 분기와 app-server 실패 시 exec fallback 분기를 제거.
+  - app-server 요청인 `thread/start`, `thread/resume`, `turn/start`에 모두 `model` 필드를 실어 선택 모델이 app-server 세션/턴 override로 전달되도록 조정.
+  - fake app-server도 `params.model`과 thread state의 `requestedModel`을 읽어 `FORCE_ASSERT_MODEL` 검증이 app-server 경로에서 동작하도록 확장.
+  - settings E2E는 선택 모델 저장 후 실제 응답이 해당 모델로 처리되는지, 그리고 런타임이 계속 `APP_SERVER_RUNTIME_OK`를 반환하는지 검증하도록 갱신.
+- 검증:
+  - `npm run check` 통과
+  - `npx playwright test tests/e2e/electron.settings.spec.ts tests/e2e/electron.channel-delegation.spec.ts tests/e2e/electron.smoke.spec.ts` 통과
+  - `npm run verify` 통과
+  - 결과: Playwright `19 passed, 3 skipped`

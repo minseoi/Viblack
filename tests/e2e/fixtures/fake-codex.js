@@ -817,12 +817,13 @@ function extractTurnInputText(input) {
     .join("\n");
 }
 
-function createThreadPayload(threadId, cwd) {
+function createThreadPayload(threadId, cwd, requestedModel = null) {
   const now = Math.floor(Date.now() / 1000);
+  const model = typeof requestedModel === "string" && requestedModel.trim() ? requestedModel.trim() : "fake-model";
   return {
     approvalPolicy: "never",
     cwd,
-    model: "fake-model",
+    model,
     modelProvider: "fake",
     sandbox: {
       mode: "workspace-write",
@@ -912,7 +913,12 @@ async function runAppServer() {
       if (method === "thread/start") {
         const cwd = typeof params.cwd === "string" && params.cwd ? params.cwd : process.cwd();
         const threadId = `fake-thread-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-        respond(id, createThreadPayload(threadId, cwd));
+        const requestedModel =
+          typeof params.model === "string" && params.model.trim()
+            ? params.model.trim()
+            : null;
+        updateSessionState(threadId, { requestedModel });
+        respond(id, createThreadPayload(threadId, cwd, requestedModel));
         continue;
       }
 
@@ -922,7 +928,17 @@ async function runAppServer() {
           typeof params.threadId === "string" && params.threadId
             ? params.threadId
             : `fake-thread-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-        respond(id, createThreadPayload(threadId, cwd));
+        const previousState = readSessionState(threadId);
+        const requestedModel =
+          Object.prototype.hasOwnProperty.call(params, "model")
+            ? typeof params.model === "string" && params.model.trim()
+              ? params.model.trim()
+              : null
+            : typeof previousState.requestedModel === "string" && previousState.requestedModel.trim()
+              ? previousState.requestedModel.trim()
+              : null;
+        updateSessionState(threadId, { requestedModel });
+        respond(id, createThreadPayload(threadId, cwd, requestedModel));
         continue;
       }
 
@@ -939,6 +955,18 @@ async function runAppServer() {
             : `fake-thread-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
         const turnId = `fake-turn-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
         const cwd = typeof params.cwd === "string" && params.cwd ? params.cwd : process.cwd();
+        const threadState = readSessionState(threadId);
+        const requestedModel =
+          Object.prototype.hasOwnProperty.call(params, "model")
+            ? typeof params.model === "string" && params.model.trim()
+              ? params.model.trim()
+              : null
+            : typeof threadState.requestedModel === "string" && threadState.requestedModel.trim()
+              ? threadState.requestedModel.trim()
+              : null;
+        if (Object.prototype.hasOwnProperty.call(params, "model")) {
+          updateSessionState(threadId, { requestedModel });
+        }
         const promptText = extractTurnInputText(params.input);
         const controlPromptText = getControlPromptText(promptText);
         const forceTurnFailed = shouldForceTurnFailed(controlPromptText);
@@ -988,7 +1016,7 @@ async function runAppServer() {
 
         const reply =
           forceItemCompletedMessage ||
-          buildReply(promptText, "app-server", null, controlPromptText, threadId, cwd);
+          buildReply(promptText, "app-server", requestedModel, controlPromptText, threadId, cwd);
 
         if (forceItemCompletedMessageSequence.length > 0) {
           forceItemCompletedMessageSequence.forEach((messageText, index) => {
