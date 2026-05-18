@@ -437,6 +437,13 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     await expect
       .poll(async () => page.locator("#member-list .member-avatar").count())
       .toBeGreaterThanOrEqual(2);
+    const initialAlphaAvatarTone = await readAvatarTone(
+      memberRow(page, memberAlpha).locator(".member-avatar"),
+    );
+    const initialBetaAvatarTone = await readAvatarTone(
+      memberRow(page, memberBeta).locator(".member-avatar"),
+    );
+    expect(initialBetaAvatarTone.background).not.toBe(initialAlphaAvatarTone.background);
 
     await openAddMemberModal(page);
     await page.fill("#member-name-input", memberAlpha);
@@ -464,6 +471,10 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     await expect(page.locator("#member-modal[open]")).toHaveCount(0);
     await expect(memberRow(page, memberAlphaEdited)).toHaveCount(1);
     await expect(memberRow(page, memberAlpha)).toHaveCount(0);
+    const editedAlphaAvatarTone = await readAvatarTone(
+      memberRow(page, memberAlphaEdited).locator(".member-avatar"),
+    );
+    expect(editedAlphaAvatarTone.background).not.toBe(initialAlphaAvatarTone.background);
 
     await memberRow(page, memberAlphaEdited).locator(".member-main").click();
     await expect(page.locator("#agent-title")).toHaveText(memberAlphaEdited);

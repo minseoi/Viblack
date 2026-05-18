@@ -134,11 +134,22 @@ function escapeAttr(value: string): string {
 }
 
 function hashSeed(value: string): number {
-  let hash = 0;
+  let hash = 2166136261;
   for (const char of value) {
-    hash = (hash * 31 + char.charCodeAt(0)) | 0;
+    hash ^= char.codePointAt(0) ?? 0;
+    hash = Math.imul(hash, 16777619);
   }
-  return Math.abs(hash);
+  hash ^= hash >>> 16;
+  hash = Math.imul(hash, 0x7feb352d);
+  hash ^= hash >>> 15;
+  hash = Math.imul(hash, 0x846ca68b);
+  hash ^= hash >>> 16;
+  return hash >>> 0;
+}
+
+function getAgentAvatarSeed(label: string, fallback = "agent"): string {
+  const normalized = label.trim().normalize("NFKC").toLowerCase();
+  return `agent:${normalized || fallback.trim() || "agent"}`;
 }
 
 function getAvatarInitials(label: string, variant: AvatarVariant): string {
@@ -234,23 +245,27 @@ function getMessageAvatarSeed(message: ChatMessage, senderLabel: string): string
   if (message.sender === "system") {
     return "system";
   }
-  if (message.senderId) {
-    return message.senderId;
-  }
-  if (message.agentId) {
-    return message.agentId;
-  }
-  return activeAgentId ?? senderLabel;
+  const agentName =
+    (message.senderId ? agents.find((agent) => agent.id === message.senderId)?.name : undefined) ??
+    (message.agentId ? agents.find((agent) => agent.id === message.agentId)?.name : undefined) ??
+    senderLabel;
+  const fallback = message.senderId ?? message.agentId ?? activeAgentId ?? senderLabel;
+  return getAgentAvatarSeed(agentName, fallback);
 }
 
-function getMessageSenderLabel(message: ChatMessage, agentName = "Agent"): string {
-  if (message.sender === "user") {
-    return "You";
+function getTypingAvatarSeed(actor: { id: string; name: string; variant: AvatarVariant }): string {
+  if (actor.variant === "agent") {
+    return getAgentAvatarSeed(actor.name, actor.id);
   }
-  if (message.sender === "system") {
-    return "System";
-  }
-  return message.senderLabel ?? agentName;
+  return actor.id;
+}
+
+function getHeaderAgentAvatarSeed(agent: Agent | undefined, fallbackId: string): string {
+  return getAgentAvatarSeed(agent?.name ?? "Agent", agent?.id ?? fallbackId);
+}
+
+function getMemberAvatarSeed(agent: Agent): string {
+  return getAgentAvatarSeed(agent.name, agent.id);
 }
 
 function getMessageAvatarVariant(message: ChatMessage): AvatarVariant {
@@ -261,6 +276,16 @@ function getMessageAvatarVariant(message: ChatMessage): AvatarVariant {
     return "system";
   }
   return "agent";
+}
+
+function getMessageSenderLabel(message: ChatMessage, agentName = "Agent"): string {
+  if (message.sender === "user") {
+    return "You";
+  }
+  if (message.sender === "system") {
+    return "System";
+  }
+  return message.senderLabel ?? agentName;
 }
 
 function formatMessageTimestamp(createdAt: string): string {
@@ -295,7 +320,7 @@ function renderHeaderAvatar(): void {
       avatarEl,
       activeAgent?.name ?? "Agent",
       "agent",
-      activeAgent?.id ?? activeAgent?.name ?? activeAgentId,
+      getHeaderAgentAvatarSeed(activeAgent, activeAgentId),
     );
     return;
   }
@@ -353,7 +378,7 @@ function renderTypingIndicator(): void {
   for (const actor of actors.slice(0, 3)) {
     const avatar = document.createElement("div");
     avatar.className = "avatar typing-avatar";
-    applyAvatarStyle(avatar, actor.name, actor.variant, actor.id);
+    applyAvatarStyle(avatar, actor.name, actor.variant, getTypingAvatarSeed(actor));
     avatarsEl.appendChild(avatar);
   }
 
@@ -1558,7 +1583,7 @@ function renderMemberList(): void {
 
     const avatar = document.createElement("div");
     avatar.className = "avatar member-avatar";
-    applyAvatarStyle(avatar, agent.name, "agent", agent.id);
+    applyAvatarStyle(avatar, agent.name, "agent", getMemberAvatarSeed(agent));
 
     const textWrap = document.createElement("div");
     textWrap.className = "member-text";

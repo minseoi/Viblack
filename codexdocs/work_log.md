@@ -1542,3 +1542,18 @@
   - `npm run build` 통과
   - `npm run verify` 통과
   - 결과: Playwright `20 passed, 3 skipped`
+
+### 86) 진행: 이름 기반 아바타 색상 구분 개선 착수
+- 사용자 이슈: 멤버 이름이 달라도 프로필 이미지 배경색이 거의 같아 구분이 어렵다.
+- 조사: 렌더러 아바타 색상 seed가 주로 agent.id를 사용하며, DB agent id가 연속 숫자 문자열이라 해시 hue도 연속되어 색 차이가 작게 보일 수 있다.
+- 방향: agent 아바타 색상 seed를 표시 이름 기반으로 정규화하고, 해시 혼합을 강화해 비슷한 이름/연속 숫자에서도 색상 차이가 나도록 수정한다.
+- 구현:
+  - `src/renderer/renderer.ts`의 agent 아바타 seed를 `agent.id` 중심에서 정규화된 표시 이름 중심으로 변경.
+  - 연속 숫자 ID/비슷한 문자열에서도 hue가 붙지 않도록 해시 혼합을 FNV 기반으로 강화.
+  - 멤버 목록, 헤더, 메시지, typing avatar가 동일한 이름 seed를 사용하도록 정리.
+- 테스트:
+  - `tests/e2e/electron.smoke.spec.ts`에 서로 다른 멤버 이름의 아바타 배경색 차이와 이름 변경 후 배경색 갱신 단정을 추가.
+- 검증:
+  - `npm run check` 통과
+  - `npm run verify` 통과
+  - 결과: Playwright `20 passed, 3 skipped`
