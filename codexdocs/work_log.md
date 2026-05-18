@@ -1527,3 +1527,18 @@
   - real Codex 채널 probe(`.tmp_probe_app_server.js`)로 서로 다른 두 workspace에서 sequential markdown 파일 생성까지 직접 확인:
     - workspace A: `real-a.md` 생성 성공, 내용 `alpha`
     - workspace B: `real-b.md` 생성 성공, 내용 `beta`
+
+### 135) 채널 Codex turn timeout 상향
+- 사용자 이슈:
+  - `codex app-server turn timed out`가 최신성 조사/긴 문서 작업에서 자주 발생했고, 최근 실측도 1회 시도 한도를 넘긴 뒤 재시도까지 겹쳐 약 4분 후 실패로 끝남.
+- 조사:
+  - 채널 실행은 `timeoutMs: 120_000`으로 고정되어 있었음.
+  - app-server 경로는 transient retry 1회가 있어, 한 번 timeout이 나면 체감 실패 시간이 더 길어질 수 있음.
+- 진행 업데이트:
+  - 채널 멘션 실행 timeout을 `120_000ms -> 300_000ms`로 상향.
+  - real delegation Playwright/evaluator도 장기 채널 작업을 조기 stall로 오판하지 않도록 settle timeout과 `maxRunningMs` 기본값을 함께 상향.
+- 검증:
+  - `npm run check` 통과
+  - `npm run build` 통과
+  - `npm run verify` 통과
+  - 결과: Playwright `20 passed, 3 skipped`

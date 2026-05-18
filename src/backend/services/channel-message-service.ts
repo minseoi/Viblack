@@ -42,6 +42,7 @@ interface ChannelMessageListResult {
 export class ChannelMessageService {
   private static readonly MAX_MENTION_EXECUTIONS = 12;
   private static readonly CHANNEL_PROMPT_RECENT_MESSAGE_LIMIT = 12;
+  private static readonly CHANNEL_CODEX_TIMEOUT_MS = 300_000;
   private static readonly INTENT_ONLY_PATTERNS = [
     /구현하겠습니다/,
     /개발하겠습니다/,
@@ -545,7 +546,7 @@ export class ChannelMessageService {
           model: selectedModel,
           sessionId: runtimeSessionId,
           cwd: channelWorkspacePath,
-          timeoutMs: 120_000,
+          timeoutMs: ChannelMessageService.CHANNEL_CODEX_TIMEOUT_MS,
           onStream: (event) => {
             if (!isAgentMessageStreamType(event.rawType)) {
               return;

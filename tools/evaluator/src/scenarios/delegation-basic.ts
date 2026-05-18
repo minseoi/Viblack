@@ -228,10 +228,10 @@ async function waitForChannelToSettle(
     maxRunningMs?: number;
   },
 ): Promise<void> {
-  const timeoutMs = options?.timeoutMs ?? 180_000;
+  const timeoutMs = options?.timeoutMs ?? 12 * 60 * 1000;
   const quietMs = options?.quietMs ?? 4_000;
   const pollMs = options?.pollMs ?? 800;
-  const maxRunningMs = options?.maxRunningMs ?? 150_000;
+  const maxRunningMs = options?.maxRunningMs ?? 630_000;
   const startedAt = Date.now();
   let stableSince = 0;
   let lastFingerprint = "";

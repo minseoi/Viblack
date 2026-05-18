@@ -3,7 +3,7 @@ import { runDelegationBasicEvaluation } from "../../tools/evaluator/src/scenario
 
 test("real codex channel delegation evaluation", async ({}, testInfo) => {
   test.skip(!process.env.VIBLACK_E2E_REAL_CODEX, "Set VIBLACK_E2E_REAL_CODEX=1 to run against real codex");
-  test.setTimeout(12 * 60 * 1000);
+  test.setTimeout(18 * 60 * 1000);
 
   const minScoreRaw = process.env.VIBLACK_E2E_REAL_CODEX_MIN_SCORE?.trim();
   const minScore = minScoreRaw ? Number.parseInt(minScoreRaw, 10) : Number.NaN;
@@ -15,10 +15,10 @@ test("real codex channel delegation evaluation", async ({}, testInfo) => {
     outputDir: testInfo.outputPath("delegation-basic-real-eval"),
     runtime: process.env.VIBLACK_E2E_REAL_CODEX_RUNTIME?.trim() || "app-server",
     settleOptions: {
-      timeoutMs: Number.isFinite(settleTimeoutMs) ? settleTimeoutMs : 6 * 60 * 1000,
+      timeoutMs: Number.isFinite(settleTimeoutMs) ? settleTimeoutMs : 12 * 60 * 1000,
       quietMs: 6_000,
       pollMs: 1_000,
-      maxRunningMs: 150_000,
+      maxRunningMs: 630_000,
     },
   });
 
