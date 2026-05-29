@@ -883,8 +883,15 @@
         color: #64748a;
         font-size: 13px;
       }
+      .chat-input-wrap {
+        position: relative;
+        min-height: 72px;
+        min-width: 0;
+      }
       #chat-input {
-        resize: none;
+        position: relative;
+        z-index: 1;
+        width: 100%;
         min-height: 72px;
         padding: 0;
         border-radius: 0;
@@ -893,9 +900,27 @@
         line-height: 1.55;
         background: transparent;
         color: #172533;
+        caret-color: #172533;
+        white-space: pre-wrap;
+        word-break: break-word;
+        overflow-y: auto;
+      }
+      #chat-input::selection {
+        background: rgba(63, 131, 194, 0.24);
+        color: #172533;
+      }
+      #chat-input[data-empty="true"]::before {
+        content: attr(data-placeholder);
+        color: #7a899b;
+        pointer-events: none;
       }
       #chat-input:focus {
         outline: none;
+      }
+      .chat-input-mention {
+        border-radius: 6px;
+        background: #e8f2ff;
+        color: #124885;
       }
       #send-btn {
         border: none;
@@ -1509,11 +1534,17 @@
               aria-label="멘션할 채널 멤버"
               aria-hidden="true"
             ></div>
-            <textarea
-              id="chat-input"
-              aria-controls="mention-suggestions"
-              placeholder="Helper에게 작업을 요청하세요. (Enter 전송, Shift+Enter 줄바꿈)"
-            ></textarea>
+            <div class="chat-input-wrap">
+              <div
+                id="chat-input"
+                role="textbox"
+                aria-multiline="true"
+                aria-controls="mention-suggestions"
+                contenteditable="true"
+                data-empty="true"
+                data-placeholder="Helper에게 작업을 요청하세요. (Enter 전송, Shift+Enter 줄바꿈)"
+              ></div>
+            </div>
             <button id="send-btn" type="submit">Send</button>
           </form>
         </footer>

@@ -134,6 +134,8 @@ let isMessagesDetachedFromBottom = false;
 let pendingNewMessageAnchorIndex: number | null = null;
 let pendingMessagesScrollRestoreFrameId: number | null = null;
 let mentionSuggestionBlurTimer: number | null = null;
+let deferredMentionSelectionTimer: number | null = null;
+let isChatInputComposing = false;
 let mentionSuggestionState: MentionSuggestionState = {
   isOpen: false,
   query: null,
@@ -791,21 +793,176 @@ function getRenderableMessageText(message: ChatMessage): string {
   return stripChannelActionBlocks(message.content);
 }
 
+function getChatInput(): HTMLElement | null {
+  return document.getElementById("chat-input");
+}
+
+function getComposerNodeTextLength(node: Node): number {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return node.textContent?.length ?? 0;
+  }
+  if (node instanceof HTMLBRElement) {
+    return 1;
+  }
+  return Array.from(node.childNodes).reduce((sum, child) => sum + getComposerNodeTextLength(child), 0);
+}
+
+function getComposerTextFromNode(node: Node): string {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return node.textContent ?? "";
+  }
+  if (node instanceof HTMLBRElement) {
+    return "\n";
+  }
+  return Array.from(node.childNodes).map(getComposerTextFromNode).join("");
+}
+
+function getComposerText(input: HTMLElement): string {
+  return getComposerTextFromNode(input).replace(/\u00a0/g, " ");
+}
+
+function updateComposerEmptyState(input: HTMLElement): void {
+  input.dataset.empty = getComposerText(input).length === 0 ? "true" : "false";
+}
+
+function appendComposerPlainText(parent: HTMLElement | DocumentFragment, text: string): void {
+  const parts = text.split("\n");
+  parts.forEach((part, index) => {
+    if (index > 0) {
+      parent.appendChild(document.createElement("br"));
+    }
+    if (part) {
+      parent.appendChild(document.createTextNode(part));
+    }
+  });
+}
+
+function placeComposerCaretAtOffset(root: HTMLElement, targetOffset: number): void {
+  const selection = window.getSelection();
+  if (!selection) {
+    return;
+  }
+
+  const range = document.createRange();
+  let remaining = Math.max(0, targetOffset);
+  let placed = false;
+
+  const visit = (node: Node): void => {
+    if (placed) {
+      return;
+    }
+    if (node.nodeType === Node.TEXT_NODE) {
+      const length = node.textContent?.length ?? 0;
+      if (remaining <= length) {
+        range.setStart(node, remaining);
+        range.collapse(true);
+        placed = true;
+        return;
+      }
+      remaining -= length;
+      return;
+    }
+    if (node instanceof HTMLBRElement) {
+      if (remaining <= 1) {
+        const parent = node.parentNode;
+        if (parent) {
+          range.setStartAfter(node);
+          range.collapse(true);
+          placed = true;
+        }
+        return;
+      }
+      remaining -= 1;
+      return;
+    }
+    for (const child of Array.from(node.childNodes)) {
+      visit(child);
+      if (placed) {
+        return;
+      }
+    }
+  };
+
+  visit(root);
+  if (!placed) {
+    range.selectNodeContents(root);
+    range.collapse(false);
+  }
+
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function setComposerText(input: HTMLElement, value: string, caretOffset = value.length): void {
+  input.innerHTML = "";
+  appendComposerPlainText(input, value);
+  updateComposerEmptyState(input);
+  placeComposerCaretAtOffset(input, caretOffset);
+}
+
+function getComposerOffsetForPosition(root: HTMLElement, container: Node, offset: number): number {
+  if (container === root) {
+    return Array.from(root.childNodes)
+      .slice(0, offset)
+      .reduce((sum, child) => sum + getComposerNodeTextLength(child), 0);
+  }
+  if (container.nodeType === Node.TEXT_NODE) {
+    let total = offset;
+    let current: Node | null = container;
+    while (current && current !== root) {
+      let sibling = current.previousSibling;
+      while (sibling) {
+        total += getComposerNodeTextLength(sibling);
+        sibling = sibling.previousSibling;
+      }
+      current = current.parentNode;
+    }
+    return total;
+  }
+  if (container instanceof HTMLElement) {
+    let total = Array.from(container.childNodes)
+      .slice(0, offset)
+      .reduce((sum, child) => sum + getComposerNodeTextLength(child), 0);
+    let current: Node | null = container;
+    while (current && current !== root) {
+      let sibling = current.previousSibling;
+      while (sibling) {
+        total += getComposerNodeTextLength(sibling);
+        sibling = sibling.previousSibling;
+      }
+      current = current.parentNode;
+    }
+    return total;
+  }
+  return 0;
+}
+
+function getComposerSelectionOffset(input: HTMLElement): number | null {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) {
+    return null;
+  }
+  const range = selection.getRangeAt(0);
+  if (!input.contains(range.startContainer)) {
+    return null;
+  }
+  return getComposerOffsetForPosition(input, range.startContainer, range.startOffset);
+}
+
 function focusInput(): void {
-  const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
+  const input = getChatInput();
   if (!input || isMessagesDetachedFromBottom) {
     return;
   }
   setTimeout(() => {
     input.focus();
-    const len = input.value.length;
-    input.setSelectionRange(len, len);
+    placeComposerCaretAtOffset(input, getComposerText(input).length);
   }, 0);
 }
 
 function restoreInputFocus(): void {
-  const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
-  if (!input || input.disabled) {
+  const input = getChatInput();
+  if (!input || input.getAttribute("aria-disabled") === "true") {
     return;
   }
   setTimeout(() => {
@@ -855,11 +1012,13 @@ function getEnabledComposerPlaceholder(): string {
 }
 
 function setComposerEnabled(enabled: boolean, disabledPlaceholder = "먼저 멤버를 추가하세요."): void {
-  const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
+  const input = getChatInput();
   const button = document.getElementById("send-btn") as HTMLButtonElement | null;
   if (input) {
-    input.disabled = !enabled;
-    input.placeholder = enabled ? getEnabledComposerPlaceholder() : disabledPlaceholder;
+    input.contentEditable = enabled ? "true" : "false";
+    input.setAttribute("aria-disabled", enabled ? "false" : "true");
+    input.setAttribute("data-placeholder", enabled ? getEnabledComposerPlaceholder() : disabledPlaceholder);
+    updateComposerEmptyState(input);
   }
   if (button) {
     button.disabled = !enabled;
@@ -880,18 +1039,19 @@ function isMentionStartBoundary(value: string, index: number): boolean {
   return /[\s([{\-–—.,!?;:]/.test(value[index - 1] ?? "");
 }
 
-function getActiveMentionQuery(input: HTMLTextAreaElement): ActiveMentionQuery | null {
-  if (!channelStore.getActiveChannelId() || input.disabled) {
+function getActiveMentionQuery(input: HTMLElement): ActiveMentionQuery | null {
+  if (!channelStore.getActiveChannelId() || input.getAttribute("aria-disabled") === "true") {
     return null;
   }
-  if (input.selectionStart !== input.selectionEnd) {
+  const end = getComposerSelectionOffset(input);
+  if (end === null) {
     return null;
   }
 
-  const end = input.selectionStart;
-  const beforeCaret = input.value.slice(0, end);
+  const value = getComposerText(input);
+  const beforeCaret = value.slice(0, end);
   const braceStart = beforeCaret.lastIndexOf("@{");
-  if (braceStart >= 0 && isMentionStartBoundary(input.value, braceStart)) {
+  if (braceStart >= 0 && isMentionStartBoundary(value, braceStart)) {
     const query = beforeCaret.slice(braceStart + 2);
     if (!query.includes("}") && !query.includes("\n") && !query.includes("@")) {
       return { start: braceStart, end, query };
@@ -899,12 +1059,12 @@ function getActiveMentionQuery(input: HTMLTextAreaElement): ActiveMentionQuery |
   }
 
   for (let index = end - 1; index >= 0; index -= 1) {
-    const char = input.value[index] ?? "";
+    const char = value[index] ?? "";
     if (char === "@") {
-      if (!isMentionStartBoundary(input.value, index)) {
+      if (!isMentionStartBoundary(value, index)) {
         return null;
       }
-      const query = input.value.slice(index + 1, end);
+      const query = value.slice(index + 1, end);
       if (/[\s@{}]/.test(query)) {
         return null;
       }
@@ -949,9 +1109,67 @@ function formatMentionInsertion(memberName: string): string {
   return `@${normalized}`;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function findComposerMentionMatches(value: string): Array<{ start: number; end: number; text: string }> {
+  const members = channelStore.getActiveChannelMembers();
+  if (!channelStore.getActiveChannelId() || members.length === 0) {
+    return [];
+  }
+
+  const names = members
+    .map((member) => member.name.trim())
+    .filter((name) => name.length > 0)
+    .sort((a, b) => b.length - a.length);
+  if (names.length === 0) {
+    return [];
+  }
+
+  const namePattern = names.map(escapeRegExp).join("|");
+  const mentionPattern = new RegExp(
+    `(^|[\\s.,!?;:()[\\]{}<>"'\`])(@\\{(?:${namePattern})\\}|@(?:${namePattern}))(?=$|[\\s.,!?;:()[\\]{}<>"'\`])`,
+    "gu",
+  );
+  const matches: Array<{ start: number; end: number; text: string }> = [];
+  for (const match of value.matchAll(mentionPattern)) {
+    const fullMatch = match[0] ?? "";
+    const boundary = match[1] ?? "";
+    const mention = match[2] ?? "";
+    const matchIndex = match.index ?? 0;
+    const mentionStart = matchIndex + boundary.length;
+    matches.push({
+      start: mentionStart,
+      end: matchIndex + fullMatch.length,
+      text: mention,
+    });
+  }
+  return matches;
+}
+
+function setComposerTextWithMentions(input: HTMLElement, value: string, caretOffset = value.length): void {
+  input.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  let cursor = 0;
+  for (const match of findComposerMentionMatches(value)) {
+    appendComposerPlainText(fragment, value.slice(cursor, match.start));
+    const mention = document.createElement("span");
+    mention.className = "chat-input-mention";
+    mention.contentEditable = "false";
+    mention.textContent = match.text;
+    fragment.appendChild(mention);
+    cursor = match.end;
+  }
+  appendComposerPlainText(fragment, value.slice(cursor));
+  input.appendChild(fragment);
+  updateComposerEmptyState(input);
+  placeComposerCaretAtOffset(input, caretOffset);
+}
+
 function renderMentionSuggestions(): void {
   const menu = document.getElementById("mention-suggestions");
-  const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
+  const input = getChatInput();
   if (!menu || !input) {
     return;
   }
@@ -1032,6 +1250,10 @@ function closeMentionSuggestions(): void {
     window.clearTimeout(mentionSuggestionBlurTimer);
     mentionSuggestionBlurTimer = null;
   }
+  if (deferredMentionSelectionTimer !== null) {
+    window.clearTimeout(deferredMentionSelectionTimer);
+    deferredMentionSelectionTimer = null;
+  }
   mentionSuggestionState = {
     isOpen: false,
     query: null,
@@ -1041,7 +1263,7 @@ function closeMentionSuggestions(): void {
   renderMentionSuggestions();
 }
 
-function refreshMentionSuggestionsForInput(input: HTMLTextAreaElement): boolean {
+function refreshMentionSuggestionsForInput(input: HTMLElement): boolean {
   if (mentionSuggestionBlurTimer !== null) {
     window.clearTimeout(mentionSuggestionBlurTimer);
     mentionSuggestionBlurTimer = null;
@@ -1070,7 +1292,7 @@ function refreshMentionSuggestionsForInput(input: HTMLTextAreaElement): boolean 
 }
 
 function syncMentionSuggestions(): void {
-  const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
+  const input = getChatInput();
   if (!input) {
     return;
   }
@@ -1078,22 +1300,43 @@ function syncMentionSuggestions(): void {
 }
 
 function selectMentionSuggestion(index: number): void {
-  const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
+  const input = getChatInput();
   const query = mentionSuggestionState.query;
   const member = mentionSuggestionState.candidates[index];
   if (!input || !query || !member) {
     return;
   }
 
-  const before = input.value.slice(0, query.start);
-  const after = input.value.slice(query.end);
+  const currentValue = getComposerText(input);
+  const before = currentValue.slice(0, query.start);
+  const after = currentValue.slice(query.end);
   const needsTrailingSpace = after.length === 0 || !/^\s/.test(after);
   const insertion = `${formatMentionInsertion(member.name)}${needsTrailingSpace ? " " : ""}`;
-  input.value = `${before}${insertion}${after}`;
+  const nextValue = `${before}${insertion}${after}`;
   const nextCaret = before.length + insertion.length;
+  setComposerTextWithMentions(input, nextValue, nextCaret);
   input.focus();
-  input.setSelectionRange(nextCaret, nextCaret);
   closeMentionSuggestions();
+}
+
+function runDeferredMentionSelection(): void {
+  deferredMentionSelectionTimer = null;
+  const input = getChatInput();
+  if (!input || isChatInputComposing) {
+    return;
+  }
+  refreshMentionSuggestionsForInput(input);
+  if (mentionSuggestionState.candidates.length === 0) {
+    return;
+  }
+  selectMentionSuggestion(mentionSuggestionState.activeIndex);
+}
+
+function scheduleDeferredMentionSelection(delayMs = 0): void {
+  if (deferredMentionSelectionTimer !== null) {
+    window.clearTimeout(deferredMentionSelectionTimer);
+  }
+  deferredMentionSelectionTimer = window.setTimeout(runDeferredMentionSelection, delayMs);
 }
 
 function moveMentionSuggestion(delta: number): void {
@@ -1106,7 +1349,7 @@ function moveMentionSuggestion(delta: number): void {
 }
 
 function handleMentionSuggestionKeydown(event: KeyboardEvent): boolean {
-  const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
+  const input = getChatInput();
   const nativeEvent = event as KeyboardEvent & { keyCode?: number };
 
   if (event.key === "ArrowDown") {
@@ -1128,6 +1371,12 @@ function handleMentionSuggestionKeydown(event: KeyboardEvent): boolean {
 
   if (event.key === "Enter" && (nativeEvent.isComposing || nativeEvent.keyCode === 229)) {
     return false;
+  }
+
+  if (event.key === "Tab" && (nativeEvent.isComposing || nativeEvent.keyCode === 229 || isChatInputComposing)) {
+    event.preventDefault();
+    scheduleDeferredMentionSelection(80);
+    return true;
   }
 
   if (input && (event.key === "Enter" || event.key === "Tab")) {
@@ -3256,13 +3505,13 @@ async function init(): Promise<void> {
 }
 
 async function sendMessage(): Promise<void> {
-  const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
+  const input = getChatInput();
   const button = document.getElementById("send-btn") as HTMLButtonElement | null;
   if (!input || !button) {
     return;
   }
 
-  const content = input.value.trim();
+  const content = getComposerText(input).trim();
   if (!content) {
     return;
   }
@@ -3271,7 +3520,7 @@ async function sendMessage(): Promise<void> {
   if (activeChannelId) {
     const channelId = activeChannelId;
     let hadError = false;
-    input.value = "";
+    setComposerText(input, "");
     closeMentionSuggestions();
     channelStore.incrementInflightChannelRequestCount();
     setStatus("Channel is working...");
@@ -3315,7 +3564,7 @@ async function sendMessage(): Promise<void> {
     return;
   }
 
-  input.value = "";
+  setComposerText(input, "");
   closeMentionSuggestions();
   inflightAgentIds.add(targetAgentId);
   const activeAgent = agents.find((agent) => agent.id === targetAgentId);
@@ -3381,12 +3630,25 @@ window.addEventListener("DOMContentLoaded", () => {
   });
 
   const form = document.getElementById("chat-form");
-  const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
+  const input = getChatInput();
 
   form?.addEventListener("submit", (event) => {
     event.preventDefault();
     void sendMessage();
   });
+
+  input?.addEventListener(
+    "keydown",
+    (event) => {
+      if (event.key !== "Tab") {
+        return;
+      }
+      if (handleMentionSuggestionKeydown(event)) {
+        event.stopPropagation();
+      }
+    },
+    true,
+  );
 
   input?.addEventListener("keydown", (event) => {
     if (handleMentionSuggestionKeydown(event)) {
@@ -3404,7 +3666,21 @@ window.addEventListener("DOMContentLoaded", () => {
   });
 
   input?.addEventListener("input", () => {
+    updateComposerEmptyState(input);
     syncMentionSuggestions();
+  });
+
+  input?.addEventListener("compositionstart", () => {
+    isChatInputComposing = true;
+  });
+
+  input?.addEventListener("compositionend", () => {
+    isChatInputComposing = false;
+    updateComposerEmptyState(input);
+    syncMentionSuggestions();
+    if (deferredMentionSelectionTimer !== null) {
+      scheduleDeferredMentionSelection(0);
+    }
   });
 
   input?.addEventListener("click", () => {
@@ -3415,6 +3691,7 @@ window.addEventListener("DOMContentLoaded", () => {
     if (["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(event.key)) {
       return;
     }
+    updateComposerEmptyState(input);
     syncMentionSuggestions();
   });
 
@@ -3432,4 +3709,7 @@ window.addEventListener("DOMContentLoaded", () => {
   });
 
   void init();
+  if (input) {
+    updateComposerEmptyState(input);
+  }
 });

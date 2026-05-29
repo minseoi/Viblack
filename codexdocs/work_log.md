@@ -1610,3 +1610,86 @@
   - `npx playwright test tests/e2e/electron.smoke.spec.ts --grep "channel composer filters member mention suggestions"` 통과.
   - `npm run verify` 통과.
   - 결과: Playwright `21 passed, 3 skipped`.
+
+### 91) 멘션 Tab IME 중복 및 커서 정렬 추가 수정 착수
+- 사용자 제보:
+  - 멘션 이후 실제 글자/커서 위치가 맞지 않음.
+  - `제임스` 멘션 중 `@제임`까지 쓰고 Tab을 누르면 `@제임스 임`처럼 조합 중이던 글자가 뒤에 남음.
+- 원인:
+  - 입력창 글자 자체를 mirror layer로 보이게 하고 textarea 텍스트를 투명 처리해, 브라우저 textarea 렌더링과 mirror 렌더링의 줄바꿈/폭 차이가 커서 정렬 문제로 보임.
+  - Tab keydown이 한글 IME 조합 커밋보다 먼저 선택을 실행하면 조합 중 텍스트가 선택 후 뒤늦게 textarea에 붙을 수 있음.
+- 수정:
+  - 실제 텍스트는 다시 textarea가 직접 보이게 하고, mirror layer는 투명 텍스트와 멘션 배경만 렌더링하도록 변경해 커서와 글자가 같은 브라우저 레이어에 머물게 함.
+  - Tab 입력 중 IME 조합 상태(`compositionstart`/`compositionend`, `isComposing`, `keyCode 229`)면 기본 포커스 이동만 막고, 조합 종료 후 최신 textarea 값으로 멘션 선택을 실행하도록 지연 처리.
+  - E2E에 조합 중 Tab을 시뮬레이션해 `@MentionB`가 `@Beta...`로만 치환되고 잔여 글자가 붙지 않는 회귀 추가.
+- 검증:
+  - `npm run check` 통과.
+  - `npm run build` 통과.
+  - `npx playwright test tests/e2e/electron.smoke.spec.ts --grep "channel composer filters member mention suggestions"` 통과.
+  - `npm run verify` 통과.
+  - 결과: Playwright `21 passed, 3 skipped`.
+
+### 92) 멘션 입력창 contenteditable 전환
+- 사용자 판단:
+  - textarea+mirror 방식은 긴 문장/반복 멘션/`@{이름}`에서 하이라이트와 실제 텍스트 위치가 어긋나며, 하이라이트는 계속 필요함.
+- 구현 방향 변경:
+  - `textarea + mirror`를 폐기하고 `contenteditable` composer로 전환.
+  - 자동완성으로 확정된 멘션은 실제 inline `.chat-input-mention` span으로 삽입해 커서와 하이라이트가 같은 DOM 흐름을 공유하게 함.
+  - 전송 시에는 contenteditable DOM을 plain text로 직렬화해 기존 백엔드 계약(`content`)은 유지.
+- 구현:
+  - `#chat-input`을 `div[contenteditable]`로 변경하고 placeholder는 `data-placeholder`/`:empty` 대신 `data-empty` 기반으로 표시.
+  - composer text 추출, selection offset 계산, caret placement, mention span 렌더링 헬퍼 추가.
+  - Enter/Tab 자동완성, IME 조합 중 Tab 지연 선택, 전송 clear/focus 동작을 contenteditable 기준으로 재연결.
+  - E2E의 입력값 검증을 contenteditable text 기반으로 업데이트하고, mention span 렌더링 검증을 `.chat-input-mention` 기준으로 변경.
+- 부분 검증:
+  - `npm run check` 통과.
+  - `npm run build` 통과.
+  - `npx playwright test tests/e2e/electron.smoke.spec.ts --grep "channel composer filters member mention suggestions"` 통과.
+- 최종 검증:
+  - `npm run verify` 통과.
+  - 결과: Playwright `21 passed, 3 skipped`.
+
+### 90) 입력창 멘션 하이라이트 회귀 수정 착수
+- 사용자 제보:
+  - 멘션 후보 리스트가 사라지는 것처럼 보이는 회귀 발생.
+  - 입력창 하이라이트 글자 위치가 실제 커서 위치와 달라짐.
+  - `@영`처럼 아직 정상 멘션이 아닌 부분 입력 상태에서도 하이라이트가 들어감.
+- 원인:
+  - 입력창 mirror가 메시지 본문용 `highlightInlineMentions()`를 재사용해 부분 `@토큰`까지 강조함.
+  - mirror 강조 span의 padding/font-weight가 실제 textarea 글자 폭과 달라 커서 정렬을 밀 수 있음.
+- 수정 방향:
+  - 입력창 하이라이트는 현재 채널 멤버 이름과 정확히 일치하는 완성 멘션만 강조.
+  - 강조 스타일에서 padding/font-weight처럼 텍스트 레이아웃을 바꾸는 속성 제거.
+  - E2E에서 부분 입력 상태에는 후보 리스트만 보이고 하이라이트는 없으며, 선택 후에만 하이라이트가 생기는지 검증.
+- 구현:
+  - `renderComposerMentionText()`를 채널 멤버 이름 기반 정확 매칭으로 재작성.
+  - `@영` 같은 prefix/query 상태는 highlight 대상에서 제외하고, `@영희`/`@{영희}`처럼 멤버명 전체와 경계가 맞는 경우만 강조.
+  - 입력창 highlight span의 padding/font-weight 제거로 textarea 커서 위치와 mirror 텍스트 폭 차이를 줄임.
+  - E2E에 partial query 상태에서는 후보 리스트가 유지되고 highlight가 0개임을 추가 검증.
+- 검증:
+  - `npm run check` 통과.
+  - `npm run build` 통과.
+  - `npx playwright test tests/e2e/electron.smoke.spec.ts --grep "channel composer filters member mention suggestions"` 통과.
+  - `npm run verify` 통과.
+  - 결과: Playwright `21 passed, 3 skipped`.
+
+### 89) 채널 멘션 자동완성 Tab 선택 및 입력창 하이라이트 착수
+- 사용자 제보/요청:
+  - 후보가 활성화된 상태에서 Tab을 누르면 멤버 선택 대신 Send 버튼으로 포커스가 이동함.
+  - 자동완성으로 삽입된 `@영희` 같은 멘션을 메시지 입력창 안에서도 메시지 본문처럼 강조하고 싶음.
+- 구현 방향:
+  - Tab keydown을 브라우저 포커스 이동 전에 잡아 Enter와 같은 후보 선택 경로로 처리.
+  - textarea 자체는 부분 스타일링이 불가능하므로, textarea 뒤에 mirror highlight layer를 두고 같은 텍스트를 렌더링해 멘션 토큰만 강조.
+  - 실제 입력/커서/IME는 기존 textarea가 계속 담당하도록 유지.
+- 구현:
+  - `#chat-input`을 `.chat-input-wrap`으로 감싸고 `#chat-input-highlight` mirror layer 추가.
+  - textarea 텍스트는 투명 처리하고 caret/selection/input behavior는 유지, mirror layer에서 `highlightInlineMentions()`로 `@멘션` 토큰을 강조.
+  - input/keyup/scroll/placeholder 변경/자동완성 선택/전송 clear 시 highlight mirror 동기화.
+  - Tab keydown capture 단계에서 자동완성 선택을 먼저 처리해 Send 버튼으로 포커스가 이동하지 않도록 보강.
+  - E2E에 Tab 선택 후 focus 유지 및 입력창 하이라이트 span 렌더링 단정 추가.
+- 검증:
+  - `npm run check` 통과.
+  - `npm run build` 통과.
+  - `npx playwright test tests/e2e/electron.smoke.spec.ts --grep "channel composer filters member mention suggestions"` 통과.
+  - `npm run verify` 통과.
+  - 결과: Playwright `21 passed, 3 skipped`.

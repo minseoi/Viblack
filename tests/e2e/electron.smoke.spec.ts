@@ -86,6 +86,14 @@ function channelRow(page: Page, channelName: string) {
   return page.locator("#channel-list .section-item.channel", { hasText: `# ${channelName}` });
 }
 
+async function expectChatInputText(page: Page, expected: string): Promise<void> {
+  await expect
+    .poll(async () =>
+      page.locator("#chat-input").evaluate((node) => (node.textContent ?? "").replace(/\u00a0/g, " ")),
+    )
+    .toBe(expected);
+}
+
 async function readAvatarTone(locator: Locator): Promise<{
   background: string;
   color: string;
@@ -446,12 +454,17 @@ test("channel composer filters member mention suggestions by name", async ({}, t
     await expect(mentionItems.filter({ hasText: spacedName })).toHaveCount(1);
 
     await page.locator("#chat-input").evaluate((node, value) => {
-      const input = node as HTMLTextAreaElement;
-      input.value = value;
-      input.setSelectionRange(value.length, value.length);
+      const input = node as HTMLElement;
+      input.textContent = value;
+      const range = document.createRange();
+      range.selectNodeContents(input);
+      range.collapse(false);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
     }, "@MentionA");
     await page.press("#chat-input", "Enter");
-    await expect(page.locator("#chat-input")).toHaveValue(`@${alphaName} `);
+    await expectChatInputText(page, `@${alphaName} `);
     await expect(mentionMenu).not.toHaveClass(/show/);
     await expect(page.locator("#messages .msg-user .msg-content", { hasText: alphaName })).toHaveCount(0);
 
@@ -466,15 +479,55 @@ test("channel composer filters member mention suggestions by name", async ({}, t
     await expect(mentionMenu).toHaveClass(/show/);
     await expect(mentionItems).toHaveCount(1);
     await expect(mentionItems.first()).toContainText(alphaName);
+    await expect(page.locator("#chat-input .chat-input-mention")).toHaveCount(0);
     await mentionItems.first().click();
-    await expect(page.locator("#chat-input")).toHaveValue(`@${alphaName} `);
+    await expectChatInputText(page, `@${alphaName} `);
+    await expect(page.locator("#chat-input .chat-input-mention", { hasText: `@${alphaName}` })).toHaveCount(1);
     await expect(mentionMenu).not.toHaveClass(/show/);
+
+    await typeChatInput("@MentionB");
+    await expect(mentionMenu).toHaveClass(/show/);
+    await expect(mentionItems).toHaveCount(1);
+    await expect(mentionItems.first()).toContainText(betaName);
+    await expect(page.locator("#chat-input .chat-input-mention")).toHaveCount(0);
+    await page.press("#chat-input", "Tab");
+    await expectChatInputText(page, `@${betaName} `);
+    await expect(page.locator("#chat-input")).toBeFocused();
+    await expect(page.locator("#chat-input .chat-input-mention", { hasText: `@${betaName}` })).toHaveCount(1);
+    await expect(mentionMenu).not.toHaveClass(/show/);
+
+    await typeChatInput("@Mention");
+    await expect(mentionMenu).toHaveClass(/show/);
+    await expect(mentionItems).toHaveCount(2);
+    const composingTabPrevented = await page.locator("#chat-input").evaluate((node, value) => {
+      const input = node as HTMLElement;
+      input.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "" }));
+      const keydown = new KeyboardEvent("keydown", {
+        key: "Tab",
+        bubbles: true,
+        cancelable: true,
+      });
+      const defaultAllowed = input.dispatchEvent(keydown);
+      input.textContent = value;
+      const range = document.createRange();
+      range.selectNodeContents(input);
+      range.collapse(false);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      input.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "B" }));
+      return !defaultAllowed || keydown.defaultPrevented;
+    }, "@MentionB");
+    expect(composingTabPrevented).toBe(true);
+    await expectChatInputText(page, `@${betaName} `);
+    await expect(page.locator("#chat-input .chat-input-mention", { hasText: `@${betaName}` })).toHaveCount(1);
+    await expect(page.locator("#chat-input")).toBeFocused();
 
     await typeChatInput("Please ask @Space");
     await expect(mentionItems).toHaveCount(1);
     await expect(mentionItems.first()).toContainText(spacedName);
     await page.press("#chat-input", "Enter");
-    await expect(page.locator("#chat-input")).toHaveValue(`Please ask @{${spacedName}} `);
+    await expectChatInputText(page, `Please ask @{${spacedName}} `);
   } finally {
     await electronApp.close();
   }
@@ -769,7 +822,7 @@ test("electron full feature regression flow", async ({}, testInfo) => {
 
     await page.fill("#chat-input", "DM enter send");
     await page.press("#chat-input", "Enter");
-    await expect(page.locator("#chat-input")).toHaveValue("");
+    await expectChatInputText(page, "");
     await expect(page.locator("#messages .msg-user .msg-content", { hasText: "DM enter send" })).toHaveCount(
       1,
     );
