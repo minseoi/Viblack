@@ -1557,3 +1557,56 @@
   - `npm run check` 통과
   - `npm run verify` 통과
   - 결과: Playwright `20 passed, 3 skipped`
+
+### 87) 채널 멘션 자동완성 UX 검토 착수
+- 사용자 요청: 채널 입력창에서 `@` 입력 시 Slack처럼 멘션 가능한 멤버 리스트를 띄우고, 한 글자씩 입력할 때마다 후보를 필터링한다.
+- 문서 확인:
+  - `codexdocs/archive/channel-functional-spec.md`는 멘션 대상이 현재 채널 멤버로 제한되며, "멘션 자동완성 UI가 없다"를 현재 한계로 기록하고 있음.
+  - `codexdocs/archive/channel-Refactoring.md`도 채널 내 멤버 조회와 멘션 협업을 핵심 흐름으로 정의함.
+- 코드 확인:
+  - 렌더러는 활성 채널 메시지 로딩 시 `channelStore.setActiveChannelMembers(data.members)`로 현재 채널 멤버 목록을 보유함.
+  - 입력창은 `#chat-input` textarea와 `#chat-form` 기반이며, 현재 Enter 전송 처리만 있음.
+- 구현 전 확인 필요:
+  - 후보 범위, 선택 동작, 키보드 조작, Slack 유사 UI의 정확한 범위를 사용자에게 확인한 뒤 진행.
+- 사용자 확인:
+  - 검색 범위는 멤버 이름만 사용.
+  - 후보가 없을 때는 "멤버 없음" 상태를 표시.
+  - 자동완성 선택 결과는 공백 없는 이름은 `@이름`, 공백 포함 이름은 `@{이름}`으로 삽입.
+- 구현 방향:
+  - 채널 입력창에서만 동작하는 mention autocomplete 상태와 DOM을 렌더러에 추가.
+  - 키보드 이동/선택(`ArrowUp/ArrowDown`, `Enter`, `Tab`, `Escape`)과 마우스 선택을 지원.
+  - 현재 활성 채널 멤버(`channelStore.getActiveChannelMembers()`)만 후보로 노출.
+- 구현 진행:
+  - `#chat-form` 안에 `#mention-suggestions` listbox 레이어와 Slack형 후보 row 스타일 추가.
+  - `src/renderer/renderer.ts`에 현재 커서 기준 `@검색어` 감지, 이름 기반 후보 필터링, 선택 삽입, 빈 상태 렌더링 로직 추가.
+  - `tests/e2e/electron.smoke.spec.ts`에 채널 멘션 자동완성 전용 Electron 회귀 테스트 추가.
+- 조정:
+  - 채널 전환 직후 입력 포커스가 돌아온 경우 이전 blur 타이머가 새 후보 팝업을 닫지 않도록 보강.
+  - `Escape`로 닫은 직후 keyup 동기화가 같은 후보를 다시 열지 않도록 제어키 keyup은 재동기화에서 제외.
+- 부분 검증:
+  - `npm run check` 통과.
+  - `npm run build` 후 `npx playwright test tests/e2e/electron.smoke.spec.ts --grep "channel composer filters member mention suggestions"` 통과.
+- 최종 검증:
+  - `npm run check` 통과.
+  - `npm run build` 통과.
+  - `npm run verify` 통과.
+  - 결과: Playwright `21 passed, 3 skipped`.
+
+### 88) 채널 멘션 자동완성 Enter 선택 버그 수정 착수
+- 사용자 제보:
+  - `@제`까지 입력해 `제임스` 후보가 활성화된 상태에서 바로 Enter를 누르면 `@제임스 제`가 입력되고 요청까지 전송됨.
+  - 화살표키를 한 번 누른 뒤 Enter를 누르면 기대대로 `@제임스`만 삽입되고 추가 요청을 입력할 수 있음.
+- 원인 방향:
+  - Enter 선택 시 직전 autocomplete 상태의 query 범위를 사용해, 한글 조합/입력 직후 최신 textarea 값의 `@제` 범위를 놓칠 수 있음.
+  - 선택 Enter가 메시지 전송 Enter로 이어지지 않도록 최신 쿼리 기반 후보 선택을 먼저 처리해야 함.
+- 구현:
+  - Enter/Tab 선택 직전에 textarea의 현재 커서와 값을 다시 파싱해 autocomplete query/candidates를 갱신.
+  - `ArrowUp/ArrowDown`으로 고른 후보는 후보 목록이 갱신되어도 같은 멤버 id가 남아 있으면 유지.
+  - IME 조합 중 Enter(`isComposing`/`keyCode 229`)는 기존처럼 조합 확정만 수행하고 멘션 선택/전송으로 처리하지 않음.
+  - E2E에 오래된 autocomplete query 상태에서 Enter를 눌러도 현재 입력값 전체가 정확히 치환되고 메시지는 전송되지 않는 회귀 케이스 추가.
+- 검증:
+  - `npm run check` 통과.
+  - `npm run build` 통과.
+  - `npx playwright test tests/e2e/electron.smoke.spec.ts --grep "channel composer filters member mention suggestions"` 통과.
+  - `npm run verify` 통과.
+  - 결과: Playwright `21 passed, 3 skipped`.

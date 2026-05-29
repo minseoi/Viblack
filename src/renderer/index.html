@@ -798,11 +798,90 @@
         grid-template-columns: 1fr auto;
         gap: 12px;
         align-items: end;
+        position: relative;
         border: 1px solid var(--line-strong);
         border-radius: 18px;
         padding: 12px 12px 12px 14px;
         background: #ffffff;
         box-shadow: 0 18px 36px rgba(22, 34, 51, 0.08);
+      }
+      .mention-suggestions {
+        display: none;
+        position: absolute;
+        left: 12px;
+        bottom: calc(100% + 8px);
+        width: min(360px, calc(100% - 124px));
+        max-height: 292px;
+        overflow: hidden;
+        border: 1px solid #cfd9e6;
+        border-radius: 10px;
+        background: #ffffff;
+        box-shadow: 0 18px 42px rgba(18, 31, 47, 0.18);
+        z-index: 5;
+      }
+      .mention-suggestions.show {
+        display: block;
+      }
+      .mention-suggestion-list {
+        margin: 0;
+        padding: 6px;
+        list-style: none;
+        display: grid;
+        gap: 2px;
+        max-height: 292px;
+        overflow-y: auto;
+      }
+      .mention-suggestion-item {
+        border: none;
+        width: 100%;
+        min-width: 0;
+        border-radius: 8px;
+        padding: 8px 9px;
+        background: transparent;
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 10px;
+        align-items: center;
+        color: #182536;
+        text-align: left;
+        cursor: pointer;
+        font-family: inherit;
+      }
+      .mention-suggestion-item:hover,
+      .mention-suggestion-item.active {
+        background: #edf5ff;
+      }
+      .mention-suggestion-avatar {
+        width: 30px;
+        height: 30px;
+        border-radius: 9px;
+        font-size: 11px;
+      }
+      .mention-suggestion-main {
+        min-width: 0;
+        display: grid;
+        gap: 2px;
+      }
+      .mention-suggestion-name {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 13px;
+        font-weight: 700;
+      }
+      .mention-suggestion-role {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 12px;
+        color: #66778d;
+      }
+      .mention-suggestion-empty {
+        padding: 14px 16px;
+        color: #64748a;
+        font-size: 13px;
       }
       #chat-input {
         resize: none;
@@ -1314,6 +1393,9 @@
         #chat-form {
           grid-template-columns: 1fr;
         }
+        .mention-suggestions {
+          width: calc(100% - 24px);
+        }
         #send-btn {
           width: 100%;
         }
@@ -1420,8 +1502,16 @@
             </div>
           </div>
           <form id="chat-form">
+            <div
+              id="mention-suggestions"
+              class="mention-suggestions"
+              role="listbox"
+              aria-label="멘션할 채널 멤버"
+              aria-hidden="true"
+            ></div>
             <textarea
               id="chat-input"
+              aria-controls="mention-suggestions"
               placeholder="Helper에게 작업을 요청하세요. (Enter 전송, Shift+Enter 줄바꿈)"
             ></textarea>
             <button id="send-btn" type="submit">Send</button>

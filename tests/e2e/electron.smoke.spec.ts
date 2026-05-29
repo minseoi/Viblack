@@ -377,6 +377,109 @@ test("new message indicator keeps scroll position until clicked", async ({}, tes
   }
 });
 
+test("channel composer filters member mention suggestions by name", async ({}, testInfo) => {
+  const suffix = Date.now();
+  const alphaName = `MentionAlpha${suffix}`;
+  const betaName = `MentionBeta${suffix}`;
+  const spacedName = `Space Member ${suffix}`;
+  const roleOnlyNeedle = `RoleOnlyNeedle${suffix}`;
+  const channelName = `mention-room-${suffix}`;
+  const channelWorkspacePath = createWorkspaceDir(testInfo, channelName);
+
+  const { electronApp, page } = await launchIsolatedApp(testInfo);
+
+  try {
+    async function createAgent(name: string, role: string): Promise<{ id: string; name: string }> {
+      const response = await apiRequest<{ agent: { id: string; name: string } }>(page, "/api/agents", {
+        method: "POST",
+        body: {
+          name,
+          role,
+          systemPrompt: `You are ${name}. Reply briefly for mention autocomplete tests.`,
+        },
+      });
+      expect(response.status).toBe(201);
+      return response.data.agent;
+    }
+
+    const alpha = await createAgent(alphaName, "Planner");
+    const beta = await createAgent(betaName, roleOnlyNeedle);
+    const spaced = await createAgent(spacedName, "Writer");
+
+    const channelResponse = await apiRequest<{ channel: { id: string; name: string } }>(page, "/api/channels", {
+      method: "POST",
+      body: {
+        name: channelName,
+        description: "mention autocomplete regression",
+        workspacePath: channelWorkspacePath,
+      },
+    });
+    expect(channelResponse.status).toBe(201);
+
+    for (const member of [alpha, beta, spaced]) {
+      const addResponse = await apiRequest(page, `/api/channels/${channelResponse.data.channel.id}/members`, {
+        method: "POST",
+        body: { agentId: member.id },
+      });
+      expect(addResponse.status).toBe(201);
+    }
+
+    await page.reload();
+    await page.waitForLoadState("domcontentloaded");
+    await expect(channelRow(page, channelName)).toHaveCount(1);
+    await channelRow(page, channelName).click();
+    await expect(page.locator("#agent-title")).toHaveText(`# ${channelName}`);
+
+    const mentionMenu = page.locator("#mention-suggestions");
+    const mentionItems = page.locator("#mention-suggestions .mention-suggestion-item");
+    const typeChatInput = async (value: string): Promise<void> => {
+      await page.fill("#chat-input", "");
+      await page.click("#chat-input");
+      await page.keyboard.type(value);
+    };
+
+    await typeChatInput("@");
+    await expect(mentionMenu).toHaveClass(/show/);
+    await expect(mentionItems).toHaveCount(3);
+    await expect(mentionItems.filter({ hasText: alphaName })).toHaveCount(1);
+    await expect(mentionItems.filter({ hasText: betaName })).toHaveCount(1);
+    await expect(mentionItems.filter({ hasText: spacedName })).toHaveCount(1);
+
+    await page.locator("#chat-input").evaluate((node, value) => {
+      const input = node as HTMLTextAreaElement;
+      input.value = value;
+      input.setSelectionRange(value.length, value.length);
+    }, "@MentionA");
+    await page.press("#chat-input", "Enter");
+    await expect(page.locator("#chat-input")).toHaveValue(`@${alphaName} `);
+    await expect(mentionMenu).not.toHaveClass(/show/);
+    await expect(page.locator("#messages .msg-user .msg-content", { hasText: alphaName })).toHaveCount(0);
+
+    await typeChatInput(`@${roleOnlyNeedle}`);
+    await expect(page.locator("#mention-suggestions .mention-suggestion-empty")).toHaveText("멤버 없음");
+    await expect(mentionItems).toHaveCount(0);
+
+    await page.press("#chat-input", "Escape");
+    await expect(mentionMenu).not.toHaveClass(/show/);
+
+    await typeChatInput("@MentionA");
+    await expect(mentionMenu).toHaveClass(/show/);
+    await expect(mentionItems).toHaveCount(1);
+    await expect(mentionItems.first()).toContainText(alphaName);
+    await mentionItems.first().click();
+    await expect(page.locator("#chat-input")).toHaveValue(`@${alphaName} `);
+    await expect(mentionMenu).not.toHaveClass(/show/);
+
+    await typeChatInput("Please ask @Space");
+    await expect(mentionItems).toHaveCount(1);
+    await expect(mentionItems.first()).toContainText(spacedName);
+    await page.press("#chat-input", "Enter");
+    await expect(page.locator("#chat-input")).toHaveValue(`Please ask @{${spacedName}} `);
+  } finally {
+    await electronApp.close();
+  }
+});
+
 test("electron full feature regression flow", async ({}, testInfo) => {
   const suffix = Date.now();
   const memberAlpha = `AlphaQA${suffix}`;

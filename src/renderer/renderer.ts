@@ -81,6 +81,19 @@ interface RenderMessagesOptions {
   forceScrollToBottom?: boolean;
 }
 
+interface ActiveMentionQuery {
+  start: number;
+  end: number;
+  query: string;
+}
+
+interface MentionSuggestionState {
+  isOpen: boolean;
+  query: ActiveMentionQuery | null;
+  candidates: Agent[];
+  activeIndex: number;
+}
+
 let backendBaseUrl = "";
 let activeAgentId: string | null = null;
 let renderedMessages: ChatMessage[] = [];
@@ -112,6 +125,7 @@ const MESSAGE_AUTO_SCROLL_THRESHOLD_PX = 40;
 const NEW_MESSAGE_SCROLL_REVEAL_OFFSET_PX = 12;
 const CHANNEL_ACTION_BLOCK_PATTERN =
   /(?:CHANNEL_ACTION_BEGIN\s*[\s\S]*?\s*CHANNEL_ACTION_END|\[CHANNEL_ACTION\]\s*[\s\S]*?\s*(?:\[\/CHANNEL_ACTION\]|\[\/CHANNEL_ACTION>|<\/CHANNEL_ACTION>))/g;
+const MENTION_SUGGESTION_LIMIT = 8;
 let lastRenderedMessageContextKey = "none";
 let lastRenderedPersistedMessageCount = 0;
 let lastRenderedMaxPersistedMessageId = 0;
@@ -119,6 +133,13 @@ let lastRenderedNonUserMessageSignature = "";
 let isMessagesDetachedFromBottom = false;
 let pendingNewMessageAnchorIndex: number | null = null;
 let pendingMessagesScrollRestoreFrameId: number | null = null;
+let mentionSuggestionBlurTimer: number | null = null;
+let mentionSuggestionState: MentionSuggestionState = {
+  isOpen: false,
+  query: null,
+  candidates: [],
+  activeIndex: 0,
+};
 
 function escapeHtml(value: string): string {
   return value
@@ -843,6 +864,291 @@ function setComposerEnabled(enabled: boolean, disabledPlaceholder = "먼저 멤�
   if (button) {
     button.disabled = !enabled;
   }
+  if (!enabled) {
+    closeMentionSuggestions();
+  }
+}
+
+function normalizeMentionSearchText(value: string): string {
+  return value.trim().normalize("NFKC").toLocaleLowerCase();
+}
+
+function isMentionStartBoundary(value: string, index: number): boolean {
+  if (index <= 0) {
+    return true;
+  }
+  return /[\s([{\-–—.,!?;:]/.test(value[index - 1] ?? "");
+}
+
+function getActiveMentionQuery(input: HTMLTextAreaElement): ActiveMentionQuery | null {
+  if (!channelStore.getActiveChannelId() || input.disabled) {
+    return null;
+  }
+  if (input.selectionStart !== input.selectionEnd) {
+    return null;
+  }
+
+  const end = input.selectionStart;
+  const beforeCaret = input.value.slice(0, end);
+  const braceStart = beforeCaret.lastIndexOf("@{");
+  if (braceStart >= 0 && isMentionStartBoundary(input.value, braceStart)) {
+    const query = beforeCaret.slice(braceStart + 2);
+    if (!query.includes("}") && !query.includes("\n") && !query.includes("@")) {
+      return { start: braceStart, end, query };
+    }
+  }
+
+  for (let index = end - 1; index >= 0; index -= 1) {
+    const char = input.value[index] ?? "";
+    if (char === "@") {
+      if (!isMentionStartBoundary(input.value, index)) {
+        return null;
+      }
+      const query = input.value.slice(index + 1, end);
+      if (/[\s@{}]/.test(query)) {
+        return null;
+      }
+      return { start: index, end, query };
+    }
+    if (/[\s{}]/.test(char)) {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+function getMentionSuggestionCandidates(query: string): Agent[] {
+  const normalizedQuery = normalizeMentionSearchText(query);
+  const members = channelStore.getActiveChannelMembers();
+  if (!normalizedQuery) {
+    return members.slice(0, MENTION_SUGGESTION_LIMIT);
+  }
+
+  const compactQuery = normalizedQuery.replace(/\s+/g, "");
+  const ranked = members
+    .map((member, index) => {
+      const normalizedName = normalizeMentionSearchText(member.name);
+      const compactName = normalizedName.replace(/\s+/g, "");
+      const startsWithScore = normalizedName.startsWith(normalizedQuery) || compactName.startsWith(compactQuery);
+      const includesScore = normalizedName.includes(normalizedQuery) || compactName.includes(compactQuery);
+      return { member, index, rank: startsWithScore ? 0 : includesScore ? 1 : 2 };
+    })
+    .filter((item) => item.rank < 2)
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map((item) => item.member);
+
+  return ranked.slice(0, MENTION_SUGGESTION_LIMIT);
+}
+
+function formatMentionInsertion(memberName: string): string {
+  const normalized = memberName.trim();
+  if (/\s/.test(normalized)) {
+    return `@{${normalized}}`;
+  }
+  return `@${normalized}`;
+}
+
+function renderMentionSuggestions(): void {
+  const menu = document.getElementById("mention-suggestions");
+  const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
+  if (!menu || !input) {
+    return;
+  }
+
+  menu.innerHTML = "";
+  if (!mentionSuggestionState.isOpen || !mentionSuggestionState.query) {
+    menu.classList.remove("show");
+    menu.setAttribute("aria-hidden", "true");
+    input.removeAttribute("aria-activedescendant");
+    return;
+  }
+
+  menu.classList.add("show");
+  menu.setAttribute("aria-hidden", "false");
+
+  if (mentionSuggestionState.candidates.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "mention-suggestion-empty";
+    empty.textContent = "멤버 없음";
+    menu.appendChild(empty);
+    input.removeAttribute("aria-activedescendant");
+    return;
+  }
+
+  const list = document.createElement("ul");
+  list.className = "mention-suggestion-list";
+
+  mentionSuggestionState.candidates.forEach((member, index) => {
+    const item = document.createElement("li");
+    const button = document.createElement("button");
+    const itemId = `mention-suggestion-${member.id}`;
+    button.id = itemId;
+    button.type = "button";
+    button.className = `mention-suggestion-item${index === mentionSuggestionState.activeIndex ? " active" : ""}`;
+    button.setAttribute("role", "option");
+    button.setAttribute("aria-selected", index === mentionSuggestionState.activeIndex ? "true" : "false");
+    button.dataset.agentId = member.id;
+
+    const avatar = document.createElement("div");
+    avatar.className = "avatar mention-suggestion-avatar";
+    applyAvatarStyle(avatar, member.name, "agent", getMemberAvatarSeed(member));
+
+    const main = document.createElement("div");
+    main.className = "mention-suggestion-main";
+
+    const name = document.createElement("div");
+    name.className = "mention-suggestion-name";
+    name.textContent = member.name;
+
+    const role = document.createElement("div");
+    role.className = "mention-suggestion-role";
+    role.textContent = member.role;
+
+    main.appendChild(name);
+    main.appendChild(role);
+    button.appendChild(avatar);
+    button.appendChild(main);
+    button.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+    });
+    button.addEventListener("click", () => {
+      selectMentionSuggestion(index);
+    });
+
+    item.appendChild(button);
+    list.appendChild(item);
+  });
+
+  menu.appendChild(list);
+  const active = mentionSuggestionState.candidates[mentionSuggestionState.activeIndex];
+  if (active) {
+    input.setAttribute("aria-activedescendant", `mention-suggestion-${active.id}`);
+  }
+}
+
+function closeMentionSuggestions(): void {
+  if (mentionSuggestionBlurTimer !== null) {
+    window.clearTimeout(mentionSuggestionBlurTimer);
+    mentionSuggestionBlurTimer = null;
+  }
+  mentionSuggestionState = {
+    isOpen: false,
+    query: null,
+    candidates: [],
+    activeIndex: 0,
+  };
+  renderMentionSuggestions();
+}
+
+function refreshMentionSuggestionsForInput(input: HTMLTextAreaElement): boolean {
+  if (mentionSuggestionBlurTimer !== null) {
+    window.clearTimeout(mentionSuggestionBlurTimer);
+    mentionSuggestionBlurTimer = null;
+  }
+
+  const query = getActiveMentionQuery(input);
+  if (!query) {
+    closeMentionSuggestions();
+    return false;
+  }
+
+  const currentActiveId = mentionSuggestionState.candidates[mentionSuggestionState.activeIndex]?.id;
+  const candidates = getMentionSuggestionCandidates(query.query);
+  const nextActiveIndex =
+    currentActiveId && candidates.some((candidate) => candidate.id === currentActiveId)
+      ? candidates.findIndex((candidate) => candidate.id === currentActiveId)
+      : 0;
+  mentionSuggestionState = {
+    isOpen: true,
+    query,
+    candidates,
+    activeIndex: Math.min(Math.max(0, nextActiveIndex), Math.max(0, candidates.length - 1)),
+  };
+  renderMentionSuggestions();
+  return true;
+}
+
+function syncMentionSuggestions(): void {
+  const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
+  if (!input) {
+    return;
+  }
+  refreshMentionSuggestionsForInput(input);
+}
+
+function selectMentionSuggestion(index: number): void {
+  const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
+  const query = mentionSuggestionState.query;
+  const member = mentionSuggestionState.candidates[index];
+  if (!input || !query || !member) {
+    return;
+  }
+
+  const before = input.value.slice(0, query.start);
+  const after = input.value.slice(query.end);
+  const needsTrailingSpace = after.length === 0 || !/^\s/.test(after);
+  const insertion = `${formatMentionInsertion(member.name)}${needsTrailingSpace ? " " : ""}`;
+  input.value = `${before}${insertion}${after}`;
+  const nextCaret = before.length + insertion.length;
+  input.focus();
+  input.setSelectionRange(nextCaret, nextCaret);
+  closeMentionSuggestions();
+}
+
+function moveMentionSuggestion(delta: number): void {
+  if (!mentionSuggestionState.isOpen || mentionSuggestionState.candidates.length === 0) {
+    return;
+  }
+  const count = mentionSuggestionState.candidates.length;
+  mentionSuggestionState.activeIndex = (mentionSuggestionState.activeIndex + delta + count) % count;
+  renderMentionSuggestions();
+}
+
+function handleMentionSuggestionKeydown(event: KeyboardEvent): boolean {
+  const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
+  const nativeEvent = event as KeyboardEvent & { keyCode?: number };
+
+  if (event.key === "ArrowDown") {
+    if (!mentionSuggestionState.isOpen || mentionSuggestionState.candidates.length === 0) {
+      return false;
+    }
+    event.preventDefault();
+    moveMentionSuggestion(1);
+    return true;
+  }
+  if (event.key === "ArrowUp") {
+    if (!mentionSuggestionState.isOpen || mentionSuggestionState.candidates.length === 0) {
+      return false;
+    }
+    event.preventDefault();
+    moveMentionSuggestion(-1);
+    return true;
+  }
+
+  if (event.key === "Enter" && (nativeEvent.isComposing || nativeEvent.keyCode === 229)) {
+    return false;
+  }
+
+  if (input && (event.key === "Enter" || event.key === "Tab")) {
+    refreshMentionSuggestionsForInput(input);
+  }
+
+  if ((event.key === "Enter" || event.key === "Tab") && mentionSuggestionState.candidates.length > 0) {
+    event.preventDefault();
+    selectMentionSuggestion(mentionSuggestionState.activeIndex);
+    return true;
+  }
+  if (event.key === "Escape") {
+    if (!mentionSuggestionState.isOpen) {
+      return false;
+    }
+    event.preventDefault();
+    closeMentionSuggestions();
+    return true;
+  }
+
+  return false;
 }
 
 function showWarning(text: string | null): void {
@@ -1231,6 +1537,7 @@ function renderChannelList(): void {
 
     item.addEventListener("click", () => {
       closeChannelMenu();
+      closeMentionSuggestions();
       channelStore.setActiveChannelId(channel.id);
       activeAgentId = null;
       renderChannelList();
@@ -1573,6 +1880,7 @@ function renderMemberList(): void {
         return;
       }
       channelStore.setActiveChannelId(null);
+      closeMentionSuggestions();
       activeAgentId = agent.id;
       unreadAgentIds.delete(agent.id);
       renderChannelList();
@@ -2907,6 +3215,7 @@ function initMemberCrudUi(): void {
     closeMemberMenu();
     closeChannelMenu();
     closeChannelMemberMenu();
+    closeMentionSuggestions();
   });
 }
 
@@ -2963,6 +3272,7 @@ async function sendMessage(): Promise<void> {
     const channelId = activeChannelId;
     let hadError = false;
     input.value = "";
+    closeMentionSuggestions();
     channelStore.incrementInflightChannelRequestCount();
     setStatus("Channel is working...");
 
@@ -3006,6 +3316,7 @@ async function sendMessage(): Promise<void> {
   }
 
   input.value = "";
+  closeMentionSuggestions();
   inflightAgentIds.add(targetAgentId);
   const activeAgent = agents.find((agent) => agent.id === targetAgentId);
   renderMemberList();
@@ -3078,6 +3389,9 @@ window.addEventListener("DOMContentLoaded", () => {
   });
 
   input?.addEventListener("keydown", (event) => {
+    if (handleMentionSuggestionKeydown(event)) {
+      return;
+    }
     if (event.key === "Enter" && !event.shiftKey) {
       // While IME composition is active, Enter should finalize composition only.
       const nativeEvent = event as KeyboardEvent & { keyCode?: number };
@@ -3087,6 +3401,34 @@ window.addEventListener("DOMContentLoaded", () => {
       event.preventDefault();
       void sendMessage();
     }
+  });
+
+  input?.addEventListener("input", () => {
+    syncMentionSuggestions();
+  });
+
+  input?.addEventListener("click", () => {
+    syncMentionSuggestions();
+  });
+
+  input?.addEventListener("keyup", (event) => {
+    if (["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(event.key)) {
+      return;
+    }
+    syncMentionSuggestions();
+  });
+
+  input?.addEventListener("blur", () => {
+    if (mentionSuggestionBlurTimer !== null) {
+      window.clearTimeout(mentionSuggestionBlurTimer);
+    }
+    mentionSuggestionBlurTimer = window.setTimeout(() => {
+      mentionSuggestionBlurTimer = null;
+      if (document.activeElement === input) {
+        return;
+      }
+      closeMentionSuggestions();
+    }, 120);
   });
 
   void init();
