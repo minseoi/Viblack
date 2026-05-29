@@ -76,7 +76,7 @@ export function buildChannelPrompt(input: {
     `채널 워크스페이스: ${input.workspaceRoot}`,
     "채널에서 파일을 읽거나 쓸 때는 반드시 위 워크스페이스 내부만 사용하세요. 상위 디렉토리, 다른 채널 워크스페이스, 앱 루트는 접근하지 마세요.",
     "후속 자동 실행은 답변 마지막의 CHANNEL_ACTION 블록만 해석됩니다. 본문에 @mention이 있어도 실행 신호로 간주되지 않을 수 있습니다.",
-    "반드시 답변 마지막에 정확히 하나의 CHANNEL_ACTION_BEGIN ... CHANNEL_ACTION_END 블록을 넣으세요.",
+    "반드시 답변 마지막에 CHANNEL_ACTION_BEGIN ... CHANNEL_ACTION_END 블록을 넣으세요. 기본은 하나의 블록입니다. 서로 독립적인 전문 작업을 여러 멤버에게 병렬 위임해야 할 때만 type=delegate 블록을 멤버별로 여러 개 넣을 수 있습니다.",
     "허용 action type은 delegate, report, ask_user, final, noop 입니다.",
     "delegate는 다른 멤버에게 새 작업을 넘길 때만 사용합니다. report는 맡은 작업 결과를 요청자나 coordinator에게 돌려줄 때 사용합니다.",
     "ask_user는 사용자 확인이 꼭 필요할 때만 사용합니다. final은 coordinator가 사용자에게 최종 결과를 전달하고 종료할 때 사용합니다.",
