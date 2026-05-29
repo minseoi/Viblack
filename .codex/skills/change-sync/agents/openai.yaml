@@ -1,0 +1,4 @@
+interface:
+  display_name: "Change Sync"
+  short_description: "Plan, trace, sync, implement, and validate changes."
+  default_prompt: "Use $change-sync to analyze the requested change, synchronize affected docs, plan the implementation, and validate the result."
