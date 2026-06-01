@@ -1592,6 +1592,31 @@
   - `npm run verify` 통과.
   - 결과: Playwright `21 passed, 3 skipped`.
 
+### 103) 채널 산출물 검증 제거 착수
+- 사용자 제보:
+  - `데이트 코스` 채널에서 coordinator(`철수`)가 `type=ask_user`와 실제 `artifact_path`를 포함해 확인 요청 파일을 만든 정상 흐름이 `채널 파일 작업 미완료`로 실패 처리됨.
+- 실제 DB 확인:
+  - 채널: `channel-23`, workspace: `/Users/minseoi/Desktop/test/date`.
+  - 메시지 `889`에 `CHANNEL_ACTION_BEGIN type=ask_user artifact_path=/Users/minseoi/Desktop/test/date/seoul_date_course_request.md CHANNEL_ACTION_END` 저장.
+  - 파일은 실제 존재하고 workspace 내부 경로임.
+  - job `391`이 산출물 completion action 검증 때문에 `failed` 처리됨.
+- 수정 방향:
+  - 채널 실행 성공/실패 판정에서 파일 산출물 completion 검증을 제거.
+  - `roleLooksCodeRelated`/`requestsFileOutput` 기반 강제 산출물 검증을 제거.
+  - action block은 후속 라우팅용으로 유지하고, 파일 산출물 형식 문제로 시스템 오류 메시지를 만들지 않도록 E2E 회귀를 갱신.
+- 구현:
+  - `ChannelMessageService.executeMentionedAgent()`에서 Codex 실행 성공/빈 응답 여부만 job 성공 기준으로 사용하도록 변경.
+  - `validateChannelCompletionReply()`, `requiresArtifactReport()`, intent-only 패턴 검증, `ChannelMessageService`의 `ChannelWorkspaceService` 의존성 제거.
+  - 채널 프롬프트에서 `requiresArtifactReport` 기반 강제 산출물 completion 안내 제거.
+  - E2E에서 intent-only worker 응답과 `ask_user` 응답이 산출물 검증 실패 없이 agent 메시지로 보존되는지 검증하도록 갱신.
+- 중간 검증:
+  - `npm run check` 통과.
+  - `npm run build` 통과.
+  - `npx playwright test tests/e2e/electron.channel-metadata.spec.ts --grep "artifact validation|missing artifact report|ask_user reply"` 통과.
+- 최종 검증:
+  - `npm run verify` 통과.
+  - 결과: Playwright `21 passed, 4 skipped`.
+
 ### 88) 채널 멘션 자동완성 Enter 선택 버그 수정 착수
 - 사용자 제보:
   - `@제`까지 입력해 `제임스` 후보가 활성화된 상태에서 바로 Enter를 누르면 `@제임스 제`가 입력되고 요청까지 전송됨.

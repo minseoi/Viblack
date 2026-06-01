@@ -63,7 +63,6 @@ export async function startServer(options: StartServerOptions): Promise<StartedS
     channelExecutionRepository,
     appSettingsService,
     promptTemplateService,
-    channelWorkspaceService,
     lockManager,
     channelEventBus,
   );

@@ -19,7 +19,6 @@ import {
   type ChannelPromptTimelineEntry,
 } from "./member-prompt";
 import { parseChannelActions } from "./channel-action-protocol";
-import { ChannelWorkspaceService } from "./channel-workspace-service";
 import { extractMentionedAgents, type MentionedAgent } from "./mention-router";
 import { PromptTemplateService } from "./prompt-template-service";
 
@@ -43,22 +42,6 @@ export class ChannelMessageService {
   private static readonly MAX_MENTION_EXECUTIONS = 12;
   private static readonly CHANNEL_PROMPT_RECENT_MESSAGE_LIMIT = 12;
   private static readonly CHANNEL_CODEX_TIMEOUT_MS = 300_000;
-  private static readonly INTENT_ONLY_PATTERNS = [
-    /구현하겠습니다/,
-    /개발하겠습니다/,
-    /작성하겠습니다/,
-    /만들겠습니다/,
-    /추가하겠습니다/,
-    /적용하겠습니다/,
-    /진행하겠습니다/,
-    /하나만 추가\/생성합니다/,
-    /바로 구현하겠습니다/,
-    /이렇게 구현하겠습니다/,
-    /i will implement/i,
-    /i'll implement/i,
-    /will add/i,
-    /will create/i,
-  ] as const;
 
   constructor(
     private readonly agentRepository: AgentRepository,
@@ -69,7 +52,6 @@ export class ChannelMessageService {
     private readonly channelExecutionRepository: ChannelExecutionRepository,
     private readonly appSettingsService: AppSettingsService,
     private readonly promptTemplateService: PromptTemplateService,
-    private readonly channelWorkspaceService: ChannelWorkspaceService,
     private readonly lockManager: AgentLockManager,
     private readonly eventBus: ChannelEventBus,
   ) {}
@@ -579,22 +561,8 @@ export class ChannelMessageService {
             ]
               .filter((line) => line.length > 0)
               .join("\n");
-        const completionValidation = initialExecutionOk
-          ? this.validateChannelCompletionReply({
-              channelId,
-              channelWorkspacePath,
-              targetAgent,
-              members,
-              sourceAgentId,
-              triggerContent,
-              replyText: initialReplyText,
-            })
-          : { ok: false as const, errorText: initialReplyText };
-        const executionOk = initialExecutionOk && completionValidation.ok;
-        const replyText =
-          executionOk || completionValidation.ok
-            ? initialReplyText
-            : completionValidation.errorText ?? initialReplyText;
+        const executionOk = initialExecutionOk;
+        const replyText = initialReplyText;
 
         let message: ChannelMessage | null = null;
         if (executionOk) {
@@ -717,12 +685,6 @@ export class ChannelMessageService {
         content: input.fallbackTriggerContent,
       } satisfies ChannelPromptTimelineEntry);
 
-    const requiresArtifactReport = this.requiresArtifactReport({
-      targetAgent: input.targetAgent,
-      sourceAgentId: input.sourceAgentId,
-      triggerContent: triggerMessage.content,
-    });
-
     return buildChannelPrompt({
       channelName: input.channelName,
       channelDescription: input.channelDescription,
@@ -731,7 +693,6 @@ export class ChannelMessageService {
       coordinatorName: coordinator?.name ?? null,
       targetAgentMode: coordinator?.id === input.targetAgent.id ? "coordinator" : "worker",
       taskRequesterName: input.sourceAgentId ? memberNameById.get(input.sourceAgentId) ?? input.sourceAgentId : null,
-      requiresArtifactReport,
       members: input.members.map((member) => ({
         name: member.name,
         role: member.role,
@@ -740,134 +701,6 @@ export class ChannelMessageService {
       recentMessages: timeline,
       triggerMessage,
     });
-  }
-
-  private validateChannelCompletionReply(input: {
-    channelId: string;
-    channelWorkspacePath: string;
-    targetAgent: Agent;
-    members: Agent[];
-    sourceAgentId: string | null;
-    triggerContent: string;
-    replyText: string;
-  }): { ok: true } | { ok: false; errorText: string } {
-    const coordinator = this.resolveChannelCoordinator(input.channelId, input.members);
-    const isCoordinator = coordinator?.id === input.targetAgent.id;
-
-    if (
-      !this.requiresArtifactReport({
-        targetAgent: input.targetAgent,
-        sourceAgentId: input.sourceAgentId,
-        triggerContent: input.triggerContent,
-      })
-    ) {
-      return { ok: true };
-    }
-
-    const actions = parseChannelActions(input.replyText);
-    const reportAction = actions.find((action) => action.type === "report");
-    const finalAction = actions.find((action) => action.type === "final");
-    const completionAction = reportAction ?? finalAction ?? null;
-    const coordinatorControlAction =
-      isCoordinator && !completionAction ? actions.find((action) => action.type === "delegate") : null;
-
-    if (coordinatorControlAction) {
-      return { ok: true };
-    }
-
-    const artifactCheck = completionAction?.artifactPath
-      ? this.channelWorkspaceService.resolveArtifactPath(input.channelWorkspacePath, completionAction.artifactPath)
-      : null;
-    const intentOnly = this.isIntentOnlyImplementationReply(input.replyText);
-    const problems: string[] = [];
-
-    if (!isCoordinator && !reportAction) {
-      problems.push("파일 산출물 worker 응답에는 type=report action이 필요합니다.");
-    }
-    if (!completionAction) {
-      problems.push(
-        isCoordinator
-          ? "파일 산출물 완료 응답에는 completion action이 필요합니다."
-          : "파일 산출물 worker 응답에는 completion action이 필요합니다."
-      );
-    }
-    if (isCoordinator && finalAction && reportAction) {
-      problems.push("coordinator 파일 완료 응답에는 하나의 completion action만 사용하세요.");
-    }
-    if (!isCoordinator && finalAction) {
-      problems.push("worker 파일 응답은 type=final 대신 type=report를 사용해야 합니다.");
-    }
-    if (completionAction && !completionAction.artifactPath?.trim()) {
-      problems.push("completion action에는 artifact_path가 필요합니다.");
-    }
-    if (artifactCheck && !artifactCheck.insideWorkspace) {
-      problems.push(`artifact_path는 채널 워크스페이스 내부여야 합니다. workspace: ${artifactCheck.workspacePath}`);
-    }
-    if (artifactCheck && artifactCheck.insideWorkspace && !artifactCheck.exists) {
-      problems.push("artifact_path가 가리키는 실제 산출물 파일이 필요합니다.");
-    }
-    if (intentOnly && (!artifactCheck || !artifactCheck.exists)) {
-      problems.push("구현 의도만 말하고 실제 완료 보고를 하지 않았습니다.");
-    }
-
-    if (problems.length === 0) {
-      return { ok: true };
-    }
-
-    return {
-      ok: false,
-      errorText: [
-        "채널 파일 작업 미완료:",
-        ...problems.map((problem) => `- ${problem}`),
-        `partial: ${input.replyText}`,
-      ].join("\n"),
-    };
-  }
-
-  private requiresArtifactReport(input: {
-    targetAgent: Agent;
-    sourceAgentId: string | null;
-    triggerContent: string;
-  }): boolean {
-    const roleText = `${input.targetAgent.role} ${input.targetAgent.roleProfile ?? ""}`.toLowerCase();
-    const roleLooksCodeRelated = ["프로그래머", "개발", "programmer", "developer", "coder", "engineer"].some(
-      (needle) => roleText.includes(needle.toLowerCase()),
-    );
-    const normalizedTrigger = input.triggerContent.toLowerCase();
-    const hasExplicitFilePath = /\.[a-z0-9]{1,8}\b/.test(normalizedTrigger);
-    const requestsFileOutput = [
-      "artifact_path",
-      "working directory",
-      "workspace",
-      "파일",
-      "파일로",
-      "경로",
-      "저장",
-      "생성",
-      "써서",
-      "작성해서",
-      "markdown",
-      "마크다운",
-      ".md",
-      ".txt",
-      ".json",
-      ".csv",
-    ].some((token) => normalizedTrigger.includes(token));
-
-    if (requestsFileOutput || hasExplicitFilePath) {
-      return true;
-    }
-
-    return Boolean(input.sourceAgentId && roleLooksCodeRelated);
-  }
-
-  private isIntentOnlyImplementationReply(replyText: string): boolean {
-    const normalized = replyText.replace(/\s+/g, " ").trim();
-    if (!normalized) {
-      return false;
-    }
-
-    return ChannelMessageService.INTENT_ONLY_PATTERNS.some((pattern) => pattern.test(normalized));
   }
 
   private resolveChannelSenderLabel(

@@ -152,7 +152,7 @@ test("archived channel name can be reused by a new active channel", async ({}, t
   }
 });
 
-test("delegated code task fails when worker replies with intent only and no artifact report", async ({}, testInfo) => {
+test("delegated code task does not fail solely for missing artifact report", async ({}, testInfo) => {
   const suffix = Date.now();
   const leaderName = `영희${suffix}`;
   const workerName = `철수${suffix}`;
@@ -181,7 +181,7 @@ test("delegated code task fails when worker replies with intent only and no arti
     });
     expect(workerCreate.status).toBe(201);
 
-    const channel = await createChannelViaApi(server.backendBaseUrl, testInfo, channelName, "code artifact intent-only validation");
+    const channel = await createChannelViaApi(server.backendBaseUrl, testInfo, channelName, "code artifact validation disabled");
     const channelId = channel.id;
     const leaderId = leaderCreate.data.agent.id;
     const workerId = workerCreate.data.agent.id;
@@ -222,7 +222,7 @@ test("delegated code task fails when worker replies with intent only and no arti
         }>(server.backendBaseUrl, `/api/channels/${channelId}/executions`);
         return response.data.jobs.map((job) => `${job.targetAgentId}:${job.status}`);
       })
-      .toEqual([`${leaderId}:succeeded`, `${workerId}:failed`]);
+      .toEqual([`${leaderId}:succeeded`, `${workerId}:succeeded`]);
 
     const messagesResponse = await apiRequest<{
       messages: Array<{
@@ -234,14 +234,15 @@ test("delegated code task fails when worker replies with intent only and no arti
     }>(server.backendBaseUrl, `/api/channels/${channelId}/messages`);
     expect(messagesResponse.status).toBe(200);
     expect(messagesResponse.data.messages[messagesResponse.data.messages.length - 1]).toMatchObject({
-      senderType: "system",
+      senderType: "agent",
+      senderId: workerId,
       messageKind: "remention",
     });
     expect(messagesResponse.data.messages[messagesResponse.data.messages.length - 1]?.content).toContain(
-      "채널 파일 작업 미완료:",
+      "아래 로직으로 구현하겠습니다.",
     );
-    expect(messagesResponse.data.messages[messagesResponse.data.messages.length - 1]?.content).toContain(
-      "type=report action이 필요합니다.",
+    expect(messagesResponse.data.messages.map((message) => message.content).join("\n")).not.toContain(
+      "채널 파일 작업 미완료:",
     );
   } finally {
     await server.close();
@@ -432,7 +433,7 @@ test("direct document task writes a workspace artifact and completes with final 
   }
 });
 
-test("direct document task cannot escape with ask_user instead of creating the artifact", async ({}, testInfo) => {
+test("direct document ask_user reply is preserved without artifact validation failure", async ({}, testInfo) => {
   const suffix = Date.now();
   const writerName = `문서회피${suffix}`;
   const channelName = `doc-artifact-ask-user-${suffix}`;
@@ -450,7 +451,7 @@ test("direct document task cannot escape with ask_user instead of creating the a
     });
     expect(writerCreate.status).toBe(201);
 
-    const channel = await createChannelViaApi(server.backendBaseUrl, testInfo, channelName, "document artifact ask_user validation");
+    const channel = await createChannelViaApi(server.backendBaseUrl, testInfo, channelName, "document ask_user without artifact validation");
     const channelId = channel.id;
     const writerId = writerCreate.data.agent.id;
 
@@ -490,8 +491,8 @@ test("direct document task cannot escape with ask_user instead of creating the a
       .toEqual([
         {
           targetAgentId: writerId,
-          status: "failed",
-          errorText: expect.stringContaining("채널 파일 작업 미완료:"),
+          status: "succeeded",
+          errorText: null,
         },
       ]);
 
@@ -505,15 +506,15 @@ test("direct document task cannot escape with ask_user instead of creating the a
     }>(server.backendBaseUrl, `/api/channels/${channelId}/messages`);
     expect(messagesResponse.status).toBe(200);
     expect(messagesResponse.data.messages[messagesResponse.data.messages.length - 1]).toMatchObject({
-      senderType: "system",
-      senderId: null,
+      senderType: "agent",
+      senderId: writerId,
       messageKind: "result",
     });
     expect(messagesResponse.data.messages[messagesResponse.data.messages.length - 1]?.content).toContain(
-      "채널 파일 작업 미완료:",
+      "type=ask_user",
     );
-    expect(messagesResponse.data.messages[messagesResponse.data.messages.length - 1]?.content).toContain(
-      "completion action이 필요합니다.",
+    expect(messagesResponse.data.messages.map((message) => message.content).join("\n")).not.toContain(
+      "채널 파일 작업 미완료:",
     );
   } finally {
     await server.close();
