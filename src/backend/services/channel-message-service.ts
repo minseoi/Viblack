@@ -518,7 +518,7 @@ export class ChannelMessageService {
           fallbackTriggerContent: triggerContent,
         });
         let lastStreamContent = "";
-        const completedStreamContents: string[] = [];
+        const completedStreamMessages: ChannelMessage[] = [];
         const codexResult = await runCodex({
           prompt,
           systemPrompt: this.promptTemplateService.buildMemberExecutionSystemPrompt(
@@ -540,8 +540,19 @@ export class ChannelMessageService {
             if (!streamedContent) {
               return;
             }
+            if (streamedContent === lastStreamContent) {
+              return;
+            }
             lastStreamContent = streamedContent;
-            completedStreamContents.push(streamedContent);
+            completedStreamMessages.push(
+              this.appendChannelMessageAndNotify(
+                channelId,
+                "agent",
+                targetAgent.id,
+                streamedContent,
+                resultMessageKind,
+              ),
+            );
           },
         });
 
@@ -566,18 +577,11 @@ export class ChannelMessageService {
 
         let message: ChannelMessage | null = null;
         if (executionOk) {
-          for (const completedContent of completedStreamContents) {
-            message = this.appendChannelMessageAndNotify(
-              channelId,
-              "agent",
-              targetAgent.id,
-              completedContent,
-              resultMessageKind,
-            );
-          }
+          message = completedStreamMessages[completedStreamMessages.length - 1] ?? null;
+          const lastCompletedContent = message?.content ?? "";
           if (
-            completedStreamContents.length === 0 ||
-            replyText !== completedStreamContents[completedStreamContents.length - 1]
+            completedStreamMessages.length === 0 ||
+            replyText !== lastCompletedContent
           ) {
             message = this.appendChannelMessageAndNotify(
               channelId,

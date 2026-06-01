@@ -534,7 +534,11 @@ function parseForcedFinalReply(promptText) {
 }
 
 function shouldForceTurnFailed(promptText) {
-  return promptText.includes("FORCE_TURN_FAILED");
+  return /(?:^|\s)FORCE_TURN_FAILED(?:\s|$)/.test(promptText);
+}
+
+function shouldForceTurnFailedAfterItemCompleted(promptText) {
+  return promptText.includes("FORCE_TURN_FAILED_AFTER_ITEM_COMPLETED");
 }
 
 function parseForcedItemCompletedMessage(promptText) {
@@ -873,6 +877,18 @@ function parseForcedDelayMs(promptText) {
   return Math.min(parsed, 10000);
 }
 
+function parseForcedDelayAfterItemCompletedMs(promptText) {
+  const match = promptText.match(/FORCE_DELAY_AFTER_ITEM_COMPLETED_MS:\s*(\d{1,5})/);
+  if (!match) {
+    return 0;
+  }
+  const parsed = Number(match[1]);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return 0;
+  }
+  return Math.min(parsed, 10000);
+}
+
 function sleep(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -1073,12 +1089,15 @@ async function runAppServer() {
         const promptText = extractTurnInputText(params.input);
         const controlPromptText = getControlPromptText(promptText);
         const forceTurnFailed = shouldForceTurnFailed(controlPromptText);
+        const forceTurnFailedAfterItemCompleted =
+          shouldForceTurnFailedAfterItemCompleted(controlPromptText);
         const forceEmptySuccessOnce = shouldReturnEmptySuccessOnce(controlPromptText);
         const forceItemCompletedMessage = parseForcedItemCompletedMessage(controlPromptText);
         const forceItemCompletedMessageSequence = parseForcedItemCompletedMessageSequence(controlPromptText);
         const streamMessage = parseForcedStreamMessage(controlPromptText);
         const streamSequence = parseForcedStreamSequence(controlPromptText);
         const forcedDelayMs = parseForcedDelayMs(controlPromptText);
+        const forcedDelayAfterItemCompletedMs = parseForcedDelayAfterItemCompletedMs(controlPromptText);
 
         respond(id, { turn: { id: turnId, status: "started", items: [] } });
         notify("turn/started", { threadId, turn: { id: turnId, status: "started", items: [] } });
@@ -1143,6 +1162,23 @@ async function runAppServer() {
               text: forceEmptySuccessOnce ? "" : reply,
             },
           });
+        }
+
+        if (forcedDelayAfterItemCompletedMs > 0) {
+          await sleep(forcedDelayAfterItemCompletedMs);
+        }
+
+        if (forceTurnFailedAfterItemCompleted) {
+          notify("turn/completed", {
+            threadId,
+            turn: {
+              id: turnId,
+              status: "failed",
+              items: [],
+              error: { message: "forced turn failure after item completed" },
+            },
+          });
+          continue;
         }
 
         notify("turn/completed", {

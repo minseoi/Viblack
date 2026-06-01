@@ -555,6 +555,7 @@ test("electron full feature regression flow", async ({}, testInfo) => {
   const channelWorkspacePath = createWorkspaceDir(testInfo, channelName);
   const editedChannelWorkspacePath = createWorkspaceDir(testInfo, editedChannelName);
   const channelStreamDedupFinalToken = `CHANNEL_STREAM_DEDUP_${suffix}`;
+  const channelProgressBeforeFailureToken = `CHANNEL_PROGRESS_BEFORE_FAIL_${suffix}`;
 
   const { electronApp, page } = await launchIsolatedApp(testInfo);
 
@@ -977,6 +978,29 @@ test("electron full feature regression flow", async ({}, testInfo) => {
       }),
     ).toHaveCount(1, { timeout: 7000 });
     await expect(channelMessages).toHaveCount(beforeChannelMultiCompletedCount + 3, { timeout: 7000 });
+
+    const beforeChannelProgressFailureCount = await channelMessages.count();
+    await page.fill(
+      "#chat-input",
+      `@{${memberAlphaEdited}} FORCE_ITEM_COMPLETED_AGENT_MESSAGE:${channelProgressBeforeFailureToken} FORCE_DELAY_AFTER_ITEM_COMPLETED_MS:1800 FORCE_TURN_FAILED_AFTER_ITEM_COMPLETED`,
+    );
+    await page.click("#send-btn");
+    await expect(
+      page.locator("#messages .msg-agent .msg-content", {
+        hasText: channelProgressBeforeFailureToken,
+      }),
+    ).toHaveCount(1, { timeout: 1200 });
+    await expect(
+      page.locator("#messages .msg-system .msg-content", {
+        hasText: "forced turn failure after item completed",
+      }),
+    ).toHaveCount(0, { timeout: 500 });
+    await expect(
+      page.locator("#messages .msg-system .msg-content", {
+        hasText: "forced turn failure after item completed",
+      }),
+    ).toHaveCount(1, { timeout: 7000 });
+    await expect(channelMessages).toHaveCount(beforeChannelProgressFailureCount + 3, { timeout: 7000 });
 
     const beforeChannelStreamDedupCount = await channelMessages.count();
     await page.fill(
