@@ -1414,10 +1414,6 @@ function showWarning(text: string | null): void {
   warningEl.classList.add("show");
 }
 
-function getSelectedModelLabel(): string {
-  return appSettings?.selectedModel ? appSettings.selectedModel : "Codex 기본값";
-}
-
 function getReadyStatusText(command?: string): string {
   const modelLabel = appSettings?.selectedModel;
   if (command) {
@@ -1484,24 +1480,11 @@ function syncStatusForCurrentContext(): void {
 
 function renderSettingsModal(): void {
   const modelSelect = document.getElementById("settings-model-select") as HTMLSelectElement | null;
-  const currentModelEl = document.getElementById("settings-current-model");
-  const debugModeStatusEl = document.getElementById("settings-debug-mode-status");
   const debugModeInput = document.getElementById("settings-debug-mode-input") as HTMLInputElement | null;
-  const cachePathEl = document.getElementById("settings-cache-path");
-  const helpEl = document.getElementById("settings-model-help");
   const errorEl = document.getElementById("settings-cache-error");
   const saveBtn = document.getElementById("settings-model-save-btn") as HTMLButtonElement | null;
   const indicatorEl = document.getElementById("workspace-model-indicator");
-  if (
-    !modelSelect ||
-    !currentModelEl ||
-    !debugModeStatusEl ||
-    !debugModeInput ||
-    !cachePathEl ||
-    !helpEl ||
-    !errorEl ||
-    !saveBtn
-  ) {
+  if (!modelSelect || !debugModeInput || !errorEl || !saveBtn) {
     return;
   }
 
@@ -1510,12 +1493,6 @@ function renderSettingsModal(): void {
   const selectedModel = settings?.selectedModel ?? null;
   const debugMode = settings?.debugMode ?? false;
 
-  currentModelEl.textContent = getSelectedModelLabel();
-  debugModeStatusEl.textContent = debugMode ? "켜짐" : "꺼짐";
-  cachePathEl.textContent = settings?.modelsCachePath ?? "~/.codex/models_cache.json";
-  helpEl.textContent = selectedModel
-    ? `현재 모든 Codex 질의는 ${selectedModel}로 실행됩니다.`
-    : "현재 Codex 기본 모델을 사용합니다.";
   if (indicatorEl) {
     indicatorEl.textContent = selectedModel ? `모델 · ${selectedModel}` : "모델 · Codex 기본값";
   }

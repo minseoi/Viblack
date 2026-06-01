@@ -101,6 +101,12 @@ test("electron settings modal saves selected model and keeps using app-server", 
   try {
     await page.locator("#open-settings-btn").click();
     await expect(page.locator("#settings-modal[open]")).toHaveCount(1);
+    await expect(page.locator("#settings-modal .settings-card")).toHaveCount(0);
+    await expect(page.locator("#settings-modal")).not.toContainText("현재 실행");
+    await expect(page.locator("#settings-modal")).not.toContainText("모델 캐시");
+    await expect(page.locator("#settings-current-model")).toHaveCount(0);
+    await expect(page.locator("#settings-cache-path")).toHaveCount(0);
+    await expect(page.locator("#settings-debug-mode-status")).toHaveCount(0);
 
     const modelSelect = page.locator("#settings-model-select");
     await expect(modelSelect.locator("option")).toContainText([
@@ -117,7 +123,6 @@ test("electron settings modal saves selected model and keeps using app-server", 
 
     await page.locator("#open-settings-btn").click();
     await expect(page.locator("#settings-modal[open]")).toHaveCount(1);
-    await expect(page.locator("#settings-current-model")).toHaveText(selectedModel);
     await expect(modelSelect).toHaveValue(selectedModel);
     await page.locator("#settings-model-cancel-btn").click();
     await expect(page.locator("#settings-modal[open]")).toHaveCount(0);

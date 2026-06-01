@@ -1718,3 +1718,23 @@
   - `npx playwright test tests/e2e/electron.smoke.spec.ts --grep "channel composer filters member mention suggestions"` 통과.
   - `npm run verify` 통과.
   - 결과: Playwright `21 passed, 3 skipped`.
+
+### 97) 환경 설정 모달 정보 블럭 제거 재적용 착수
+- 사용자 요청:
+  - 환경 설정 창의 `현재 실행`, `모델 캐시`, `디버그 모드` 정보 블럭은 필요 없으므로 제거.
+- 확인:
+  - 현재 `src/renderer/index.html`에는 해당 상태 카드 DOM이 남아 있고, `renderer.ts`도 제거 대상 요소를 필수 참조로 보고 있음.
+  - 실제 기능은 모델 선택 저장과 디버그 액션 블록 표시 토글이므로, 정보 블럭 제거만으로 설정 API 계약은 유지 가능.
+- 구현 방향:
+  - 설정 패널에서 상태 카드 DOM과 관련 스타일을 제거.
+  - 렌더러의 제거된 DOM 참조를 정리해 모델/디버그 저장 흐름은 유지.
+  - 설정 E2E에 제거된 정보 블럭 부재 회귀 단정을 추가.
+- 구현:
+  - `settings-card` 기반 상태 카드와 관련 CSS를 제거하고, 설정 패널에는 실제 입력 컨트롤만 남김.
+  - `renderSettingsModal()`에서 제거된 카드 요소 필수 참조와 텍스트 갱신 로직을 삭제.
+  - 설정 E2E에서 상태 카드/legacy id 부재와 모델 선택 저장 유지를 함께 검증하도록 수정.
+- 검증:
+  - `npm run check` 통과.
+  - `npm run build` 통과.
+  - `npm run verify` 통과.
+  - 결과: Playwright `21 passed, 3 skipped`.

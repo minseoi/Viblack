@@ -1293,44 +1293,6 @@
       .settings-panel.active {
         display: grid;
       }
-      .settings-card-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 12px;
-      }
-      .settings-card {
-        border: 1px solid #d9e3f1;
-        border-radius: 14px;
-        padding: 16px;
-        background: rgba(255, 255, 255, 0.94);
-        box-shadow: 0 12px 32px rgba(35, 55, 87, 0.08);
-        display: grid;
-        gap: 8px;
-      }
-      .settings-card-label {
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: #70839d;
-      }
-      .settings-card-value {
-        font-size: 18px;
-        font-weight: 700;
-        color: #17283f;
-      }
-      .settings-card-sub {
-        font-size: 12px;
-        color: #607289;
-        line-height: 1.5;
-        word-break: break-all;
-      }
-      .settings-inline-help {
-        margin: 0;
-        font-size: 12px;
-        color: #5d6e84;
-        line-height: 1.5;
-      }
       .settings-toggle {
         display: flex;
         align-items: flex-start;
@@ -1395,9 +1357,6 @@
         }
         .settings-sidebar {
           gap: 12px;
-        }
-        .settings-card-grid {
-          grid-template-columns: 1fr;
         }
         .top {
           padding: 12px 14px;
@@ -1718,20 +1677,6 @@
           </div>
           <div class="settings-scroll">
             <div id="settings-panel-model" class="settings-panel active" role="tabpanel">
-              <div class="settings-card-grid">
-                <div class="settings-card">
-                  <div class="settings-card-label">현재 실행</div>
-                  <div id="settings-current-model" class="settings-card-value">Codex 기본값</div>
-                  <div id="settings-model-help" class="settings-inline-help">
-                    현재 Codex 기본 모델을 사용합니다.
-                  </div>
-                </div>
-                <div class="settings-card">
-                  <div class="settings-card-label">모델 캐시</div>
-                  <div class="settings-card-value">로컬 캐시</div>
-                  <div id="settings-cache-path" class="settings-card-sub">~/.codex/models_cache.json</div>
-                </div>
-              </div>
               <div class="modal-field">
                 <label for="settings-model-select">실행 모델</label>
                 <select id="settings-model-select"></select>
@@ -1739,15 +1684,6 @@
               <div id="settings-cache-error" class="settings-inline-error" aria-live="polite"></div>
             </div>
             <div id="settings-panel-debug" class="settings-panel" role="tabpanel" hidden>
-              <div class="settings-card-grid">
-                <div class="settings-card">
-                  <div class="settings-card-label">디버그 모드</div>
-                  <div id="settings-debug-mode-status" class="settings-card-value">꺼짐</div>
-                  <div class="settings-inline-help">
-                    켜면 채널 메시지의 <code>CHANNEL_ACTION_BEGIN ... CHANNEL_ACTION_END</code> 블록을 그대로 표시합니다.
-                  </div>
-                </div>
-              </div>
               <label class="settings-toggle" for="settings-debug-mode-input">
                 <input id="settings-debug-mode-input" type="checkbox" />
                 <span class="settings-toggle-copy">
