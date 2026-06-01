@@ -1654,15 +1654,18 @@ function getChannelById(channelId: string | null): Channel | null {
   return channelStore.getChannelById(channelId);
 }
 
-function updateChannelMembersButton(): void {
-  const button = document.getElementById("channel-members-btn");
-  if (!button) {
-    return;
-  }
-  if (channelStore.getActiveChannelId()) {
-    button.classList.remove("hidden");
-  } else {
-    button.classList.add("hidden");
+function updateChannelActionButtons(): void {
+  const buttons = [
+    document.getElementById("channel-workspace-btn"),
+    document.getElementById("channel-members-btn"),
+  ].filter((button): button is HTMLElement => button instanceof HTMLElement);
+  const hasActiveChannel = Boolean(channelStore.getActiveChannelId());
+  for (const button of buttons) {
+    if (hasActiveChannel) {
+      button.classList.remove("hidden");
+    } else {
+      button.classList.add("hidden");
+    }
   }
 }
 
@@ -1670,7 +1673,7 @@ async function refreshChannels(preferredChannelId?: string | null): Promise<void
   const data = await fetchJson<{ channels: Channel[] }>(`${backendBaseUrl}/api/channels`);
   channelStore.setChannels(data.channels, preferredChannelId ?? channelStore.getActiveChannelId());
   renderChannelList();
-  updateChannelMembersButton();
+  updateChannelActionButtons();
 }
 
 function normalizeSearchKeyword(value: string): string {
@@ -1791,7 +1794,7 @@ function renderChannelList(): void {
       activeAgentId = null;
       renderChannelList();
       renderMemberList();
-      updateChannelMembersButton();
+      updateChannelActionButtons();
       void refreshMessages();
     });
     list.appendChild(item);
@@ -2123,7 +2126,7 @@ function renderMemberList(): void {
         if (channelStore.getActiveChannelId()) {
           channelStore.setActiveChannelId(null);
           renderChannelList();
-          updateChannelMembersButton();
+          updateChannelActionButtons();
           void refreshMessages();
         }
         return;
@@ -2134,7 +2137,7 @@ function renderMemberList(): void {
       unreadAgentIds.delete(agent.id);
       renderChannelList();
       renderMemberList();
-      updateChannelMembersButton();
+      updateChannelActionButtons();
       void refreshMessages();
     });
 
@@ -2654,6 +2657,25 @@ async function chooseChannelWorkspaceDirectory(): Promise<void> {
   }
 }
 
+async function openActiveChannelWorkspace(): Promise<void> {
+  const channel = getChannelById(channelStore.getActiveChannelId());
+  if (!channel) {
+    return;
+  }
+
+  try {
+    const error = await window.viblackApi.openPath(channel.workspacePath);
+    if (error) {
+      showWarning(`워크스페이스 폴더 열기 실패: ${error}`);
+      setStatus(`Error: ${error}`);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "unknown error";
+    showWarning(`워크스페이스 폴더 열기 실패: ${message}`);
+    setStatus(`Error: ${message}`);
+  }
+}
+
 async function saveChannel(
   channelName: string,
   channelDescription: string,
@@ -2921,7 +2943,7 @@ async function refreshActiveChannelExecutionState(channelId: string): Promise<vo
 }
 
 async function refreshMessages(): Promise<void> {
-  updateChannelMembersButton();
+  updateChannelActionButtons();
   try {
     const activeChannelId = channelStore.getActiveChannelId();
     if (activeChannelId) {
@@ -3169,6 +3191,7 @@ function initMemberCrudUi(): void {
   const channelDescInput = document.getElementById("channel-desc-input") as HTMLInputElement | null;
   const channelWorkspaceInput = document.getElementById("channel-workspace-input") as HTMLInputElement | null;
   const channelWorkspaceBrowseBtn = document.getElementById("channel-workspace-browse-btn");
+  const channelWorkspaceBtn = document.getElementById("channel-workspace-btn");
   const channelMembersBtn = document.getElementById("channel-members-btn");
   const channelMembersModal = document.getElementById("channel-members-modal") as HTMLDialogElement | null;
   const channelMembersSearchInput = document.getElementById(
@@ -3262,6 +3285,10 @@ function initMemberCrudUi(): void {
 
   channelWorkspaceBrowseBtn?.addEventListener("click", () => {
     void chooseChannelWorkspaceDirectory();
+  });
+
+  channelWorkspaceBtn?.addEventListener("click", () => {
+    void openActiveChannelWorkspace();
   });
 
   channelModal?.addEventListener("close", () => {

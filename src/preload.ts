@@ -7,6 +7,8 @@ const api = {
     ipcRenderer.invoke("viblack:getBootCodexStatus"),
   pickDirectory: async (defaultPath?: string): Promise<string | null> =>
     ipcRenderer.invoke("viblack:pickDirectory", defaultPath),
+  openPath: async (targetPath: string): Promise<string> =>
+    ipcRenderer.invoke("viblack:openPath", targetPath),
 };
 
 contextBridge.exposeInMainWorld("viblackApi", api);

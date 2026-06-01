@@ -1,6 +1,6 @@
 import path from "node:path";
 import fs from "node:fs";
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { checkCodexAvailability, shutdownCodexProcesses } from "./backend/codex";
 import { startServer, type StartedServer } from "./backend/server";
 import type { CodexStatus } from "./backend/types";
@@ -74,6 +74,16 @@ ipcMain.handle("viblack:pickDirectory", async (_event, defaultPath?: string) => 
     defaultPath: typeof defaultPath === "string" && defaultPath.trim() ? defaultPath : undefined,
   });
   return result.canceled ? null : (result.filePaths[0] ?? null);
+});
+ipcMain.handle("viblack:openPath", async (_event, targetPath?: string) => {
+  const normalizedPath = typeof targetPath === "string" ? targetPath.trim() : "";
+  if (!normalizedPath) {
+    return "path is required";
+  }
+  if (process.env.VIBLACK_E2E_DISABLE_OPEN_PATH === "1") {
+    return "";
+  }
+  return shell.openPath(normalizedPath);
 });
 
 async function shutdownApp(): Promise<void> {

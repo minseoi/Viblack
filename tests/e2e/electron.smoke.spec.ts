@@ -34,6 +34,7 @@ async function launchIsolatedApp(
       ...process.env,
       VIBLACK_DB_PATH: dbPath,
       VIBLACK_CODEX_PATH: fakeCodexPath,
+      VIBLACK_E2E_DISABLE_OPEN_PATH: "1",
     },
   });
 
@@ -887,8 +888,11 @@ test("electron full feature regression flow", async ({}, testInfo) => {
 
     await channelRow(page, editedChannelName).click();
     await expect(page.locator("#agent-title")).toHaveText(`# ${editedChannelName}`);
+    await expect(page.locator("#channel-workspace-btn")).toBeVisible();
     await expect(page.locator("#channel-members-btn")).toBeVisible();
     await expect(page.locator("#header-avatar")).toBeVisible();
+    await page.click("#channel-workspace-btn");
+    await expect(page.locator("#warning")).not.toContainText("워크스페이스 폴더 열기 실패");
 
     await page.click("#channel-members-btn");
     await expect(page.locator("#channel-members-modal[open]")).toHaveCount(1);
