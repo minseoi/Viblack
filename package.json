@@ -17,7 +17,7 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "Codex CLI-powered AI workspace messenger",
+  "description": "AI desktop app for orchestrating Codex-powered agents",
   "dependencies": {
     "express": "^5.2.1"
   },
