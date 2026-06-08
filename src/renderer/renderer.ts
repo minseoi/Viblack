@@ -51,6 +51,10 @@ interface ChannelMessageEventPayload {
   messageId: number;
 }
 
+interface ChannelExecutionEventPayload {
+  channelId: string;
+}
+
 interface ChannelExecutionJob {
   id: number;
   targetAgentId: string;

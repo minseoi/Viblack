@@ -1077,6 +1077,8 @@ test("electron full feature regression flow", async ({}, testInfo) => {
     // The first agent reply should appear before chained mention execution finishes.
     await expect(alphaSenderItems).toHaveCount(beforeAlphaSenderCount + 1, { timeout: 1500 });
     await expect(betaSenderItems).toHaveCount(beforeBetaSenderCount, { timeout: 700 });
+    await expect(page.locator("#typing-indicator")).toHaveClass(/show/, { timeout: 2500 });
+    await expect(page.locator("#typing-label")).toContainText(memberBeta, { timeout: 2500 });
     await expect(
       page.locator("#messages .msg-user .msg-content", {
         hasText: `FORCE_MENTION_NAME:${memberBeta}`,

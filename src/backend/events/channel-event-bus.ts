@@ -5,6 +5,10 @@ export interface ChannelMessageEventPayload {
   messageId: number;
 }
 
+export interface ChannelExecutionEventPayload {
+  channelId: string;
+}
+
 export class ChannelEventBus {
   private readonly channelEventClients = new Set<http.ServerResponse>();
 
@@ -57,6 +61,21 @@ export class ChannelEventBus {
     }
   }
 
+  broadcastChannelExecution(channelId: string): void {
+    if (this.channelEventClients.size === 0) {
+      return;
+    }
+
+    const payload: ChannelExecutionEventPayload = { channelId };
+    for (const client of Array.from(this.channelEventClients)) {
+      try {
+        this.writeSseEvent(client, "channel_execution", payload);
+      } catch {
+        this.channelEventClients.delete(client);
+      }
+    }
+  }
+
   closeAllClients(): void {
     for (const client of Array.from(this.channelEventClients)) {
       try {
@@ -68,4 +87,3 @@ export class ChannelEventBus {
     this.channelEventClients.clear();
   }
 }
-

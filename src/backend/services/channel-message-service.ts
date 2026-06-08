@@ -7,7 +7,14 @@ import { ChannelMemberRepository } from "../repositories/channel-member-reposito
 import { ChannelMemberStateRepository } from "../repositories/channel-member-state-repository";
 import { ChannelMessageRepository } from "../repositories/channel-message-repository";
 import { ChannelRepository } from "../repositories/channel-repository";
-import type { Agent, ChannelExecutionKind, ChannelMessage, ChannelMessageKind } from "../types";
+import type {
+  Agent,
+  ChannelExecutionJob,
+  ChannelExecutionKind,
+  ChannelExecutionStatus,
+  ChannelMessage,
+  ChannelMessageKind,
+} from "../types";
 import { AgentLockManager } from "./agent-lock-manager";
 import { AppSettingsService } from "./app-settings-service";
 import {
@@ -219,7 +226,7 @@ export class ChannelMessageService {
         if (!memberById.has(mention.agentId)) {
           continue;
         }
-        const job = this.channelExecutionRepository.createExecutionJob({
+        const job = this.createExecutionJobAndNotify({
           channelId,
           triggerMessageId,
           sourceMessageId,
@@ -275,7 +282,7 @@ export class ChannelMessageService {
         runnableBatch.map(async (task) => {
           const targetAgent = memberById.get(task.agentId);
           if (!targetAgent) {
-            this.channelExecutionRepository.markExecutionJobFinished(
+            this.markExecutionJobFinishedAndNotify(
               task.jobId,
               "skipped",
               "target agent missing",
@@ -300,7 +307,7 @@ export class ChannelMessageService {
             };
           }
 
-          this.channelExecutionRepository.markExecutionJobRunning(task.jobId);
+          this.markExecutionJobRunningAndNotify(task.jobId);
           return {
             task,
             result: await this.executeMentionedAgent(
@@ -362,7 +369,7 @@ export class ChannelMessageService {
       const errorText = `mention execution budget exhausted (${ChannelMessageService.MAX_MENTION_EXECUTIONS})`;
       for (const task of skippedTasks) {
         queuedAgentIds.delete(task.agentId);
-        this.channelExecutionRepository.markExecutionJobFinished(task.jobId, "skipped", errorText);
+        this.markExecutionJobFinishedAndNotify(task.jobId, "skipped", errorText);
       }
       this.appendChannelMessageAndNotify(
         channelId,
@@ -398,6 +405,40 @@ export class ChannelMessageService {
     );
     this.eventBus.broadcastChannelMessage(channelId, message.id);
     return message;
+  }
+
+  private createExecutionJobAndNotify(input: {
+    channelId: string;
+    triggerMessageId: number;
+    sourceMessageId: number;
+    sourceAgentId: string | null;
+    targetAgentId: string;
+    executionKind: ChannelExecutionKind;
+    depth: number;
+  }): ChannelExecutionJob {
+    const job = this.channelExecutionRepository.createExecutionJob(input);
+    this.eventBus.broadcastChannelExecution(job.channelId);
+    return job;
+  }
+
+  private markExecutionJobRunningAndNotify(jobId: number): ChannelExecutionJob | null {
+    const job = this.channelExecutionRepository.markExecutionJobRunning(jobId);
+    if (job) {
+      this.eventBus.broadcastChannelExecution(job.channelId);
+    }
+    return job;
+  }
+
+  private markExecutionJobFinishedAndNotify(
+    jobId: number,
+    status: Extract<ChannelExecutionStatus, "succeeded" | "failed" | "skipped">,
+    errorText?: string | null,
+  ): ChannelExecutionJob | null {
+    const job = this.channelExecutionRepository.markExecutionJobFinished(jobId, status, errorText);
+    if (job) {
+      this.eventBus.broadcastChannelExecution(job.channelId);
+    }
+    return job;
   }
 
   ensureChannelCoordinator(channelId: string, preferredAgentId?: string | null): string | null {
@@ -610,7 +651,7 @@ export class ChannelMessageService {
           );
         }
 
-        this.channelExecutionRepository.markExecutionJobFinished(
+        this.markExecutionJobFinishedAndNotify(
           jobId,
           executionOk ? "succeeded" : "failed",
           executionOk ? null : replyText,
@@ -641,7 +682,7 @@ export class ChannelMessageService {
         fallbackText,
         "result",
       );
-      this.channelExecutionRepository.markExecutionJobFinished(jobId, "failed", fallbackText);
+      this.markExecutionJobFinishedAndNotify(jobId, "failed", fallbackText);
       return {
         agentId: targetAgent.id,
         agentName: targetAgent.name,

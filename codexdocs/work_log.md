@@ -1738,3 +1738,26 @@
   - `npm run build` 통과.
   - `npm run verify` 통과.
   - 결과: Playwright `21 passed, 3 skipped`.
+
+### 99) 채널 작성중 표시 대상 오류 수정 착수
+- 사용자 제보:
+  - `작성 중...` 표시가 실제 현재 실행 중인 멤버가 아니라 최신에 답장한 멤버로 보임.
+- 확인 방향:
+  - 기존 의도는 채널 실행 job의 `queued/running` `targetAgentId` 기준으로 typing indicator를 렌더링하는 것.
+  - 렌더러의 `/api/channels/:id/executions` 동기화와 백엔드 job 상태 갱신 경로를 함께 확인 중.
+- 원인:
+  - 멘션 체인에서 첫 멤버 답장 메시지 SSE가 먼저 도착하면 렌더러가 아직 첫 job `running` 상태를 읽을 수 있음.
+  - 이후 다음 멤버 job 생성/전환은 별도 SSE가 없어, 실제 실행자는 바뀌었는데 UI는 최신 답장 멤버를 계속 `작성 중`으로 표시할 수 있음.
+- 구현:
+  - `channel_execution` SSE 이벤트 추가.
+  - 채널 execution job 생성/running/finished 전환마다 상태 이벤트를 발행하도록 연결.
+  - 렌더러가 `channel_execution` 이벤트 수신 시 `/executions`를 재조회하고 typing indicator를 즉시 동기화하도록 수정.
+- 부분 검증:
+  - `npm run check` 통과.
+  - `npx playwright test tests/e2e/electron.smoke.spec.ts --grep "electron full feature regression flow"` 통과.
+- 전체 검증 상태:
+  - `npm run build` 통과.
+  - `npm run verify` 실행 결과, typing 수정이 포함된 full feature smoke는 통과.
+  - 다만 기존 디자인 토큰 테스트 2건이 현재 CSS와 불일치해 실패:
+    - `renderer applies Tesla-inspired flat design tokens`: `--brand` 기대 `#3e6ae1`, 실제 `#1f8f68`.
+    - `new message indicator keeps scroll position until clicked`: button `box-shadow` 기대 `none`, 실제 shadow 있음.

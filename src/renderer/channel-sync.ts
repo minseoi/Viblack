@@ -62,6 +62,27 @@ class ChannelSyncController {
       this.options.store.markChannelDeltaSyncPending();
       void this.syncActiveChannelMessageDelta();
     });
+
+    stream.addEventListener("channel_execution", (event) => {
+      const activeChannelId = this.options.store.getActiveChannelId();
+      if (!activeChannelId) {
+        return;
+      }
+
+      let payload: ChannelExecutionEventPayload | null = null;
+      try {
+        payload = JSON.parse((event as MessageEvent<string>).data) as ChannelExecutionEventPayload;
+      } catch {
+        payload = null;
+      }
+      if (!payload || payload.channelId !== activeChannelId) {
+        return;
+      }
+
+      void this.options.refreshActiveChannelExecutionState(activeChannelId).then(() => {
+        this.options.syncStatusForCurrentContext();
+      });
+    });
   }
 
   async syncActiveChannelMessageDelta(): Promise<void> {
